@@ -85,6 +85,8 @@ export declare const GALLERY_COMPACT_MAX_HEIGHT = 560;
 /** Shared geometry keeps labels and glyphs on one visual center line. */
 export declare const GALLERY_TOOLBAR_CONTROL_HEIGHT = 28;
 export declare const GALLERY_TOOLBAR_CONTROL_LAYOUT: Readonly<React.CSSProperties>;
+/** Optical correction for CJK labels and +/- glyphs inside the centered control box. */
+export declare const GALLERY_TOOLBAR_CONTROL_CONTENT_LAYOUT: Readonly<React.CSSProperties>;
 export declare function galleryViewportMaxHeight(fitContent: boolean): number | undefined;
 export interface FrameGalleryProps {
     frames: readonly GalleryFrame[];

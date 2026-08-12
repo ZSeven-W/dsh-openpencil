@@ -7,7 +7,7 @@
  * registered through `ctx.effect` (or a returned disposer) so unloading the
  * plugin removes every contribution.
  *
- * The `design_render` tool never returns an ImageBlock — the DeepSeek
+ * The `openpencil_render` tool never returns an ImageBlock — the DeepSeek
  * adapter rejects image blocks anywhere in a request. The browser-only
  * envelope rides `output.presentationMeta` into `ToolCallBlock.meta`, and
  * the keyed `tool.call.toolview` client component renders a PNG-first card
@@ -15,6 +15,7 @@
  * @module @dsh-external/dsh-openpencil
  */
 import type { Context } from '@deepseek-ai/cordis';
+export { LEGACY_DESIGN_RENDER_TOOL_NAME, OPENPENCIL_CREATE_TOOL_NAME, OPENPENCIL_EDIT_TOOL_NAME, OPENPENCIL_RENDER_TOOL_NAME, OPENPENCIL_SELECTION_TOOL_NAME, OPENPENCIL_TOOL_NAMES, } from './tool-names.js';
 /** Stable plugin name (the loader entry id in cordis.patch.yml). */
 export declare const name = "@dsh-external/dsh-openpencil";
 /** Services this plugin's root fiber requires. */

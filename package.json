@@ -46,6 +46,8 @@
     "sync:viewer-assets": "node scripts/sync-viewer-assets.mjs",
     "test:viewer-assets": "node scripts/test-viewer-assets.mjs",
     "test:client": "npm run build:client && node --test tests/client.test.mjs",
+    "test:host-api": "npm run build && node --test tests/host-service.test.mjs tests/editor-host-lifecycle.test.mjs",
+    "test:mcp": "npm run build && node --test tests/mcp-client.test.mjs",
     "test:host": "npm run build && node scripts/test-host.mjs"
   },
   "dsh": {
@@ -56,6 +58,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-tool",
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-theme"
@@ -65,13 +68,14 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1-rc.1",
-    "@deepseek-ai/dsh-client-locale": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-runtime": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-theme": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-tool": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-host-webserver": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-locale": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-theme": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-tool": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "^0.0.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.0.1-rc.2",
     "react": "^18.2.0"
   },
   "devDependencies": {

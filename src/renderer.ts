@@ -1,7 +1,7 @@
 /**
  * Offscreen rendering + signed HTTP delivery for `.op` documents.
  *
- * `design_render` snapshots the source document, uses OpenPencil's own
+ * `openpencil_render` snapshots the source document, uses OpenPencil's own
  * headless exporter for design-fidelity PNG output, retaining every
  * top-level frame for the conversation gallery, and only invokes Jian
  * as an explicitly disclosed runtime-preview fallback when the exact binary
@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto'
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
 import type { ViewerGrant } from './viewer-assets.js'
 import type { EditorGrant } from './editor-host.js'
+import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
 
 /** HTTP prefix owned by the render capability route. */
 export const RENDER_ROUTE_PREFIX = '/_dsh/dsh-openpencil/render'
@@ -117,7 +118,7 @@ export interface RenderResult {
   mimeType: 'image/png'
   kind: 'image'
   description: string
-  sourceTool: 'design_render'
+  sourceTool: typeof OPENPENCIL_RENDER_TOOL_NAME
   previewIntent: 'image'
   bytes: number
   width?: number
@@ -466,7 +467,7 @@ export function expandUserHome(raw: string): string {
  */
 export async function resolveInputFile(raw: string, cwd: string): Promise<string> {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
-    throw new Error('design_render: path is required')
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: path is required`)
   }
   const expanded = expandUserHome(raw.trim())
   const target = isAbsolute(expanded) ? expanded : resolve(cwd, expanded)
@@ -474,13 +475,13 @@ export async function resolveInputFile(raw: string, cwd: string): Promise<string
   try {
     real = await realpath(target)
   } catch {
-    throw new Error(`design_render: .op file not found: ${raw}`)
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: .op file not found: ${raw}`)
   }
   const info = await stat(real)
-  if (!info.isFile()) throw new Error(`design_render: not a regular file: ${raw}`)
+  if (!info.isFile()) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: not a regular file: ${raw}`)
   const extension = real.slice(real.lastIndexOf('.')).toLowerCase()
   if (extension !== '.op') {
-    throw new Error(`design_render: expected a .op file (got "${extension || '(none)'}")`)
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: expected a .op file (got "${extension || '(none)'}")`)
   }
   return real
 }
@@ -488,9 +489,9 @@ export async function resolveInputFile(raw: string, cwd: string): Promise<string
 /** Freeze source bytes before rendering so preview and web viewer cannot diverge. */
 export async function createDocumentSnapshot(input: string): Promise<DocumentSnapshot> {
   const bytes = await readFile(input)
-  if (bytes.length === 0) throw new Error('design_render: source document is empty')
+  if (bytes.length === 0) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: source document is empty`)
   if (bytes.length > MAX_DOCUMENT_BYTES) {
-    throw new Error(`design_render: source document exceeds ${MAX_DOCUMENT_BYTES} bytes`)
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: source document exceeds ${MAX_DOCUMENT_BYTES} bytes`)
   }
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const filename = `${sha256}.op`
@@ -502,7 +503,7 @@ export async function createDocumentSnapshot(input: string): Promise<DocumentSna
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     const existing = await readFile(path)
     if (existing.length !== bytes.length || createHash('sha256').update(existing).digest('hex') !== sha256) {
-      throw new Error('design_render: content-addressed snapshot was modified')
+      throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: content-addressed snapshot was modified`)
     }
   }
   return { path, filename, mimeType: 'application/json', bytes: bytes.length, sha256 }
@@ -681,7 +682,7 @@ export async function runOpenPencilRender(options: {
 }> {
   const scale = options.scale ?? 1
   if (!Number.isFinite(scale) || scale <= 0 || scale > 8) {
-    throw new Error('design_render: scale must be a finite number greater than 0 and at most 8')
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: scale must be a finite number greater than 0 and at most 8`)
   }
   await mkdir(stateRoot(), { recursive: true, mode: 0o700 })
   const tempRoot = await mkdtemp(join(stateRoot(), 'exact-'))
@@ -714,8 +715,8 @@ export async function runOpenPencilRender(options: {
     })
     const stdout = Buffer.concat(stdoutChunks).toString('utf8')
     const stderr = Buffer.concat(stderrChunks).toString('utf8')
-    if (options.signal.aborted) throw new Error('design_render: OpenPencil render was cancelled')
-    if (timedOut) throw new Error(`design_render: OpenPencil render timed out after ${RENDER_TIMEOUT_MS} ms`)
+    if (options.signal.aborted) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil render was cancelled`)
+    if (timedOut) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil render timed out after ${RENDER_TIMEOUT_MS} ms`)
     if (code !== 0) throw new Error(`OpenPencil render exited with ${String(code)}${stderr.trim() === '' ? '' : `: ${stderr.trim()}`}`)
     const discoveredPngs = (await readdir(outDir)).filter(name => name.toLowerCase().endsWith('.png'))
     const sourceFrames = await sourceFrameDescriptors(options.input)
@@ -738,7 +739,7 @@ export async function runOpenPencilRender(options: {
         .filter(name => !sourceOrderedPngs.includes(name) && !writtenPngs.includes(name))
         .sort(),
     ])]
-    if (pngs.length === 0) throw new Error('design_render: OpenPencil produced no PNG')
+    if (pngs.length === 0) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil produced no PNG`)
     const sourceFrameByPng = new Map(sourceFrames.map(frame => [rendererFilename(frame.id), frame]))
     const frames: Array<{ png: string; id?: string; name?: string; index: number }> = []
     try {
@@ -856,21 +857,21 @@ export async function verifyRenderOutput(out: string): Promise<{
   sha256: string
 }> {
   const info = await lstat(out)
-  if (info.isSymbolicLink() || !info.isFile()) throw new Error('design_render: renderer did not produce a regular file')
-  if (info.size > MAX_RENDER_BYTES) throw new Error(`design_render: rendered PNG exceeds ${MAX_RENDER_BYTES} bytes`)
-  if (info.size < 33) throw new Error('design_render: rendered PNG is truncated')
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: renderer did not produce a regular file`)
+  if (info.size > MAX_RENDER_BYTES) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: rendered PNG exceeds ${MAX_RENDER_BYTES} bytes`)
+  if (info.size < 33) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: rendered PNG is truncated`)
   const bytes = await readFile(out)
   const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-  if (!bytes.subarray(0, 8).equals(signature)) throw new Error('design_render: renderer output is not a PNG')
+  if (!bytes.subarray(0, 8).equals(signature)) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: renderer output is not a PNG`)
   if (bytes.readUInt32BE(8) !== 13 || bytes.toString('ascii', 12, 16) !== 'IHDR') {
-    throw new Error('design_render: PNG has no valid IHDR')
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: PNG has no valid IHDR`)
   }
   const width = bytes.readUInt32BE(16)
   const height = bytes.readUInt32BE(20)
   if (width === 0 || height === 0 || width > MAX_RENDER_DIMENSION || height > MAX_RENDER_DIMENSION) {
-    throw new Error('design_render: rendered PNG dimensions are invalid')
+    throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: rendered PNG dimensions are invalid`)
   }
-  if (width * height > MAX_RENDER_PIXELS) throw new Error('design_render: rendered PNG has too many pixels')
+  if (width * height > MAX_RENDER_PIXELS) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: rendered PNG has too many pixels`)
   return {
     bytes: info.size,
     width,

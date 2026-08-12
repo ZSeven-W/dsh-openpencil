@@ -7,7 +7,7 @@
  * registered through `ctx.effect` (or a returned disposer) so unloading the
  * plugin removes every contribution.
  *
- * The `design_render` tool never returns an ImageBlock — the DeepSeek
+ * The `openpencil_render` tool never returns an ImageBlock — the DeepSeek
  * adapter rejects image blocks anywhere in a request. The browser-only
  * envelope rides `output.presentationMeta` into `ToolCallBlock.meta`, and
  * the keyed `tool.call.toolview` client component renders a PNG-first card
@@ -25,6 +25,11 @@ import {
 } from './renderer.js'
 import { createDesignRenderTool } from './tool.js'
 import {
+  createDesignCreateTool,
+  createDesignEditTool,
+  createDesignSelectionTool,
+} from './design-tools.js'
+import {
   VIEWER_ASSET_ROUTE_PREFIX,
   prepareViewerAssets,
 } from './viewer-assets.js'
@@ -32,6 +37,22 @@ import {
   EDITOR_ROUTE_PREFIX,
   EditorHostController,
 } from './editor-host.js'
+import {
+  OPENPENCIL_CREATE_TOOL_NAME,
+  OPENPENCIL_EDIT_TOOL_NAME,
+  OPENPENCIL_RENDER_TOOL_NAME,
+  OPENPENCIL_SELECTION_TOOL_NAME,
+  OPENPENCIL_TOOL_NAMES,
+} from './tool-names.js'
+
+export {
+  LEGACY_DESIGN_RENDER_TOOL_NAME,
+  OPENPENCIL_CREATE_TOOL_NAME,
+  OPENPENCIL_EDIT_TOOL_NAME,
+  OPENPENCIL_RENDER_TOOL_NAME,
+  OPENPENCIL_SELECTION_TOOL_NAME,
+  OPENPENCIL_TOOL_NAMES,
+} from './tool-names.js'
 
 /** Stable plugin name (the loader entry id in cordis.patch.yml). */
 export const name = '@dsh-external/dsh-openpencil'
@@ -52,16 +73,28 @@ export async function apply(ctx: Context): Promise<() => void> {
   // without the webserver still gets a plain-JSON result — no dangling URL.
   disposers.push(ctx.effect(
     () => ctx.tools.register(createDesignRenderTool(controller, viewerAssets, editorHost)),
-    'dsh-openpencil: design_render tool',
+    `dsh-openpencil: ${OPENPENCIL_RENDER_TOOL_NAME} tool`,
+  ))
+  disposers.push(ctx.effect(
+    () => ctx.tools.register(createDesignSelectionTool(editorHost)),
+    `dsh-openpencil: ${OPENPENCIL_SELECTION_TOOL_NAME} tool`,
+  ))
+  disposers.push(ctx.effect(
+    () => ctx.tools.register(createDesignCreateTool(editorHost)),
+    `dsh-openpencil: ${OPENPENCIL_CREATE_TOOL_NAME} tool`,
+  ))
+  disposers.push(ctx.effect(
+    () => ctx.tools.register(createDesignEditTool(editorHost)),
+    `dsh-openpencil: ${OPENPENCIL_EDIT_TOOL_NAME} tool`,
   ))
 
-  // Optional Web routes: only mounted when an httpServer service exists
+  // Optional Web routes: only mounted when a webServer service exists
   // (headless profiles never attach, and `routeAvailable` stays false).
   // The inject fiber is parent-scoped and tears itself down with this ctx;
   // the inner effect's disposer is the route removal.
-  ctx.inject(['httpServer'], (webCtx) => webCtx.effect(() => {
+  ctx.inject(['webServer'], (webCtx) => webCtx.effect(() => {
     const detach = controller.attachRoute()
-    const disposeRoute = webCtx.httpServer.register({
+    const disposeRoute = webCtx.webServer.register({
       kind: 'prefix',
       path: RENDER_ROUTE_PREFIX,
       handler: (req, res) => controller.handle(req, res),
@@ -69,7 +102,7 @@ export async function apply(ctx: Context): Promise<() => void> {
     const disposeViewerRoute = viewerAssets.available
       ? (() => {
           const detachViewer = viewerAssets.attachRoute()
-          const disposeViewer = webCtx.httpServer.register({
+          const disposeViewer = webCtx.webServer.register({
             kind: 'prefix',
             path: VIEWER_ASSET_ROUTE_PREFIX,
             handler: (req, res) => viewerAssets.handle(req, res),
@@ -81,7 +114,7 @@ export async function apply(ctx: Context): Promise<() => void> {
         })()
       : undefined
     const detachEditor = editorHost.attachRoute()
-    const disposeEditorRoute = webCtx.httpServer.register({
+    const disposeEditorRoute = webCtx.webServer.register({
       kind: 'prefix',
       path: EDITOR_ROUTE_PREFIX,
       handler: (req, res) => editorHost.handle(req, res),
@@ -96,7 +129,7 @@ export async function apply(ctx: Context): Promise<() => void> {
     }
   }, 'dsh-openpencil: render route'))
 
-  ctx.logger.info(`dsh-openpencil mounted (design_render + gallery + render route; viewer assets: ${viewerAssets.available ? 'ready' : 'unavailable'}; editor: ${editorHost.available ? 'ready' : 'unavailable'})`)
+  ctx.logger.info(`dsh-openpencil mounted (${OPENPENCIL_TOOL_NAMES.join(' + ')}; viewer assets: ${viewerAssets.available ? 'ready' : 'unavailable'}; editor: ${editorHost.available ? 'ready' : 'unavailable'})`)
   return () => {
     for (const dispose of disposers.reverse()) dispose()
     void editorHost.dispose()

@@ -1,5 +1,5 @@
 /**
- * `design_render` — render a `.op` design document to PNG without a
+ * `openpencil_render` — render a `.op` design document to PNG without a
  * window. OpenPencil's own exporter is the exact primary path; Jian is an
  * explicitly-labelled runtime-preview fallback when that binary is absent.
  *
@@ -21,5 +21,5 @@ export interface DesignRenderArgs {
     /** Explicitly expose the original source to the managed sidebar editor. */
     editable?: boolean;
 }
-/** Create the `design_render` tool definition bound to one controller. */
+/** Create the `openpencil_render` tool definition bound to one controller. */
 export declare function createDesignRenderTool(controller: RenderAccessController, viewerAssets?: ViewerAssetController, editorHost?: EditorHostController): import("@deepseek-ai/dsh-tools").ToolDefinition;

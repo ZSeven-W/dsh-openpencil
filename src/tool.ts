@@ -1,5 +1,5 @@
 /**
- * `design_render` — render a `.op` design document to PNG without a
+ * `openpencil_render` — render a `.op` design document to PNG without a
  * window. OpenPencil's own exporter is the exact primary path; Jian is an
  * explicitly-labelled runtime-preview fallback when that binary is absent.
  *
@@ -30,6 +30,7 @@ import {
 } from './renderer.js'
 import type { ViewerAssetController } from './viewer-assets.js'
 import type { EditorHostController } from './editor-host.js'
+import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
 
 /** Session workspace the caller resolves paths against (mirrors first-party tools). */
 function sessionWorkspace(exec: ToolRunContext): string {
@@ -65,14 +66,14 @@ export interface DesignRenderArgs {
   editable?: boolean
 }
 
-/** Create the `design_render` tool definition bound to one controller. */
+/** Create the `openpencil_render` tool definition bound to one controller. */
 export function createDesignRenderTool(
   controller: RenderAccessController,
   viewerAssets?: ViewerAssetController,
   editorHost?: EditorHostController,
 ) {
   return defineTool({
-    name: 'design_render',
+    name: OPENPENCIL_RENDER_TOOL_NAME,
     description: 'Render an OpenPencil .op design document exactly as the design canvas, '
       + 'then show a PNG and an optional interactive read-only canvas in the conversation. '
       + 'Give the absolute path to a .op file (or a path relative to the session workspace). '
@@ -97,7 +98,7 @@ export function createDesignRenderTool(
           mimeType: { type: 'string', const: 'image/png', required: true },
           kind: { type: 'string', const: 'image', required: true },
           description: { type: 'string', required: true },
-          sourceTool: { type: 'string', const: 'design_render', required: true },
+          sourceTool: { type: 'string', const: OPENPENCIL_RENDER_TOOL_NAME, required: true },
           previewIntent: { type: 'string', const: 'image', required: true },
           bytes: { type: 'integer', required: true },
           width: { type: 'integer' },
@@ -158,7 +159,7 @@ export function createDesignRenderTool(
       const openPencil = findOpenPencilBinary()
       if (openPencil !== undefined) {
         if (args.width !== undefined || args.height !== undefined) {
-          throw new Error('design_render: width/height are not supported by the exact OpenPencil renderer; omit them and use scale')
+          throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: width/height are not supported by the exact OpenPencil renderer; omit them and use scale`)
         }
         try {
           const exact = await runOpenPencilRender({
@@ -224,7 +225,7 @@ export function createDesignRenderTool(
         mimeType: 'image/png',
         kind: 'image',
         description: `Rendered ${input} with ${renderer} (${fidelity})`,
-        sourceTool: 'design_render',
+        sourceTool: OPENPENCIL_RENDER_TOOL_NAME,
         previewIntent: 'image',
         bytes: verified.bytes,
         width: verified.width,

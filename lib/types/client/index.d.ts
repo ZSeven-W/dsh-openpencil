@@ -1,5 +1,6 @@
 /**
- * Browser presentation for `design_render`.
+ * Browser presentation for `openpencil_render` and historical
+ * `design_render` conversation cards.
  *
  * PNG remains the replay-safe default. When the host also grants access to
  * the source `.op`, the user can opt into one shared, read-only Web SDK
@@ -9,15 +10,19 @@ import type { ToolCallViewProps, ToolDetailsViewProps } from '@deepseek-ai/dsh-c
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 import { type EditorColorScheme, type EditorLocale } from './editor-bridge.js';
 import type { GalleryFrame, GalleryLocale } from './frame-gallery.js';
-export { calculateGalleryFitViewZoom, clampGalleryZoom, frameLabel, frameGalleryCopy, galleryZoomCommandTarget, galleryViewportMaxHeight, galleryZoomPercent, galleryZoomShortcut, GALLERY_COMPACT_MAX_HEIGHT, GALLERY_TOOLBAR_CONTROL_HEIGHT, GALLERY_TOOLBAR_CONTROL_LAYOUT, GALLERY_ZOOM_MAX, GALLERY_ZOOM_MIN, GALLERY_ZOOM_STEP, nextGalleryZoom, normalizeFrameIndex, } from './frame-gallery.js';
-export { editorPanelCopy, launchManagedEditor, prepareManagedEditor } from './editor-panel.js';
+export { LEGACY_DESIGN_RENDER_TOOL_NAME, OPENPENCIL_RENDER_TOOL_NAME, } from '../tool-names.js';
+export { calculateGalleryFitViewZoom, clampGalleryZoom, frameLabel, frameGalleryCopy, galleryZoomCommandTarget, galleryViewportMaxHeight, galleryZoomPercent, galleryZoomShortcut, GALLERY_COMPACT_MAX_HEIGHT, GALLERY_TOOLBAR_CONTROL_CONTENT_LAYOUT, GALLERY_TOOLBAR_CONTROL_HEIGHT, GALLERY_TOOLBAR_CONTROL_LAYOUT, GALLERY_ZOOM_MAX, GALLERY_ZOOM_MIN, GALLERY_ZOOM_STEP, nextGalleryZoom, normalizeFrameIndex, } from './frame-gallery.js';
+export { closeManagedEditorLaunch, editorPanelCopy, launchManagedEditor, prepareManagedEditor, prepareManagedEditorForMount, } from './editor-panel.js';
 export { editorGrantForBoot, editorSuccessorFromSave, editorSuccessorStorageKey, rememberEditorSuccessor, } from './editor-successor.js';
 export { claimEditor, confirmEditorClose, editorControlUrl, editorIframeUrlWithLocale, editorIframeUrlWithTheme, editorLocaleFromDsh, editorMessageFrom, editorOrigin, encodeEditorOutbound, parseEditorInbound, } from './editor-bridge.js';
+export { clearOpenPencilSelection, getOpenPencilSelectionSnapshot, liveSelectionOf, publishOpenPencilSelection, subscribeOpenPencilSelection, } from './selection-store.js';
+export { isTerminalEditorSelectionStatus, startEditorSelectionPolling, } from './selection-polling.js';
+export { hasOpenPencilSelection, OPENPENCIL_SELECTION_DOCK_LAYOUT, selectionNodeDetail, selectionNodeLabel, } from './selection-dock.js';
 /** Presentation metadata key the host half projects into `block.meta`. */
 export declare const PRESENTATION_META_KEY = "$dshOpenPencil";
 export type PresentationLocale = GalleryLocale;
 export declare function designRenderCopy(locale: PresentationLocale): {
-    readonly designRender: "Design render";
+    readonly designRender: "OpenPencil render";
     readonly error: "error";
     readonly rendering: "rendering…";
     readonly done: "done";
@@ -46,7 +51,7 @@ export declare function designRenderCopy(locale: PresentationLocale): {
     readonly snapshot: "snapshot";
     readonly editorUnavailable: "Editable OpenPencil canvas is not available for this result.";
 } | {
-    readonly designRender: "设计渲染";
+    readonly designRender: "OpenPencil 渲染";
     readonly error: "错误";
     readonly rendering: "渲染中…";
     readonly done: "完成";
@@ -140,16 +145,16 @@ export declare function sizeCanvasForDisplay(canvas: Pick<HTMLCanvasElement, 'cl
     cssHeight: number;
     dpr: number;
 };
-/** Render one `design_render` tool call as a PNG-first card. */
+/** Render one OpenPencil render tool call as a PNG-first card. */
 export declare function DesignRenderView({ block, openDetails, openFile, inspect, locale }: ToolCallViewProps & {
     locale?: PresentationLocale;
 }): import("react").JSX.Element;
 /** Render the selected editable design inside DSH's resident details column. */
-export declare function OpenPencilEditorPanel({ block, colorScheme, locale }: ToolDetailsViewProps & {
+export declare function OpenPencilEditorPanel({ block, colorScheme, locale, sessionId }: ToolDetailsViewProps & {
     colorScheme: EditorColorScheme;
     locale: EditorLocale;
 }): import("react").JSX.Element;
 /** Required client services. */
 export declare const inject: string[];
-/** Register the dedicated toolview for `design_render`. */
+/** Register canonical views plus a presentation-only alias for replaying historical cards. */
 export declare function apply(ctx: ClientContext): void;

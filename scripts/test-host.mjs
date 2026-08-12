@@ -31,6 +31,7 @@ const {
   EDITOR_ROUTE_PREFIX,
   EditorHostController,
 } = await import('../lib/editor-host.js')
+const { OPENPENCIL_RENDER_TOOL_NAME } = await import('../lib/tool-names.js')
 
 let server
 let editorHost
@@ -95,7 +96,7 @@ try {
     mimeType: 'image/png',
     kind: 'image',
     description: 'host smoke',
-    sourceTool: 'design_render',
+    sourceTool: OPENPENCIL_RENDER_TOOL_NAME,
     previewIntent: 'image',
     bytes: image.bytes,
     width: image.width,
@@ -177,6 +178,38 @@ try {
   assert.equal(launch.docJson, sourceBytes.toString('utf8'))
   const iframeResponse = await fetch(launch.iframeUrl)
   assert.equal(iframeResponse.status, 200)
+
+  // The managed editor is also the direct-drive target. Mirror one browser
+  // selection push, read it through the DSH proxy, then patch that selected
+  // node through first-party MCP and prove the live document changed.
+  const initialSelection = await editorHost.getActiveSelection()
+  assert.ok(typeof initialSelection.activePageId === 'string')
+  const selectedId = expectedFrames[0]?.id
+  assert.ok(typeof selectedId === 'string' && selectedId.length > 0)
+  const daemonOrigin = new URL(launch.iframeUrl).origin
+  const selectResponse = await fetch(`${daemonOrigin}/api/mcp/selection`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${launch.token}`,
+      'x-openpencil-token': launch.token,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ selectedIds: [selectedId], activePageId: initialSelection.activePageId }),
+  })
+  assert.equal(selectResponse.status, 200, await selectResponse.text())
+  const selected = await editorHost.getActiveSelection()
+  assert.deepEqual(selected.selectedIds, [selectedId])
+  assert.equal(selected.nodes[0]?.id, selectedId)
+  const selectionResponse = await fetch(`${origin}${launch.selectionUrl}`)
+  assert.equal(selectionResponse.status, 200)
+  assert.deepEqual((await selectionResponse.json()).selection.selectedIds, [selectedId])
+  await editorHost.callActiveMcp('update_node', {
+    nodeId: selectedId,
+    data: { name: 'DSH direct-drive smoke' },
+    ...(initialSelection.activePageId === '' ? {} : { pageId: initialSelection.activePageId }),
+  })
+  const changedSelection = await editorHost.getActiveSelection()
+  assert.equal(changedSelection.nodes[0]?.name, 'DSH direct-drive smoke')
 
   const saveBody = {
     sessionId: launch.sessionId,

@@ -165,6 +165,14 @@ export const GALLERY_TOOLBAR_CONTROL_LAYOUT: Readonly<React.CSSProperties> = Obj
   verticalAlign: 'middle',
 })
 
+/** Optical correction for CJK labels and +/- glyphs inside the centered control box. */
+export const GALLERY_TOOLBAR_CONTROL_CONTENT_LAYOUT: Readonly<React.CSSProperties> = Object.freeze({
+  display: 'inline-block',
+  lineHeight: 1,
+  transform: 'translateY(-1px)',
+  pointerEvents: 'none',
+})
+
 export function galleryViewportMaxHeight(fitContent: boolean): number | undefined {
   return fitContent ? undefined : GALLERY_COMPACT_MAX_HEIGHT
 }
@@ -191,8 +199,10 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: GALLERY_TOOLBAR_CONTROL_HEIGHT, padding: '0 8px', borderRadius: 5,
     border: '1px solid var(--ui-border, rgba(128,128,128,0.35))',
     color: 'var(--ui-text, inherit)', background: 'var(--ui-card-bg, rgba(128,128,128,0.08))', cursor: 'pointer',
-    font: 'inherit', fontSize: 12, lineHeight: 1, whiteSpace: 'nowrap',
+    fontFamily: 'inherit', fontWeight: 'inherit', fontStyle: 'inherit',
+    fontSize: 12, lineHeight: 1, whiteSpace: 'nowrap',
   },
+  controlContent: GALLERY_TOOLBAR_CONTROL_CONTENT_LAYOUT,
   zoomPercent: {
     ...GALLERY_TOOLBAR_CONTROL_LAYOUT,
     minWidth: 42, padding: '0 3px', textAlign: 'center',
@@ -217,7 +227,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: GALLERY_TOOLBAR_CONTROL_HEIGHT, minWidth: GALLERY_TOOLBAR_CONTROL_HEIGHT, padding: 0, borderRadius: 99,
     border: '1px solid var(--ui-border, rgba(128,128,128,0.35))',
     color: 'var(--ui-text, inherit)', background: 'var(--ui-card-bg, rgba(128,128,128,0.08))',
-    cursor: 'pointer', font: 'inherit', fontSize: 20, lineHeight: 1,
+    cursor: 'pointer', fontFamily: 'inherit', fontWeight: 'inherit', fontStyle: 'inherit', fontSize: 20, lineHeight: 1,
   },
   strip: {
     display: 'flex', gap: 8, minWidth: 0, overflowX: 'auto', overflowY: 'hidden',
@@ -379,8 +389,10 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
               aria-label={copy.zoomOut}
               title={copy.zoomOutTitle}
               onClick={() => { setZoom(nextGalleryZoom(zoom, -1)) }}
-            >−</button>
-            <output style={styles.zoomPercent} aria-label={`${copy.previewZoom} ${zoomLabel}`} aria-live="polite">{zoomLabel}</output>
+            ><span style={styles.controlContent}>−</span></button>
+            <output style={styles.zoomPercent} aria-label={`${copy.previewZoom} ${zoomLabel}`} aria-live="polite">
+              <span style={styles.controlContent}>{zoomLabel}</span>
+            </output>
             <button
               type="button"
               style={{ ...styles.zoomButton, opacity: canZoomIn ? 1 : 0.42 }}
@@ -388,7 +400,7 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
               aria-label={copy.zoomIn}
               title={copy.zoomInTitle}
               onClick={() => { setZoom(nextGalleryZoom(zoom, 1)) }}
-            >+</button>
+            ><span style={styles.controlContent}>+</span></button>
             <button
               type="button"
               style={{ ...styles.zoomButton, opacity: zoomMode === 'manual' && manualZoom === 1 ? 0.42 : 1 }}
@@ -396,7 +408,7 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
               aria-label={copy.resetAria}
               title={copy.resetTitle}
               onClick={resetZoom}
-            >{copy.reset}</button>
+            ><span style={styles.controlContent}>{copy.reset}</span></button>
             <button
               type="button"
               style={{
@@ -418,7 +430,7 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
                 viewport?.scrollTo({ left: 0, top: 0 })
               }}
               data-openpencil-fit-view="true"
-            >{copy.fitFrame}</button>
+            ><span style={styles.controlContent}>{copy.fitFrame}</span></button>
             <button
               type="button"
               style={{
@@ -438,7 +450,7 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
                 viewportRef.current?.scrollTo({ left: 0, top: 0 })
               }}
               data-openpencil-card-height-toggle="true"
-            >{fitContent ? copy.restoreCard : copy.fitContent}</button>
+            ><span style={styles.controlContent}>{fitContent ? copy.restoreCard : copy.fitContent}</span></button>
           </div>
           {frames.length > 1 ? (
             <>
@@ -449,7 +461,7 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
                 aria-label={copy.previous}
                 title={copy.previous}
                 onClick={() => { select(currentIndex - 1) }}
-              >‹</button>
+              ><span style={styles.controlContent}>‹</span></button>
               <button
                 type="button"
                 style={{ ...styles.arrow, opacity: currentIndex === frames.length - 1 ? 0.42 : 1 }}
@@ -457,7 +469,7 @@ export function FrameGallery({ frames, selectedIndex, onSelect, locale }: FrameG
                 aria-label={copy.next}
                 title={copy.next}
                 onClick={() => { select(currentIndex + 1) }}
-              >›</button>
+              ><span style={styles.controlContent}>›</span></button>
             </>
           ) : null}
         </div>

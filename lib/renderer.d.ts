@@ -1,7 +1,7 @@
 /**
  * Offscreen rendering + signed HTTP delivery for `.op` documents.
  *
- * `design_render` snapshots the source document, uses OpenPencil's own
+ * `openpencil_render` snapshots the source document, uses OpenPencil's own
  * headless exporter for design-fidelity PNG output, retaining every
  * top-level frame for the conversation gallery, and only invokes Jian
  * as an explicitly disclosed runtime-preview fallback when the exact binary
@@ -17,6 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { JsonValue } from '@deepseek-ai/dsh-tools';
 import type { ViewerGrant } from './viewer-assets.js';
 import type { EditorGrant } from './editor-host.js';
+import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js';
 /** HTTP prefix owned by the render capability route. */
 export declare const RENDER_ROUTE_PREFIX = "/_dsh/dsh-openpencil/render";
 /** Presentation metadata key reserved by the browser half of this package. */
@@ -84,7 +85,7 @@ export interface RenderResult {
     mimeType: 'image/png';
     kind: 'image';
     description: string;
-    sourceTool: 'design_render';
+    sourceTool: typeof OPENPENCIL_RENDER_TOOL_NAME;
     previewIntent: 'image';
     bytes: number;
     width?: number;

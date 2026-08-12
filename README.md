@@ -16,7 +16,10 @@ DSH OpenPencil is an intelligent design plugin that connects DeepSeek Harness wi
 
 ## What works
 
-- `design_render` creates an immutable, content-addressed `.op` snapshot.
+- `openpencil_render` creates an immutable, content-addressed `.op` snapshot and renders every top-level frame on the active page.
+- `openpencil_selection` reads the exact nodes selected in the live sidebar canvas.
+- `openpencil_create` applies a transactional OpenPencil `batch_design` program to generate or restructure canvas nodes.
+- `openpencil_edit` modifies an explicit node or the single node selected by the user.
 - OpenPencil's installed headless exporter is the default, design-fidelity renderer.
 - The tool card shows the first top-level frame as a large replay-safe PNG. Multi-frame documents add a horizontally scrollable thumbnail rail, click-to-select, and previous/next navigation.
 - The large preview supports manual zoom, reset, fit-frame, and fit-content modes.
@@ -34,16 +37,16 @@ Use an authenticated DSH prerelease without installing it globally:
 
 ```sh
 git clone git@github.com:dsh-external/dsh-openpencil.git
-npx --yes -p @deepseek-ai/dsh@0.0.1-rc.1 \
+npx --yes -p @deepseek-ai/dsh@0.0.1-rc.2 \
   dsh plugin --profile web add /absolute/path/to/dsh-openpencil
-npx --yes -p @deepseek-ai/dsh@0.0.1-rc.1 dsh web
+npx --yes -p @deepseek-ai/dsh@0.0.1-rc.2 dsh web
 ```
 
 Keep the private registry credential in a user-level or temporary npm config outside the checkout. This repository intentionally contains no registry credentials.
 
 ## Rendering contract
 
-`design_render` accepts a `.op` path, an optional `scale` (`0 < scale <= 8`, default `1`), and optional `editable` (`false` by default). Leave `width` and `height` unset for the exact OpenPencil path: they describe a runtime viewport, not design export dimensions, and are accepted only by the lower-fidelity Jian fallback.
+`openpencil_render` accepts a `.op` path, an optional `scale` (`0 < scale <= 8`, default `1`), and optional `editable` (`false` by default). Leave `width` and `height` unset for the exact OpenPencil path: they describe a runtime viewport, not design export dimensions, and are accepted only by the lower-fidelity Jian fallback.
 
 OpenPencil binary discovery checks, in order:
 
@@ -92,7 +95,7 @@ Builds require Node 24.11 or newer. DSH host/client packages are peer dependenci
 For a private DSH prerelease, keep the issued npm credential outside this repository (for example in a user-level or temporary `.npmrc`) and run the requested version directly:
 
 ```sh
-npx --yes -p @deepseek-ai/dsh@0.0.1-rc.1 dsh web
+npx --yes -p @deepseek-ai/dsh@0.0.1-rc.2 dsh web
 ```
 
 Never commit `.npmrc`, `NPM_TOKEN`, or copied registry credentials. This repository ignores local npm configuration by default.
@@ -113,7 +116,7 @@ The result also records `renderer`, `rendererBinary`, `fidelity`, and any warnin
 
 ## Current limits
 
-- `design_create` and `design_edit` are not implemented by this package.
+- Canvas generation and node edits require an already-open managed sidebar editor. Changes remain unsaved until the user or Agent explicitly invokes the sidebar Save action.
 - The lightweight Web SDK canvas is read-only; full editing uses the separate managed sidebar editor.
 - The exact gallery covers top-level frames on the active page; the interactive canvas remains the way to inspect inactive pages and nested nodes.
 - Render and snapshot caches still need a product-level retention policy.

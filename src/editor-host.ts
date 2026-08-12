@@ -14,6 +14,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import {
+  callOpenPencilMcp,
+  getOpenPencilMcpVersion,
+  selectionSnapshotFromMcp,
+  type OpenPencilMcpResult,
+  type OpenPencilSelectionSnapshot,
+} from './mcp-client.js'
+import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
 
 export const EDITOR_ROUTE_PREFIX = '/_dsh/dsh-openpencil/editor'
 
@@ -95,6 +103,7 @@ interface ManagedHandshake {
 interface EditorSession {
   id: string
   sourcePath: string
+  ownerSessionId?: string
   baselineSha256: string
   child: ChildProcessWithoutNullStreams
   iframeUrl: string
@@ -103,6 +112,16 @@ interface EditorSession {
   createdAt: number
   closed: boolean
   saving: boolean
+  mutating: boolean
+}
+
+export type OpenPencilLiveTool = 'get_selection' | 'update_node' | 'batch_design'
+
+export interface ActiveMcpCallOptions {
+  /** Refuse to drive a different transcript card's live editor. */
+  sourcePath?: string
+  ownerSessionId?: string
+  signal?: AbortSignal
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {
@@ -112,6 +131,20 @@ function json(res: ServerResponse, status: number, value: unknown): void {
   res.setHeader('cache-control', 'no-store')
   res.setHeader('x-content-type-options', 'nosniff')
   res.end(body)
+}
+
+async function waitForResponseFinish(res: ServerResponse): Promise<boolean> {
+  if (res.writableFinished) return true
+  await new Promise<void>(resolveFinished => {
+    const finish = (): void => {
+      res.off('finish', finish)
+      res.off('close', finish)
+      resolveFinished()
+    }
+    res.once('finish', finish)
+    res.once('close', finish)
+  })
+  return res.writableFinished
 }
 
 function errorMessage(error: unknown): string {
@@ -324,14 +357,34 @@ async function waitForEditorReady(baseUrl: string): Promise<void> {
   throw new Error(`OpenPencil editor web bundle was not ready${last === '' ? '' : `: ${last}`}`)
 }
 
-async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.killed) return
-  child.stdin.end()
-  const closed = await Promise.race([
-    new Promise<boolean>(resolveClosed => child.once('close', () => { resolveClosed(true) })),
-    new Promise<boolean>(resolveTimeout => setTimeout(() => { resolveTimeout(false) }, STOP_TIMEOUT_MS)),
-  ])
-  if (!closed && child.exitCode === null) child.kill('SIGKILL')
+const stoppingChildren = new WeakMap<ChildProcessWithoutNullStreams, Promise<void>>()
+
+function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  const current = stoppingChildren.get(child)
+  if (current !== undefined) return current
+  if (child.exitCode !== null || child.killed) return Promise.resolve()
+  const stopping = (async (): Promise<void> => {
+    if (!child.stdin.writableEnded) child.stdin.end()
+    const closed = await new Promise<boolean>(resolveClosed => {
+      let settled = false
+      const finish = (value: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        child.off('close', onClose)
+        resolveClosed(value)
+      }
+      const onClose = (): void => { finish(true) }
+      const timer = setTimeout(() => { finish(false) }, STOP_TIMEOUT_MS)
+      child.once('close', onClose)
+    })
+    if (!closed && child.exitCode === null) child.kill('SIGKILL')
+  })()
+  stoppingChildren.set(child, stopping)
+  void stopping.finally(() => {
+    if (stoppingChildren.get(child) === stopping) stoppingChildren.delete(child)
+  })
+  return stopping
 }
 
 async function atomicWriteDocument(path: string, text: string): Promise<string> {
@@ -368,8 +421,11 @@ async function atomicWriteDocument(path: string, text: string): Promise<string> 
 export class EditorHostController {
   readonly binary = findEditorHostBinary()
   #routeRefs = 0
+  #routeGeneration = 0
   readonly #editorKey: Buffer
   #sessions = new Map<string, EditorSession>()
+  #pendingChildren = new Set<ChildProcessWithoutNullStreams>()
+  #launchQueue: Promise<void> = Promise.resolve()
 
   constructor(masterKey: Buffer) {
     this.#editorKey = deriveEditorKey(masterKey)
@@ -417,9 +473,26 @@ export class EditorHostController {
       const refresh = new RegExp(`^${EDITOR_ROUTE_PREFIX}/([A-Za-z0-9_.-]+)/refresh$`).exec(url.pathname)
       const legacyRefresh = url.pathname === `${EDITOR_ROUTE_PREFIX}/refresh`
       const save = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)/save$`).exec(url.pathname)
+      const selection = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)/selection$`).exec(url.pathname)
       const close = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)$`).exec(url.pathname)
       if (launch !== null && req.method === 'POST') {
-        await this.#launch(launch[1]!, requestOrigin(req), res)
+        const body = await readRequestBody(req)
+        let ownerSessionId: string | undefined
+        if (body.length > 0) {
+          try {
+            const value: unknown = JSON.parse(body.toString('utf8'))
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+              const candidate = (value as Record<string, unknown>).sessionId
+              if (typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 256) ownerSessionId = candidate
+            }
+          } catch {
+            throw new HttpError(400, 'editor launch request is not valid JSON')
+          }
+        }
+        const routeGeneration = this.#routeGeneration
+        await this.#serializeLaunch(() => this.#launch(
+          launch[1]!, requestOrigin(req), res, routeGeneration, ownerSessionId,
+        ))
         return
       }
       if (refresh !== null && req.method === 'POST') {
@@ -431,11 +504,16 @@ export class EditorHostController {
       if (legacyRefresh && req.method === 'POST') {
         requestOrigin(req)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
-        throw new HttpError(410, 'This editor card predates restart-safe editing; rerun design_render once')
+        throw new HttpError(410, `This editor card predates restart-safe editing; rerun ${OPENPENCIL_RENDER_TOOL_NAME} once`)
       }
       if (save !== null && req.method === 'POST') {
         requestOrigin(req)
         await this.#save(save[1]!, req, res)
+        return
+      }
+      if (selection !== null && req.method === 'GET') {
+        const snapshot = await this.#selectionForSession(selection[1]!)
+        json(res, 200, { ok: true, selection: snapshot })
         return
       }
       if (close !== null && req.method === 'DELETE') {
@@ -453,87 +531,206 @@ export class EditorHostController {
   }
 
   async dispose(): Promise<void> {
+    // Invalidate work accepted by the route before it was detached. Pending
+    // launches check this generation around every asynchronous startup phase,
+    // and their child is stopped here so a handshake wait cannot leak.
+    this.#routeGeneration += 1
     const sessions = [...this.#sessions.values()]
     this.#sessions.clear()
-    await Promise.all(sessions.map(session => this.#disposeSession(session)))
+    const pending = [...this.#pendingChildren]
+    await Promise.all([
+      ...sessions.map(session => this.#disposeSession(session)),
+      ...pending.map(child => stopChild(child)),
+    ])
   }
 
-  async #launch(token: string, origin: string, res: ServerResponse): Promise<void> {
-    const capability = this.#openCapability(token)
-    if (Date.now() > capability.launchExpiresAt) throw new HttpError(410, 'editor capability expired; rerun design_render')
-    const current = await readSourceDocument(capability.sourcePath)
-    if (sha256(current) !== capability.sourceSha256) {
-      throw new HttpError(409, 'source changed since this preview; rerun design_render before editing')
-    }
-    const binary = this.binary
-    if (binary === undefined) throw new HttpError(503, 'OpenPencil editor host binary is unavailable')
+  /** Current live editor selection, suitable for Agent context and UI chips. */
+  async getActiveSelection(options: ActiveMcpCallOptions = {}): Promise<OpenPencilSelectionSnapshot> {
+    const session = this.#activeSession(options.sourcePath, options.ownerSessionId)
+    return this.#selectionFor(session, options.signal)
+  }
 
-    // The details panel hosts one editor. Retire an earlier daemon before a
-    // successor starts so stale transcript cards cannot retain authority.
-    const old = [...this.#sessions.values()]
-    this.#sessions.clear()
-    await Promise.all(old.map(session => this.#disposeSession(session)))
-
-    const env: NodeJS.ProcessEnv = { ...process.env }
-    const sourceRoot = sourceRootForBinary(binary)
-    if (sourceRoot !== undefined) {
-      env.OPENPENCIL_WEB_BUNDLE_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'pkg')
-      env.OPENPENCIL_CANVASKIT_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'assets', 'canvaskit')
+  /**
+   * Drive one allowlisted first-party MCP tool on the currently visible
+   * editor. The managed daemon token never crosses this controller boundary.
+   */
+  async callActiveMcp(
+    tool: OpenPencilLiveTool,
+    args: Record<string, unknown>,
+    options: ActiveMcpCallOptions = {},
+  ): Promise<OpenPencilMcpResult> {
+    const session = this.#activeSession(options.sourcePath, options.ownerSessionId)
+    const mutating = tool === 'update_node' || tool === 'batch_design'
+    if ('filePath' in args || 'sourceFilePath' in args || 'source_file_path' in args) {
+      throw new Error('OpenPencil live tools cannot target a filesystem path through MCP arguments')
     }
-    const child = spawn(binary, [
-      '--serve-web', '--managed', '--port', '0', '--file', capability.sourcePath,
-      '--allow-origin', origin,
-    ], { stdio: ['pipe', 'pipe', 'pipe'], env })
-    let diagnostics = ''
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (diagnostics.length < MAX_DIAGNOSTIC_BYTES) {
-        diagnostics += chunk.toString('utf8').slice(0, MAX_DIAGNOSTIC_BYTES - diagnostics.length)
-      }
-    })
-    let handshake: ManagedHandshake
+    if (mutating && (session.saving || session.mutating)) {
+      throw new Error('OpenPencil editor is already applying or saving another change')
+    }
+    if (mutating) session.mutating = true
     try {
-      handshake = await waitForHandshake(child, () => diagnostics.trim())
-      const baseUrl = `http://127.0.0.1:${handshake.port}`
-      await waitForEditorReady(baseUrl)
-      const id = randomBytes(24).toString('base64url')
-      const session: EditorSession = {
-        id,
-        sourcePath: capability.sourcePath,
-        baselineSha256: capability.sourceSha256,
-        child,
-        iframeUrl: `${baseUrl}/?embed=vscode`,
-        daemonToken: handshake.token,
-        refreshExpiresAt: capability.refreshExpiresAt,
-        createdAt: Date.now(),
-        closed: false,
-        saving: false,
+      let beforeVersion: number | undefined
+      if (mutating) {
+        const current = await readSourceDocument(session.sourcePath)
+        if (sha256(current) !== session.baselineSha256) {
+          throw new Error('OpenPencil source changed outside the active editor; rerender before applying Agent changes')
+        }
+        beforeVersion = await getOpenPencilMcpVersion({
+          baseUrl: new URL(session.iframeUrl).origin,
+          token: session.daemonToken,
+          signal: options.signal,
+        })
       }
-      this.#sessions.set(id, session)
-      child.once('close', () => {
-        if (this.#sessions.get(id) === session) this.#sessions.delete(id)
-        session.closed = true
-      })
-      json(res, 200, {
-        sessionId: id,
-        iframeUrl: session.iframeUrl,
+      const result = await callOpenPencilMcp({
+        baseUrl: new URL(session.iframeUrl).origin,
         token: session.daemonToken,
-        saveUrl: `${EDITOR_ROUTE_PREFIX}/session/${id}/save`,
-        closeUrl: `${EDITOR_ROUTE_PREFIX}/session/${id}`,
-        docJson: current.toString('utf8'),
+        tool,
+        arguments: args,
+        signal: options.signal,
       })
-    } catch (error) {
-      await stopChild(child)
-      throw error
+      if (beforeVersion !== undefined) {
+        const afterVersion = await getOpenPencilMcpVersion({
+          baseUrl: new URL(session.iframeUrl).origin,
+          token: session.daemonToken,
+          signal: options.signal,
+        })
+        if (afterVersion <= beforeVersion) {
+          throw new Error(`OpenPencil MCP ${tool} reported success but did not apply a document change`)
+        }
+      }
+      session.createdAt = Date.now()
+      return result
+    } finally {
+      if (mutating) session.mutating = false
+    }
+  }
+
+  async #serializeLaunch(task: () => Promise<void>): Promise<void> {
+    const run = this.#launchQueue.then(task, task)
+    // A failed launch must not poison the lifecycle queue for later requests.
+    this.#launchQueue = run.catch(() => {})
+    await run
+  }
+
+  #assertLaunchLifecycle(routeGeneration: number): void {
+    if (routeGeneration !== this.#routeGeneration || !this.routeAvailable) {
+      throw new HttpError(410, 'editor route was unloaded during launch')
+    }
+  }
+
+  async #launch(
+    token: string,
+    origin: string,
+    res: ServerResponse,
+    routeGeneration: number,
+    ownerSessionId?: string,
+  ): Promise<void> {
+    let disconnected = res.destroyed
+    let launchChild: ChildProcessWithoutNullStreams | undefined
+    const onResponseClose = (): void => {
+      if (res.writableFinished) return
+      disconnected = true
+      if (launchChild !== undefined) void stopChild(launchChild)
+    }
+    res.once('close', onResponseClose)
+    const assertConnected = (): void => {
+      this.#assertLaunchLifecycle(routeGeneration)
+      if (disconnected || res.destroyed) throw new HttpError(499, 'editor launch client disconnected')
+    }
+    try {
+      assertConnected()
+      const capability = this.#openCapability(token)
+      if (Date.now() > capability.launchExpiresAt) throw new HttpError(410, `editor capability expired; rerun ${OPENPENCIL_RENDER_TOOL_NAME}`)
+      const current = await readSourceDocument(capability.sourcePath)
+      assertConnected()
+      if (sha256(current) !== capability.sourceSha256) {
+        throw new HttpError(409, `source changed since this preview; rerun ${OPENPENCIL_RENDER_TOOL_NAME} before editing`)
+      }
+      const binary = this.binary
+      if (binary === undefined) throw new HttpError(503, 'OpenPencil editor host binary is unavailable')
+
+      // The details panel hosts one editor. Retire an earlier daemon before a
+      // successor starts so stale transcript cards cannot retain authority.
+      const old = [...this.#sessions.values()]
+      this.#sessions.clear()
+      await Promise.all(old.map(session => this.#disposeSession(session)))
+      assertConnected()
+
+      const env: NodeJS.ProcessEnv = { ...process.env }
+      const sourceRoot = sourceRootForBinary(binary)
+      if (sourceRoot !== undefined) {
+        env.OPENPENCIL_WEB_BUNDLE_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'pkg')
+        env.OPENPENCIL_CANVASKIT_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'assets', 'canvaskit')
+      }
+      const child = spawn(binary, [
+        '--serve-web', '--managed', '--port', '0', '--file', capability.sourcePath,
+        '--allow-origin', origin,
+      ], { stdio: ['pipe', 'pipe', 'pipe'], env })
+      launchChild = child
+      this.#pendingChildren.add(child)
+      let diagnostics = ''
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (diagnostics.length < MAX_DIAGNOSTIC_BYTES) {
+          diagnostics += chunk.toString('utf8').slice(0, MAX_DIAGNOSTIC_BYTES - diagnostics.length)
+        }
+      })
+      try {
+        const handshake = await waitForHandshake(child, () => diagnostics.trim())
+        assertConnected()
+        const baseUrl = `http://127.0.0.1:${handshake.port}`
+        await waitForEditorReady(baseUrl)
+        assertConnected()
+        const id = randomBytes(24).toString('base64url')
+        const session: EditorSession = {
+          id,
+          sourcePath: capability.sourcePath,
+          ...(ownerSessionId === undefined ? {} : { ownerSessionId }),
+          baselineSha256: capability.sourceSha256,
+          child,
+          iframeUrl: `${baseUrl}/?embed=vscode`,
+          daemonToken: handshake.token,
+          refreshExpiresAt: capability.refreshExpiresAt,
+          createdAt: Date.now(),
+          closed: false,
+          saving: false,
+          mutating: false,
+        }
+        this.#sessions.set(id, session)
+        this.#pendingChildren.delete(child)
+        child.once('close', () => {
+          if (this.#sessions.get(id) === session) this.#sessions.delete(id)
+          session.closed = true
+        })
+        json(res, 200, {
+          sessionId: id,
+          iframeUrl: session.iframeUrl,
+          token: session.daemonToken,
+          saveUrl: `${EDITOR_ROUTE_PREFIX}/session/${id}/save`,
+          selectionUrl: `${EDITOR_ROUTE_PREFIX}/session/${id}/selection`,
+          closeUrl: `${EDITOR_ROUTE_PREFIX}/session/${id}`,
+          docJson: current.toString('utf8'),
+        })
+        if (!await waitForResponseFinish(res)) {
+          throw new HttpError(499, 'editor launch client disconnected')
+        }
+        launchChild = undefined
+      } catch (error) {
+        this.#pendingChildren.delete(child)
+        await stopChild(child)
+        throw error
+      }
+    } finally {
+      res.off('close', onResponseClose)
     }
   }
 
   async #refresh(token: string, res: ServerResponse): Promise<void> {
     const capability = this.#openCapability(token)
     const now = Date.now()
-    if (now > capability.refreshExpiresAt) throw new HttpError(410, 'editor capability expired; rerun design_render')
+    if (now > capability.refreshExpiresAt) throw new HttpError(410, `editor capability expired; rerun ${OPENPENCIL_RENDER_TOOL_NAME}`)
     const current = await readSourceDocument(capability.sourcePath)
     if (sha256(current) !== capability.sourceSha256) {
-      throw new HttpError(409, 'source changed since this preview; rerun design_render before editing')
+      throw new HttpError(409, `source changed since this preview; rerun ${OPENPENCIL_RENDER_TOOL_NAME} before editing`)
     }
     const next = this.#sealCapability({
       ...capability,
@@ -547,7 +744,7 @@ export class EditorHostController {
     if (!TOKEN_PATTERN.test(id)) throw new HttpError(404, 'editor session not found')
     const session = this.#sessions.get(id)
     if (session === undefined || session.closed) throw new HttpError(410, 'editor session has ended')
-    if (session.saving) throw new HttpError(409, 'another editor save is already in progress')
+    if (session.saving || session.mutating) throw new HttpError(409, 'another editor change or save is already in progress')
     session.saving = true
     try {
       const bytes = await readRequestBody(req)
@@ -606,6 +803,41 @@ export class EditorHostController {
     await this.#disposeSession(session)
   }
 
+  #activeSession(expectedSourcePath?: string, ownerSessionId?: string): EditorSession {
+    this.#prune()
+    const sessions = [...this.#sessions.values()].filter(session => !session.closed)
+    if (sessions.length !== 1) {
+      throw new Error('No active OpenPencil editor. Render with editable=true and open “Edit in sidebar” first.')
+    }
+    const session = sessions[0]!
+    if (ownerSessionId !== undefined && session.ownerSessionId !== ownerSessionId) {
+      throw new Error('The active OpenPencil editor belongs to a different DSH session')
+    }
+    if (expectedSourcePath !== undefined && resolve(expectedSourcePath) !== session.sourcePath) {
+      throw new Error(`The active OpenPencil editor is ${session.sourcePath}, not ${resolve(expectedSourcePath)}`)
+    }
+    return session
+  }
+
+  async #selectionForSession(id: string): Promise<OpenPencilSelectionSnapshot> {
+    if (!TOKEN_PATTERN.test(id)) throw new HttpError(404, 'editor session not found')
+    const session = this.#sessions.get(id)
+    if (session === undefined || session.closed) throw new HttpError(410, 'editor session has ended')
+    return this.#selectionFor(session)
+  }
+
+  async #selectionFor(session: EditorSession, signal?: AbortSignal): Promise<OpenPencilSelectionSnapshot> {
+    const result = await callOpenPencilMcp({
+      baseUrl: new URL(session.iframeUrl).origin,
+      token: session.daemonToken,
+      tool: 'get_selection',
+      arguments: { readDepth: 0 },
+      signal,
+    })
+    session.createdAt = Date.now()
+    return selectionSnapshotFromMcp(session.sourcePath, result.value)
+  }
+
   async #disposeSession(session: EditorSession): Promise<void> {
     if (session.closed) return
     session.closed = true
@@ -634,7 +866,7 @@ export class EditorHostController {
     if (!token.startsWith(EDITOR_CAPABILITY_PREFIX)) {
       // Compatibility boundary for pre-fix transcript cards: their random
       // in-memory token cannot safely be recreated after a plugin reload.
-      throw new HttpError(410, 'editor capability expired; rerun design_render')
+      throw new HttpError(410, `editor capability expired; rerun ${OPENPENCIL_RENDER_TOOL_NAME}`)
     }
     if (token.length > EDITOR_CAPABILITY_MAX_LENGTH) throw new HttpError(404, 'editor capability not found')
     try {

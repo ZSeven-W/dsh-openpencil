@@ -15,12 +15,19 @@ import {
   type EditorLocale,
 } from './editor-bridge.js'
 import { editorGrantForBoot, rememberEditorSuccessor } from './editor-successor.js'
+import {
+  clearOpenPencilSelection,
+  liveSelectionOf,
+  publishOpenPencilSelection,
+} from './selection-store.js'
+import { startEditorSelectionPolling } from './selection-polling.js'
 
 export interface LaunchResponse {
   sessionId: string
   iframeUrl: string
   token: string
   saveUrl: string
+  selectionUrl?: string
   closeUrl: string
   docJson?: string
   /** Client-only marker: the persisted launch capability was renewed. */
@@ -46,6 +53,9 @@ function launchResponseOf(value: unknown): LaunchResponse {
     iframeUrl: value.iframeUrl as string,
     token: value.token as string,
     saveUrl: editorControlUrl(value.saveUrl as string),
+    ...(typeof value.selectionUrl === 'string' && value.selectionUrl.length > 0
+      ? { selectionUrl: editorControlUrl(value.selectionUrl) }
+      : {}),
     closeUrl: editorControlUrl(value.closeUrl as string),
     ...(typeof value.docJson === 'string' ? { docJson: value.docJson } : {}),
   }
@@ -122,12 +132,23 @@ export function editorPanelCopy(locale: EditorLocale): EditorPanelCopy {
 interface EditorBootOptions {
   signal?: AbortSignal
   fetcher?: typeof fetch
+  sessionId?: string
 }
 
-function launchRequest(fetcher: typeof fetch, url: string, signal?: AbortSignal): Promise<Response> {
+interface EditorCloseOptions {
+  fetcher?: typeof fetch
+  dirty?: boolean
+  keepalive?: boolean
+}
+
+function launchRequest(fetcher: typeof fetch, url: string, signal?: AbortSignal, sessionId?: string): Promise<Response> {
   return fetcher(editorControlUrl(url), {
     method: 'POST',
     credentials: 'same-origin',
+    ...(sessionId === undefined ? {} : {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
     ...(signal === undefined ? {} : { signal }),
   })
 }
@@ -145,7 +166,7 @@ export async function launchManagedEditor(
   const fetcher = options.fetcher ?? fetch
   let launchUrl = editor.launchUrl
   let renewed = false
-  let response = await launchRequest(fetcher, launchUrl, options.signal)
+  let response = await launchRequest(fetcher, launchUrl, options.signal, options.sessionId)
   if (response.status === 410) {
     if (document.path === undefined) {
       throw new Error('OpenPencil editor launch expired and cannot be refreshed without a source path')
@@ -166,7 +187,7 @@ export async function launchManagedEditor(
     renewed = true
     // One bounded retry only. A second 410 is surfaced by responseJson and
     // never loops back through refresh.
-    response = await launchRequest(fetcher, launchUrl, options.signal)
+    response = await launchRequest(fetcher, launchUrl, options.signal, options.sessionId)
   }
   const launch = launchResponseOf(await responseJson(response, 'OpenPencil editor launch'))
   return renewed ? { ...launch, renewed: true } : launch
@@ -180,16 +201,57 @@ export async function prepareManagedEditor(
 ): Promise<EditorBootResult> {
   const fetcher = options.fetcher ?? fetch
   const launch = await launchManagedEditor(editor, document, { ...options, fetcher })
-  if (launch.docJson !== undefined) return { launch, documentJson: launch.docJson }
-  if (editor.refreshUrl !== undefined || launch.renewed === true) {
-    throw new Error('OpenPencil editor launch omitted current docJson')
+  try {
+    if (launch.docJson !== undefined) return { launch, documentJson: launch.docJson }
+    if (editor.refreshUrl !== undefined || launch.renewed === true) {
+      throw new Error('OpenPencil editor launch omitted current docJson')
+    }
+    const documentResponse = await fetcher(editorControlUrl(document.url), {
+      credentials: 'same-origin',
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    if (!documentResponse.ok) throw new Error(`OpenPencil document request failed (${documentResponse.status})`)
+    return { launch, documentJson: await documentResponse.text() }
+  } catch (error) {
+    // The daemon already exists once launchManagedEditor returns. A cancelled
+    // fallback document fetch or contract error must not strand that process.
+    await closeManagedEditorLaunch(launch, { fetcher, keepalive: true })
+    throw error
   }
-  const documentResponse = await fetcher(editorControlUrl(document.url), {
+}
+
+/** Close exactly the managed session returned by one launch response. */
+export async function closeManagedEditorLaunch(
+  launch: LaunchResponse,
+  options: EditorCloseOptions = {},
+): Promise<void> {
+  const fetcher = options.fetcher ?? fetch
+  await fetcher(launch.closeUrl, {
+    method: 'DELETE',
     credentials: 'same-origin',
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: launch.sessionId, dirty: options.dirty ?? false }),
+    ...(options.keepalive === undefined ? {} : { keepalive: options.keepalive }),
+  }).catch(() => {})
+}
+
+/**
+ * Mount-aware boot boundary. React may cancel an effect after its launch POST
+ * has committed; release that precise returned session before ignoring it.
+ */
+export async function prepareManagedEditorForMount(
+  editor: NonNullable<PresentationGrant['editor']>,
+  document: NonNullable<PresentationGrant['document']>,
+  accept: () => boolean,
+  options: EditorBootOptions = {},
+): Promise<EditorBootResult | undefined> {
+  const prepared = await prepareManagedEditor(editor, document, options)
+  if (accept()) return prepared
+  await closeManagedEditorLaunch(prepared.launch, {
+    ...(options.fetcher === undefined ? {} : { fetcher: options.fetcher }),
+    keepalive: true,
   })
-  if (!documentResponse.ok) throw new Error(`OpenPencil document request failed (${documentResponse.status})`)
-  return { launch, documentJson: await documentResponse.text() }
+  return undefined
 }
 
 const panelStyles: Record<string, React.CSSProperties> = {
@@ -221,10 +283,11 @@ const panelStyles: Record<string, React.CSSProperties> = {
 type Phase = 'launching' | 'loading' | 'ready' | 'saving' | 'error'
 
 /** Editable panel. The daemon is created lazily only while this component is mounted. */
-export function ManagedOpenPencilEditor({ grant, colorScheme, locale }: {
+export function ManagedOpenPencilEditor({ grant, colorScheme, locale, sessionId }: {
   grant: PresentationGrant
   colorScheme: EditorColorScheme
   locale: EditorLocale
+  sessionId: string
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const launchRef = useRef<LaunchResponse>()
@@ -236,6 +299,7 @@ export function ManagedOpenPencilEditor({ grant, colorScheme, locale }: {
   const localeRef = useRef(locale)
   localeRef.current = locale
   const initTimerRef = useRef<ReturnType<typeof setInterval>>()
+  const selectionPollStopRef = useRef<() => void>()
   const requestCounterRef = useRef(0)
   const saveWaitersRef = useRef(new Map<string, { resolve: (message: Extract<EditorInboundMessage, { type: 'op-bridge/snapshot-result' }>) => void; reject: (error: Error) => void }>())
   const [phase, setPhase] = useState<Phase>('launching')
@@ -291,15 +355,13 @@ export function ManagedOpenPencilEditor({ grant, colorScheme, locale }: {
     const abort = new AbortController()
     const coordinatorToken = Symbol('openpencil-editor')
     const closeDaemon = async (dirtyAtClose = dirtyRef.current): Promise<void> => {
+      selectionPollStopRef.current?.()
+      selectionPollStopRef.current = undefined
+      clearOpenPencilSelection(sessionId, documentGrant.path)
       const launch = launchRef.current
       if (launch === undefined) return
       launchRef.current = undefined
-      await fetch(launch.closeUrl, {
-        method: 'DELETE', credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId: launch.sessionId, dirty: dirtyAtClose }),
-        keepalive: true,
-      }).catch(() => {})
+      await closeManagedEditorLaunch(launch, { dirty: dirtyAtClose, keepalive: true })
     }
     const releaseEditor = claimEditor(coordinatorToken, () => {
       abort.abort()
@@ -308,11 +370,16 @@ export function ManagedOpenPencilEditor({ grant, colorScheme, locale }: {
     const boot = async (): Promise<void> => {
       try {
         const bootGrant = editorGrantForBoot(editorGrant)
-        const { launch, documentJson } = await prepareManagedEditor(bootGrant, documentGrant, {
-          signal: abort.signal,
+        const prepared = await prepareManagedEditorForMount(bootGrant, documentGrant, () => (
+          !cancelled && !abort.signal.aborted
+        ), {
+          sessionId,
         })
+        if (prepared === undefined) return
+        const { launch, documentJson } = prepared
         const origin = editorOrigin(launch.iframeUrl)
-        if (cancelled) return
+        // No await occurs between acceptance and publication. Cleanup can now
+        // find this session in launchRef and cannot target a later launch.
         launchRef.current = launch
         // Capture first-navigation host presentation exactly once. Later host
         // theme/locale changes travel over the bridge and never reload the iframe.
@@ -341,6 +408,26 @@ export function ManagedOpenPencilEditor({ grant, colorScheme, locale }: {
       void closeDaemon()
     }
   }, [documentGrant.path, documentGrant.url, editorGrant.launchUrl, editorGrant.refreshUrl])
+
+  useEffect(() => {
+    if (phase !== 'ready' && phase !== 'saving') return
+    const selectionUrl = launchRef.current?.selectionUrl
+    if (selectionUrl === undefined) return
+    const stop = startEditorSelectionPolling({
+      url: selectionUrl,
+      onValue: value => {
+        if (!isRecord(value)) return
+        const selection = liveSelectionOf(value.selection)
+        if (selection !== undefined) publishOpenPencilSelection(sessionId, selection)
+      },
+      onStop: () => { clearOpenPencilSelection(sessionId, documentGrant.path) },
+    })
+    selectionPollStopRef.current = stop
+    return () => {
+      if (selectionPollStopRef.current === stop) selectionPollStopRef.current = undefined
+      stop()
+    }
+  }, [documentGrant.path, phase, sessionId])
 
   useEffect(() => {
     const listener = (event: MessageEvent): void => {
