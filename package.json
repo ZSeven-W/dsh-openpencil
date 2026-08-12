@@ -1,0 +1,83 @@
+{
+  "name": "@dsh-external/dsh-openpencil",
+  "version": "0.0.1",
+  "description": "OpenPencil plugin for DSH with exact multi-frame previews, an interactive canvas, and managed sidebar editing.",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "openpencil",
+    "plugin",
+    "design"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/dsh-external/dsh-openpencil.git"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "node scripts/run-tool.mjs tsc -p tsconfig.json && npm run build:client",
+    "build:client": "node scripts/run-tool.mjs tsc -p tsconfig.client.json && node scripts/run-tool.mjs tsdown src/client/index.tsx --format cjs --platform browser --target es2022 --tsconfig tsconfig.client.json --deps.never-bundle react --deps.never-bundle react/jsx-runtime --out-dir .client-build --clean --sourcemap --logLevel warn && node scripts/build-client.mjs",
+    "sync:viewer-assets": "node scripts/sync-viewer-assets.mjs",
+    "test:viewer-assets": "node scripts/test-viewer-assets.mjs",
+    "test:client": "npm run build:client && node --test tests/client.test.mjs",
+    "test:host": "npm run build && node scripts/test-host.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-tool",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1-rc.1",
+    "@deepseek-ai/dsh-client-locale": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-theme": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-tool": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.0.1-rc.1",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "~18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3"
+  }
+}

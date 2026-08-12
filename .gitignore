@@ -1,0 +1,21 @@
+.DS_Store
+.client-build/
+node_modules
+.pnpm-store/
+
+# Local credentials and environment overrides must never be committed.
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+
+# Local build/test output.
+coverage/
+*.log
+*.tgz
+
+# Local visual acceptance evidence may contain workspace or conversation data.
+artifacts/
+dsh-actual-*.png
