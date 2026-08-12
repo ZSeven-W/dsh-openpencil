@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "revision": "77f5af9cb98a560c08ee",
+  "revision": "b65fe4bbb11d2767358d",
   "files": {
     "sdk.js": {
-      "bytes": 127728,
-      "sha256": "73ce574b41f4211a68c895c071e8f52ce77594802d223917d024e92279de600a"
+      "bytes": 129164,
+      "sha256": "1262ddf27d93ce4201b80ef40c361351edb9a5190291d42a62a689c652bd823b"
     },
     "op_web_sdk_bg.wasm": {
-      "bytes": 15889920,
-      "sha256": "bd941ae2ddd0b3190d4972f105eef5a72e005d519407d555074d1d3a06255ae9"
+      "bytes": 15890526,
+      "sha256": "04d47c298f72ae10bb28c045ec58d44edb30cc98bf07c9ebb5b23e8a9151c890"
     },
     "canvaskit/canvaskit.js": {
       "bytes": 129433,
