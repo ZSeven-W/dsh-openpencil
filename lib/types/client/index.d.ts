@@ -6,13 +6,16 @@
  * the source `.op`, the user can opt into one shared, read-only Web SDK
  * canvas. The SDK and document are fetched only after that explicit action.
  */
-import type { ToolCallViewProps, ToolDetailsViewProps } from '@deepseek-ai/dsh-client-ui-tool/client';
+import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client';
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 import { type EditorColorScheme, type EditorLocale } from './editor-bridge.js';
+import { type CompatibleToolCallViewProps, type CompatibleToolDetailsViewProps } from './details-compat.js';
 import type { GalleryFrame, GalleryLocale } from './frame-gallery.js';
 export { LEGACY_DESIGN_RENDER_TOOL_NAME, OPENPENCIL_RENDER_TOOL_NAME, } from '../tool-names.js';
 export { calculateGalleryFitViewZoom, clampGalleryZoom, frameLabel, frameGalleryCopy, galleryZoomCommandTarget, galleryViewportMaxHeight, galleryZoomPercent, galleryZoomShortcut, GALLERY_COMPACT_MAX_HEIGHT, GALLERY_TOOLBAR_CONTROL_CONTENT_LAYOUT, GALLERY_TOOLBAR_CONTROL_HEIGHT, GALLERY_TOOLBAR_CONTROL_LAYOUT, GALLERY_ZOOM_MAX, GALLERY_ZOOM_MIN, GALLERY_ZOOM_STEP, nextGalleryZoom, normalizeFrameIndex, } from './frame-gallery.js';
 export { closeManagedEditorLaunch, editorPanelCopy, launchManagedEditor, prepareManagedEditor, prepareManagedEditorForMount, } from './editor-panel.js';
+export { requestOpenPencilEditor, } from './details-compat.js';
+export { confirmEditorModalClose, editorModalCopy, } from './editor-modal.js';
 export { editorGrantForBoot, editorSuccessorFromSave, editorSuccessorStorageKey, rememberEditorSuccessor, } from './editor-successor.js';
 export { claimEditor, confirmEditorClose, editorControlUrl, editorIframeUrlWithLocale, editorIframeUrlWithTheme, editorLocaleFromDsh, editorMessageFrom, editorOrigin, encodeEditorOutbound, parseEditorInbound, } from './editor-bridge.js';
 export { clearOpenPencilSelection, getOpenPencilSelectionSnapshot, liveSelectionOf, publishOpenPencilSelection, subscribeOpenPencilSelection, } from './selection-store.js';
@@ -30,6 +33,7 @@ export declare function designRenderCopy(locale: PresentationLocale): {
     readonly renderFailed: "The render failed.";
     readonly frames: "frames";
     readonly openInteractiveCanvas: "Open interactive canvas";
+    readonly editCanvas: "Edit canvas";
     readonly editInSidebar: "Edit in sidebar";
     readonly openRenderedPng: "Open rendered PNG";
     readonly downloadPng: "Download PNG";
@@ -59,6 +63,7 @@ export declare function designRenderCopy(locale: PresentationLocale): {
     readonly renderFailed: "渲染失败。";
     readonly frames: "页";
     readonly openInteractiveCanvas: "打开交互画布";
+    readonly editCanvas: "编辑画布";
     readonly editInSidebar: "在侧边栏编辑";
     readonly openRenderedPng: "打开渲染 PNG";
     readonly downloadPng: "下载 PNG";
@@ -146,11 +151,13 @@ export declare function sizeCanvasForDisplay(canvas: Pick<HTMLCanvasElement, 'cl
     dpr: number;
 };
 /** Render one OpenPencil render tool call as a PNG-first card. */
-export declare function DesignRenderView({ block, openDetails, openFile, inspect, locale }: ToolCallViewProps & {
+export declare function DesignRenderView({ block, openDetails, openFile, inspect, locale, colorScheme, editorLocale, sessionId, }: CompatibleToolCallViewProps & {
     locale?: PresentationLocale;
+    colorScheme?: EditorColorScheme;
+    editorLocale?: EditorLocale;
 }): import("react").JSX.Element;
 /** Render the selected editable design inside DSH's resident details column. */
-export declare function OpenPencilEditorPanel({ block, colorScheme, locale, sessionId }: ToolDetailsViewProps & {
+export declare function OpenPencilEditorPanel({ block, colorScheme, locale, sessionId }: CompatibleToolDetailsViewProps & {
     colorScheme: EditorColorScheme;
     locale: EditorLocale;
 }): import("react").JSX.Element;

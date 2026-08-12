@@ -244,6 +244,7 @@ test('gallery and render-card copy follow the resolved DSH locale', () => {
   const zhCard = client.designRenderCopy('zh')
   assert.equal(zhCard.designRender, 'OpenPencil 渲染')
   assert.equal(zhCard.openInteractiveCanvas, '打开交互画布')
+  assert.equal(zhCard.editCanvas, '编辑画布')
   assert.equal(zhCard.editInSidebar, '在侧边栏编辑')
   assert.equal(zhCard.downloadPng, '下载 PNG')
   assert.equal(zhCard.noPreview, '当前宿主没有可用的预览通道。')
@@ -251,6 +252,7 @@ test('gallery and render-card copy follow the resolved DSH locale', () => {
   const enCard = client.designRenderCopy('en')
   assert.equal(enCard.designRender, 'OpenPencil render')
   assert.equal(enCard.openInteractiveCanvas, 'Open interactive canvas')
+  assert.equal(enCard.editCanvas, 'Edit canvas')
   assert.equal(enCard.noPreview, 'No preview channel available in this host.')
 })
 
@@ -468,6 +470,51 @@ test('registers canonical OpenPencil render views and client-only legacy replay 
   ])
 })
 
+test('stock rc.2 can leave the optional details slot undeclared', () => {
+  const registrations = []
+  const pending = []
+  client.apply({
+    on() { return () => {} },
+    theme: { getTheme: () => ({ active: { colorScheme: 'light' } }) },
+    locale: { getLocale: () => ({ active: 'en' }) },
+    slots: {
+      inject(name, install) {
+        if (name === 'tool.details.toolview') {
+          pending.push(name)
+          return () => {}
+        }
+        return install()
+      },
+      register(definition) {
+        registrations.push(definition)
+        return () => {}
+      },
+    },
+  })
+
+  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview'])
+  assert.deepEqual(registrations, [
+    { name: 'tool.call.toolview', key: 'openpencil_render' },
+    { name: 'tool.call.toolview', key: 'design_render' },
+    { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
+  ])
+})
+
+test('editor launch prefers native details and falls back to the plugin modal', () => {
+  const calls = []
+  assert.equal(client.requestOpenPencilEditor(
+    () => { calls.push('details') },
+    () => { calls.push('modal') },
+  ), 'details')
+  assert.deepEqual(calls, ['details'])
+
+  assert.equal(client.requestOpenPencilEditor(
+    undefined,
+    () => { calls.push('modal') },
+  ), 'modal')
+  assert.deepEqual(calls, ['details', 'modal'])
+})
+
 test('editor bridge maps and emits the resolved DSH locale as BCP 47', () => {
   assert.equal(client.editorLocaleFromDsh('zh'), 'zh-CN')
   assert.equal(client.editorLocaleFromDsh('en'), 'en-US')
@@ -495,6 +542,44 @@ test('editor panel chrome follows the resolved editor locale', () => {
   assert.equal(en.loading, 'Loading editable OpenPencil canvas…')
   assert.equal(en.editorTitle('home.op'), 'OpenPencil editor: home.op')
   assert.equal(en.syncConflict(7), 'The source changed outside this editor (server v7). Save was stopped.')
+})
+
+test('fallback editor modal chrome follows the resolved editor locale', () => {
+  assert.deepEqual(client.editorModalCopy('zh-CN'), {
+    title: 'OpenPencil 编辑器',
+    close: '关闭',
+    discard: 'OpenPencil 中有未保存的更改，确定关闭并放弃吗？',
+  })
+  assert.deepEqual(client.editorModalCopy('en-US'), {
+    title: 'OpenPencil editor',
+    close: 'Close',
+    discard: 'OpenPencil has unsaved changes. Close and discard them?',
+  })
+})
+
+test('fallback editor modal confirms only when the managed editor is dirty', () => {
+  const cleanRoot = { querySelector() { return null } }
+  let confirmations = 0
+  assert.equal(client.confirmEditorModalClose(cleanRoot, 'discard?', () => {
+    confirmations += 1
+    return false
+  }), true)
+  assert.equal(confirmations, 0)
+
+  const dirtyRoot = { querySelector(selector) {
+    assert.equal(selector, '[data-tool-details-dirty="true"]')
+    return {}
+  } }
+  assert.equal(client.confirmEditorModalClose(dirtyRoot, 'discard?', message => {
+    confirmations += 1
+    assert.equal(message, 'discard?')
+    return false
+  }), false)
+  assert.equal(client.confirmEditorModalClose(dirtyRoot, 'discard?', () => {
+    confirmations += 1
+    return true
+  }), true)
+  assert.equal(confirmations, 2)
 })
 
 test('selection polling stops and clears state on terminal 404 and 410 responses', async () => {

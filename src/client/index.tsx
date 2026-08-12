@@ -15,13 +15,19 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { ToolCallViewProps, ToolDetailsViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
+import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { editorPanelCopy, ManagedOpenPencilEditor } from './editor-panel.js'
 import { editorLocaleFromDsh, type EditorColorScheme, type EditorLocale } from './editor-bridge.js'
+import {
+  requestOpenPencilEditor,
+  type CompatibleToolCallViewProps,
+  type CompatibleToolDetailsViewProps,
+} from './details-compat.js'
+import { ManagedOpenPencilEditorModal } from './editor-modal.js'
 import { FrameGallery, normalizeFrameIndex as normalizedFrameIndex } from './frame-gallery.js'
 import type { GalleryFrame, GalleryLocale } from './frame-gallery.js'
 import { OpenPencilSelectionDock } from './selection-dock.js'
@@ -61,6 +67,13 @@ export {
   prepareManagedEditor,
   prepareManagedEditorForMount,
 } from './editor-panel.js'
+export {
+  requestOpenPencilEditor,
+} from './details-compat.js'
+export {
+  confirmEditorModalClose,
+  editorModalCopy,
+} from './editor-modal.js'
 export {
   editorGrantForBoot,
   editorSuccessorFromSave,
@@ -113,6 +126,7 @@ const DESIGN_RENDER_COPY = {
     renderFailed: 'The render failed.',
     frames: 'frames',
     openInteractiveCanvas: 'Open interactive canvas',
+    editCanvas: 'Edit canvas',
     editInSidebar: 'Edit in sidebar',
     openRenderedPng: 'Open rendered PNG',
     downloadPng: 'Download PNG',
@@ -143,6 +157,7 @@ const DESIGN_RENDER_COPY = {
     renderFailed: '渲染失败。',
     frames: '页',
     openInteractiveCanvas: '打开交互画布',
+    editCanvas: '编辑画布',
     editInSidebar: '在侧边栏编辑',
     openRenderedPng: '打开渲染 PNG',
     downloadPng: '下载 PNG',
@@ -641,8 +656,19 @@ function CanvasModal({ grant, onClose, locale }: {
 }
 
 /** Render one OpenPencil render tool call as a PNG-first card. */
-export function DesignRenderView({ block, openDetails, openFile, inspect, locale = 'en' }: ToolCallViewProps & {
+export function DesignRenderView({
+  block,
+  openDetails,
+  openFile,
+  inspect,
+  locale = 'en',
+  colorScheme = 'light',
+  editorLocale,
+  sessionId,
+}: CompatibleToolCallViewProps & {
   locale?: PresentationLocale
+  colorScheme?: EditorColorScheme
+  editorLocale?: EditorLocale
 }) {
   const settled = 'kind' in block
   const error = settled && block.isError
@@ -655,7 +681,9 @@ export function DesignRenderView({ block, openDetails, openFile, inspect, locale
   const currentFrameIndex = normalizedFrameIndex(selectedFrameIndex, frames.length)
   const selectedFrame = frames[currentFrameIndex] ?? grant?.image
   const [modalToken, setModalToken] = useState<symbol>()
+  const [editorModalOpen, setEditorModalOpen] = useState(false)
   const releaseRef = useRef<() => void>()
+  const resolvedEditorLocale = editorLocale ?? editorLocaleFromDsh(locale)
 
   const closeCanvas = useCallback(() => {
     releaseRef.current?.()
@@ -671,6 +699,10 @@ export function DesignRenderView({ block, openDetails, openFile, inspect, locale
     })
     setModalToken(token)
   }, [])
+
+  const openEditor = useCallback(() => {
+    requestOpenPencilEditor(openDetails, () => { setEditorModalOpen(true) })
+  }, [openDetails])
 
   useEffect(() => () => { releaseRef.current?.() }, [])
   useEffect(() => { setSelectedFrameIndex(0) }, [frames.map(frame => frame.previewUrl).join('\n')])
@@ -701,7 +733,11 @@ export function DesignRenderView({ block, openDetails, openFile, inspect, locale
               <span title={grant.rendererBinary}>{grant.renderer}{grant.fidelity === undefined ? '' : ` · ${grant.fidelity}`}</span>
             ) : null}
             {grant.document !== undefined && grant.viewer !== undefined ? <button type="button" style={styles.primaryButton} onClick={openCanvas}>{copy.openInteractiveCanvas}</button> : null}
-            {grant.document !== undefined && grant.editor?.enabled === true ? <button type="button" style={styles.primaryButton} onClick={openDetails}>{copy.editInSidebar}</button> : null}
+            {grant.document !== undefined && grant.editor?.enabled === true ? (
+              <button type="button" style={styles.primaryButton} onClick={openEditor}>
+                {openDetails === undefined ? copy.editCanvas : copy.editInSidebar}
+              </button>
+            ) : null}
             {selectedFrame !== undefined && openFile !== undefined ? (
               <button type="button" style={styles.button} onClick={() => { openFile(selectedFrame.path) }}>{copy.openRenderedPng}</button>
             ) : null}
@@ -718,12 +754,21 @@ export function DesignRenderView({ block, openDetails, openFile, inspect, locale
         ) : null}
       </div>
       {modalToken !== undefined && grant?.document !== undefined && grant.viewer !== undefined ? <CanvasModal grant={grant} onClose={closeCanvas} locale={locale} /> : null}
+      {editorModalOpen && grant?.document !== undefined && grant.editor?.enabled === true ? (
+        <ManagedOpenPencilEditorModal
+          grant={grant}
+          colorScheme={colorScheme}
+          locale={resolvedEditorLocale}
+          sessionId={String(sessionId)}
+          onClose={() => { setEditorModalOpen(false) }}
+        />
+      ) : null}
     </section>
   )
 }
 
 /** Render the selected editable design inside DSH's resident details column. */
-export function OpenPencilEditorPanel({ block, colorScheme, locale, sessionId }: ToolDetailsViewProps & {
+export function OpenPencilEditorPanel({ block, colorScheme, locale, sessionId }: CompatibleToolDetailsViewProps & {
   colorScheme: EditorColorScheme
   locale: EditorLocale
 }) {
@@ -746,9 +791,17 @@ export function apply(ctx: ClientContext): void {
   const getEditorLocale = (): EditorLocale => editorLocaleFromDsh(getLocale())
   const HostSyncedDesignRenderView = (props: ToolCallViewProps): React.JSX.Element => {
     const locale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
-    return <DesignRenderView {...props} locale={locale} />
+    const colorScheme = useSyncExternalStore(subscribeTheme, getColorScheme, getColorScheme)
+    return (
+      <DesignRenderView
+        {...props}
+        locale={locale}
+        editorLocale={editorLocaleFromDsh(locale)}
+        colorScheme={colorScheme}
+      />
+    )
   }
-  const HostSyncedOpenPencilEditorPanel = (props: ToolDetailsViewProps): React.JSX.Element => {
+  const HostSyncedOpenPencilEditorPanel = (props: CompatibleToolDetailsViewProps): React.JSX.Element => {
     const colorScheme = useSyncExternalStore(subscribeTheme, getColorScheme, getColorScheme)
     const locale = useSyncExternalStore(subscribeLocale, getEditorLocale, getEditorLocale)
     return <OpenPencilEditorPanel {...props} colorScheme={colorScheme} locale={locale} />
