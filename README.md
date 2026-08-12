@@ -6,7 +6,13 @@ DeepSeek Harness plugin for previewing and editing OpenPencil `.op` documents in
 
 ## 项目介绍
 
+**中文**
+
 DSH OpenPencil 是连接 DeepSeek Harness 与 OpenPencil 的智能设计插件，目标是让 Agent 直接驱动真实、可编辑、可交互的设计画布，而不是只返回一张生成图片。它支持在对话中渲染和浏览多页面 `.op` 设计稿，一键进入可缩放画布或完整侧边栏编辑器，继续使用 OpenPencil 的图层、属性、绘制、组件、交互和多类模板能力，快速创建 App 页面、演示文稿、社交媒体内容、信息图等不同类型的设计；同时让 DeepSeek Harness 中的 Agent 理解画布结构、节点、选区、组件关系与交互逻辑，直接调用模板、生成页面、修改组件、调整布局、编排交互、检查视觉质量并保存结果，把“对话提出需求—Agent 操作真实画布—实时预览与交互验证—继续迭代”整合成一条完整设计工作流。
+
+**English**
+
+DSH OpenPencil is an intelligent design plugin that connects DeepSeek Harness with OpenPencil. Its goal is to let an Agent directly operate a real, editable, and interactive design canvas instead of returning only a generated image. It can render and browse multi-page `.op` designs inside a conversation, then open them in a zoomable canvas or the full sidebar editor. From there, users retain OpenPencil's layers, properties, drawing tools, components, interactions, and broad template library for creating app screens, presentations, social media content, infographics, and more. At the same time, the Agent can understand the canvas structure, nodes, selections, component relationships, and interaction logic; invoke templates; generate pages; modify components; adjust layouts; orchestrate interactions; inspect visual quality; and save the result. This brings requirement gathering, direct Agent-driven canvas editing, live preview and interaction validation, and continued iteration into one complete design workflow.
 
 ## What works
 
