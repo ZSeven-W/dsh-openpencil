@@ -261,6 +261,12 @@ DSH OpenPencil 是 **[OpenPencil](https://github.com/ZSeven-W/openpencil)** 的 
 | **[noema](https://github.com/ZSeven-W/noema)** | 面向编码智能体的本地优先、非向量记忆系统 —— 以可检查文件形式提供持久记忆，可跨运行时工作。 |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | 教会 AI 智能体如何使用 `op` 进行设计的 LLM skill 插件 —— 本 DSH 插件的配套项目。 |
 
+同系列的 DSH 插件：
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) —— 从 Claude Code / Codex 把任务派给 DSH agent
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) —— 在对话中运行 iOS 模拟器与 USB 连接的真机
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) —— DSH 的长期记忆
+
 ## 参与贡献
 
 欢迎贡献！Fork 并克隆仓库，创建分支，运行 `pnpm run build` 与测试套件，使用 [Conventional Commits](https://www.conventionalcommits.org/) 规范提交，并向 `main` 分支发起 PR。

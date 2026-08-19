@@ -261,6 +261,12 @@ DSH OpenPencil은 세계 최초의 오픈소스 AI 네이티브 벡터 디자인
 | **[noema](https://github.com/ZSeven-W/noema)** | 코딩 에이전트를 위한 로컬 우선, 비벡터 메모리 시스템 — 검사 가능한 파일 형태의 영속 메모리로, 여러 런타임에서 작동합니다. |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | AI 에이전트에게 `op`로 디자인하는 방법을 가르치는 LLM 스킬 플러그인 — 이 DSH 플러그인의 동반자입니다. |
 
+같은 계열의 DSH 플러그인:
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex에서 DSH 에이전트로 작업 위임
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — 대화 안에서 동작하는 iOS 시뮬레이터와 USB 연결 iPhone
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH를 위한 장기 기억
+
 ## 기여하기
 
 기여를 환영합니다! 포크하고 클론한 뒤 브랜치를 만들고, `pnpm run build`와 테스트 스위트를 실행하고, [Conventional Commits](https://www.conventionalcommits.org/)으로 커밋한 후 `main`에 PR을 열어 주세요.

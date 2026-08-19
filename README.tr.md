@@ -261,6 +261,12 @@ DSH OpenPencil, **[OpenPencil](https://github.com/ZSeven-W/openpencil)** — dü
 | **[noema](https://github.com/ZSeven-W/noema)** | Kodlama ajanları için yerel öncelikli, vektör tabanlı olmayan bellek sistemi — incelenebilir dosyalar olarak kalıcı bellek, çalışma zamanları arasında çalışır. |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | Yapay zekâ ajanlarına `op` ile nasıl tasarım yapılacağını öğreten LLM beceri eklentisi — bu DSH eklentisinin bir eşlikçisi. |
 
+Diğer DSH eklentileri:
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex üzerinden DSH ajanlarına iş dağıtın
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — sohbetin içinde canlı bir iOS simülatörü — ve USB'ye bağlı bir iPhone
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH için uzun süreli bellek
+
 ## Katkıda Bulunma
 
 Katkılar memnuniyetle karşılanır! Fork edip kopyalayın, bir dal oluşturun, `pnpm run build` ve test paketlerini çalıştırın, [Conventional Commits](https://www.conventionalcommits.org/) ile işleyin ve `main` dalına bir PR açın.

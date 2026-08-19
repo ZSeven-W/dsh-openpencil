@@ -261,6 +261,12 @@ DSH OpenPencil は **[OpenPencil](https://github.com/ZSeven-W/openpencil)** — 
 | **[noema](https://github.com/ZSeven-W/noema)** | コーディングエージェント向けのローカルファーストで非ベクターのメモリシステム — 検査可能なファイルとしての永続的なメモリで、ランタイムをまたいで動作します。 |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | AI エージェントに `op` でのデザイン方法を教える LLM スキルプラグイン — この DSH プラグインのコンパニオンです。 |
 
+同じ DSH プラグインファミリー：
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex から DSH エージェントに作業を委譲
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — 会話の中で動く iOS シミュレータと USB 接続の実機
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH の長期記憶
+
 ## コントリビューション
 
 コントリビューションを歓迎します！フォークしてクローンし、ブランチを作成し、`pnpm run build` とテストスイートを実行し、[Conventional Commits](https://www.conventionalcommits.org/) に従ってコミットし、`main` に対して PR を開いてください。

@@ -261,6 +261,12 @@ DSH OpenPencil là plugin DeepSeek Harness dành cho **[OpenPencil](https://gith
 | **[noema](https://github.com/ZSeven-W/noema)** | Hệ thống bộ nhớ local-first, phi vector cho các agent lập trình — bộ nhớ bền vững dưới dạng các tệp có thể kiểm tra, hoạt động trên nhiều runtime. |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | Plugin skill LLM dạy các agent AI cách thiết kế bằng `op` — một người bạn đồng hành của plugin DSH này. |
 
+Các plugin DSH cùng họ:
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — giao việc cho agent DSH từ Claude Code / Codex
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — một iOS Simulator sống động — và iPhone kết nối USB — ngay trong hội thoại
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — bộ nhớ dài hạn cho DSH
+
 ## Đóng góp
 
 Rất hoan nghênh các đóng góp! Hãy fork và clone, tạo một nhánh, chạy `pnpm run build` và các bộ kiểm thử, commit theo [Conventional Commits](https://www.conventionalcommits.org/) và mở một PR tới nhánh `main`.

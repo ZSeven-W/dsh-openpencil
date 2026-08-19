@@ -261,6 +261,12 @@ DSH OpenPencil **[OpenPencil](https://github.com/ZSeven-W/openpencil)** के �
 | **[noema](https://github.com/ZSeven-W/noema)** | कोडिंग एजेंट के लिए लोकल-फ़र्स्ट, नॉन-वेक्टर मेमोरी सिस्टम — निरीक्षण-योग्य फ़ाइलों के रूप में स्थायी मेमोरी, रनटाइम में काम करती है। |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | LLM स्किल प्लगइन जो AI एजेंटों को `op` के साथ डिज़ाइन करना सिखाता है — इस DSH प्लगइन का साथी। |
 
+DSH के अन्य प्लगइन:
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex से DSH एजेंट को काम सौंपें
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — बातचीत के भीतर चलता iOS सिम्युलेटर — और USB से जुड़ा iPhone
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH के लिए दीर्घकालिक स्मृति
+
 ## योगदान
 
 योगदान का स्वागत है! Fork और clone करें, एक ब्रांच बनाएँ, `pnpm run build` और टेस्ट सुइट चलाएँ, [Conventional Commits](https://www.conventionalcommits.org/) के साथ कमिट करें, और `main` के विरुद्ध एक PR खोलें।

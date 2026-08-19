@@ -261,6 +261,12 @@ DSH OpenPencil คือปลั๊กอิน DeepSeek Harness สำหร�
 | **[noema](https://github.com/ZSeven-W/noema)** | ระบบหน่วยความจำแบบ local-first ที่ไม่ใช่เวกเตอร์สำหรับ coding agent — หน่วยความจำที่ทนทานในรูปไฟล์ที่ตรวจสอบได้ ทำงานได้ข้ามรันไทม์ |
 | **[openpencil-skill](https://github.com/ZSeven-W/openpencil-skill)** | ปลั๊กอินทักษะ LLM ที่สอน AI agent วิธีออกแบบด้วย `op` — คู่หูของปลั๊กอิน DSH นี้ |
 
+ปลั๊กอิน DSH อื่นในตระกูลเดียวกัน:
+
+- [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — มอบหมายงานให้เอเจนต์ DSH จาก Claude Code / Codex
+- [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — iOS Simulator ที่ทำงานจริง — และ iPhone ที่ต่อผ่าน USB — ภายในบทสนทนา
+- [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — หน่วยความจำระยะยาวสำหรับ DSH
+
 ## การมีส่วนร่วม
 
 ยินดีต้อนรับการมีส่วนร่วม! Fork และ clone สร้าง branch รัน `pnpm run build` และชุดทดสอบ commit ด้วย [Conventional Commits](https://www.conventionalcommits.org/) และเปิด PR ไปที่ `main`
