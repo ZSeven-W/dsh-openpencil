@@ -263,6 +263,7 @@ DSH OpenPencil คือปลั๊กอิน DeepSeek Harness สำหร�
 
 ปลั๊กอิน DSH อื่นในตระกูลเดียวกัน:
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — อีมูเลเตอร์ Android หรืออุปกรณ์ผ่าน USB แบบสดภายในบทสนทนา ขับเคลื่อนทั้งหมดผ่าน adb
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — มอบหมายงานให้เอเจนต์ DSH จาก Claude Code / Codex
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — iOS Simulator ที่ทำงานจริง — และ iPhone ที่ต่อผ่าน USB — ภายในบทสนทนา
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — หน่วยความจำระยะยาวสำหรับ DSH

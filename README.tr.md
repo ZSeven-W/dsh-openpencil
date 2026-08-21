@@ -263,6 +263,7 @@ DSH OpenPencil, **[OpenPencil](https://github.com/ZSeven-W/openpencil)** — dü
 
 Diğer DSH eklentileri:
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — sohbetin içinde canlı bir Android emülatörü ya da USB cihazı — tamamen adb üzerinden sürülür
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex üzerinden DSH ajanlarına iş dağıtın
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — sohbetin içinde canlı bir iOS simülatörü — ve USB'ye bağlı bir iPhone
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH için uzun süreli bellek

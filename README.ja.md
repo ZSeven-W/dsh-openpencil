@@ -263,6 +263,7 @@ DSH OpenPencil は **[OpenPencil](https://github.com/ZSeven-W/openpencil)** — 
 
 同じ DSH プラグインファミリー：
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — 会話の中で動く Android エミュレータや USB 接続の実機を、すべて adb 経由で操作
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex から DSH エージェントに作業を委譲
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — 会話の中で動く iOS シミュレータと USB 接続の実機
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH の長期記憶

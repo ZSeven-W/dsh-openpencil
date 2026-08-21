@@ -263,6 +263,7 @@ DSH OpenPencil 是 **[OpenPencil](https://github.com/ZSeven-W/openpencil)** 的 
 
 同系列的 DSH 外掛：
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — 在對話中執行 Android 模擬器或 USB 實機，全部由 adb 驅動
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — 從 Claude Code / Codex 把任務派給 DSH agent
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — 在對話中執行 iOS 模擬器與 USB 連接的實機
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH 的長期記憶

@@ -263,6 +263,7 @@ DSH OpenPencil — это плагин DeepSeek Harness для **[OpenPencil](ht
 
 Другие плагины DSH:
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — живой эмулятор Android или устройство по USB прямо в диалоге, полностью под управлением adb
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — делегировать задачи агентам DSH из Claude Code / Codex
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — живой симулятор iOS — и iPhone по USB — прямо в диалоге
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — долговременная память для DSH

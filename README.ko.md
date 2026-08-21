@@ -263,6 +263,7 @@ DSH OpenPencil은 세계 최초의 오픈소스 AI 네이티브 벡터 디자인
 
 같은 계열의 DSH 플러그인:
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — 대화 안에서 동작하는 Android 에뮬레이터와 USB 연결 기기 — 전부 adb로 구동
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — Claude Code / Codex에서 DSH 에이전트로 작업 위임
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — 대화 안에서 동작하는 iOS 시뮬레이터와 USB 연결 iPhone
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — DSH를 위한 장기 기억

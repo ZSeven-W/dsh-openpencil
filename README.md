@@ -263,6 +263,7 @@ DSH OpenPencil is the DeepSeek Harness plugin for **[OpenPencil](https://github.
 
 Sibling DSH plugins:
 
+- [DSH Android](https://github.com/ZSeven-W/dsh-android) — a live Android emulator or USB device inside the conversation, driven entirely through adb
 - [DSH Crew](https://github.com/ZSeven-W/dsh-crew) — dispatch work to DSH agents from Claude Code / Codex
 - [DSH iOS](https://github.com/ZSeven-W/dsh-ios) — a live iOS Simulator and a USB-connected iPhone, inside the conversation
 - [DSH Noema](https://github.com/ZSeven-W/dsh-noema) — long-term memory for DSH
