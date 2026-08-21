@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/dsh-openpencil",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.2",
   "description": "Preview, inspect, and edit real .op OpenPencil design documents inside DSH conversations — headless rendering, a read-only canvas, and a managed editor.",
   "license": "MIT",
   "keywords": [
