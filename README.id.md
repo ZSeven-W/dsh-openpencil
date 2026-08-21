@@ -108,7 +108,7 @@ Kartu alat dan editor terkelola mengikuti lokale Tionghoa/Inggris serta tema ter
 DSH adalah paket terpisah. Pasang sekali jika belum ada:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 Lalu tambahkan plugin ke sebuah profil dan jalankan aplikasi web:
@@ -121,8 +121,8 @@ dsh web
 Tidak ingin memasang DSH secara global? Jalankan dua langkah yang sama lewat `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > Plugin OpenPencil bersifat publik dan tidak memerlukan token npm. Jika DSH prerelease itu sendiri memerlukan autentikasi registry, simpan kredensial tersebut di konfigurasi npm tingkat-pengguna atau sementara di luar checkout. Repositori ini sengaja tidak memuat kredensial registry apa pun.
@@ -193,14 +193,14 @@ Hasil yang terlihat model tetap berupa JSON polos. `presentationMeta.$dshOpenPen
 
 Hasil juga mencatat `renderer`, `rendererBinary`, `fidelity`, dan peringatan apa pun. Pesan schema-v1 yang hanya berisi PNG yang sudah ada tetap dapat dirender.
 
-DSH `0.1.0-rc.6` tidak menyimpan metadata presentasi peramban secara persisten untuk alat yang bersarang di bawah PTC/Code Mode. Plugin memulihkan proyeksi UI-only tersebut melalui endpoint same-origin yang terikat sesi: peramban hanya mengirim session id, call id, dan SHA-256 dokumen yang tidak dapat diubah, sementara host menyelesaikan hasil otoritatif dari log sesi DSH yang tahan lama dan menggunakan penanda dalam-proses berumur pendek hanya untuk mengotorisasi pengeditan langsung terbaru. Kapabilitas pratinjau/editor bertanda tangan tidak pernah masuk ke hasil alat kanonis atau konteks model. Riwayat tahan lama dapat memulihkan pratinjau baca-saja; izin editor hanya diterbitkan untuk hasil langsung terbaru yang tepercaya.
+DSH `0.1.1-rc.1` tidak menyimpan metadata presentasi peramban secara persisten untuk alat yang bersarang di bawah PTC/Code Mode. Plugin memulihkan proyeksi UI-only tersebut melalui endpoint same-origin yang terikat sesi: peramban hanya mengirim session id, call id, dan SHA-256 dokumen yang tidak dapat diubah, sementara host menyelesaikan hasil otoritatif dari log sesi DSH yang tahan lama dan menggunakan penanda dalam-proses berumur pendek hanya untuk mengotorisasi pengeditan langsung terbaru. Kapabilitas pratinjau/editor bertanda tangan tidak pernah masuk ke hasil alat kanonis atau konteks model. Riwayat tahan lama dapat memulihkan pratinjau baca-saja; izin editor hanya diterbitkan untuk hasil langsung terbaru yang tepercaya.
 
 Untuk pemutaran ulang yang terbatas, pemulihan metadata bersarang menerima hingga 128 frame tingkat-teratas; hasil Code Mode yang lebih besar tetap tersedia melalui fallback JSON kanonisnya.
 
 ## Batasan Saat Ini
 
 - Pengeditan lanjutan pada kanvas yang sudah ada memerlukan editor terkelola yang sudah terbuka. Perubahan tetap belum disimpan hingga pengguna memanggil aksi Simpan.
-- Kanvas Web SDK yang ringan bersifat baca-saja; pengeditan penuh menggunakan permukaan editor terkelola terpisah. Pada DSH `0.1.0-rc.6`, plugin menggunakan workbench kanan yang dapat diubah ukurannya dengan opsi layar penuh.
+- Kanvas Web SDK yang ringan bersifat baca-saja; pengeditan penuh menggunakan permukaan editor terkelola terpisah. Pada DSH `0.1.1-rc.1`, plugin menggunakan workbench kanan yang dapat diubah ukurannya dengan opsi layar penuh.
 - Galeri akurat mencakup frame tingkat-teratas pada halaman aktif; kanvas interaktif tetap menjadi cara untuk memeriksa halaman nonaktif dan simpul bersarang.
 - Cache render dan snapshot masih memerlukan kebijakan retensi tingkat produk.
 
@@ -241,7 +241,7 @@ Build memerlukan Node 24.11 atau lebih baru dan pnpm. Paket host/klien DSH adala
 Untuk DSH prerelease privat, simpan kredensial npm yang diterbitkan di luar repositori ini (misalnya di `.npmrc` tingkat-pengguna atau sementara) dan jalankan versi yang diminta secara langsung:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 Jangan pernah melakukan commit pada `.npmrc`, `NPM_TOKEN`, atau kredensial registry yang disalin. Repositori ini mengabaikan konfigurasi npm lokal secara default.

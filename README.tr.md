@@ -108,7 +108,7 @@ Araç kartı ve yönetilen düzenleyici, düzenleme oturumunu yeniden yüklemede
 DSH ayrı bir pakettir. Henüz yoksa bir kez kurun:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 Ardından eklentiyi bir profile ekleyin ve web uygulamasını başlatın:
@@ -121,8 +121,8 @@ dsh web
 DSH'yi global kurmak istemiyor musunuz? Aynı iki adımı `pnpm dlx` ile çalıştırın:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > OpenPencil eklentisi geneldir ve npm belirteci gerektirmez. DSH ön sürümünün kendisi kayıt defteri kimlik doğrulaması gerektiriyorsa, bu kimlik bilgisini çalışma kopyasının dışında kullanıcı düzeyinde veya geçici bir npm yapılandırmasında saklayın. Bu depo bilinçli olarak hiçbir kayıt defteri kimlik bilgisi içermez.
@@ -193,14 +193,14 @@ Model tarafından görülebilen sonuç, düz JSON olarak kalır. Yalnızca taray
 
 Sonuç ayrıca `renderer`, `rendererBinary`, `fidelity` ve varsa uyarıları kaydeder. Yalnızca PNG içeren mevcut schema-v1 iletileri işlenebilir kalır.
 
-DSH `0.1.0-rc.6`, PTC/Kod Modu altında iç içe yer alan araçların tarayıcı sunum meta verilerini kalıcı hale getirmez. Eklenti bu yalnızca UI'ya özgü yansımayı aynı kaynaklı, oturuma bağlı bir uç nokta aracılığıyla kurtarır: tarayıcı yalnızca oturum kimliğini, çağrı kimliğini ve değişmez belge SHA-256'sını gönderir; ana bilgisayar ise otoriter sonucu kalıcı DSH oturum günlüğünden çözer ve yalnızca yakın tarihli canlı düzenlemeyi yetkilendirmek için kısa ömürlü, süreç içi bir işaret kullanır. İmzalı önizleme/düzenleyici yetenekleri hiçbir zaman kanonik araç sonucuna veya model bağlamına girmez. Kalıcı geçmiş salt okunur önizlemeleri geri yükleyebilir; düzenleyici yetkileri yalnızca yakın tarihli, güvenilen canlı sonuçlar için verilir.
+DSH `0.1.1-rc.1`, PTC/Kod Modu altında iç içe yer alan araçların tarayıcı sunum meta verilerini kalıcı hale getirmez. Eklenti bu yalnızca UI'ya özgü yansımayı aynı kaynaklı, oturuma bağlı bir uç nokta aracılığıyla kurtarır: tarayıcı yalnızca oturum kimliğini, çağrı kimliğini ve değişmez belge SHA-256'sını gönderir; ana bilgisayar ise otoriter sonucu kalıcı DSH oturum günlüğünden çözer ve yalnızca yakın tarihli canlı düzenlemeyi yetkilendirmek için kısa ömürlü, süreç içi bir işaret kullanır. İmzalı önizleme/düzenleyici yetenekleri hiçbir zaman kanonik araç sonucuna veya model bağlamına girmez. Kalıcı geçmiş salt okunur önizlemeleri geri yükleyebilir; düzenleyici yetkileri yalnızca yakın tarihli, güvenilen canlı sonuçlar için verilir.
 
 Sınırlı oynatım için iç içe meta veri kurtarması en fazla 128 üst düzey kare kabul eder; daha büyük Kod Modu sonuçları, kanonik JSON yedeği aracılığıyla kullanılabilir kalır.
 
 ## Güncel Sınırlamalar
 
 - Mevcut bir tuvale yapılan sonraki düzenlemeler, önceden açılmış bir yönetilen düzenleyici gerektirir. Değişiklikler, kullanıcı Kaydet eylemini çağırana kadar kaydedilmemiş kalır.
-- Hafif Web SDK tuvali salt okunurdur; tam düzenleme ayrı yönetilen düzenleyici yüzeyini kullanır. DSH `0.1.0-rc.6` üzerinde eklenti, tam ekran seçeneğiyle yeniden boyutlandırılabilir sağ çalışma alanını kullanır.
+- Hafif Web SDK tuvali salt okunurdur; tam düzenleme ayrı yönetilen düzenleyici yüzeyini kullanır. DSH `0.1.1-rc.1` üzerinde eklenti, tam ekran seçeneğiyle yeniden boyutlandırılabilir sağ çalışma alanını kullanır.
 - Birebir galeri, etkin sayfadaki üst düzey kareleri kapsar; etkin olmayan sayfaları ve iç içe düğümleri incelemenin yolu etkileşimli tuval olarak kalır.
 - İşleme ve anlık görüntü önbellekleri hâlâ ürün düzeyinde bir saklama ilkesi gerektirir.
 
@@ -241,7 +241,7 @@ Derlemeler Node 24.11 veya daha yenisini ve pnpm gerektirir. DSH ana bilgisayar/
 Özel bir DSH ön sürümü için verilen npm kimlik bilgisini bu deponun dışında tutun (örneğin kullanıcı düzeyinde veya geçici bir `.npmrc` içinde) ve istenen sürümü doğrudan çalıştırın:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 `.npmrc`, `NPM_TOKEN` veya kopyalanmış kayıt defteri kimlik bilgilerini asla işlemeyin. Bu depo varsayılan olarak yerel npm yapılandırmasını yok sayar.

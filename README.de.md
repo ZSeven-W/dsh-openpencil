@@ -108,7 +108,7 @@ Die Tool-Karte und der verwaltete Editor übernehmen das Chinesisch-/Englisch-Lo
 DSH ist ein eigenes Paket. Installiere es einmalig, falls noch nicht vorhanden:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 Füge dann das Plugin einem Profil hinzu und starte die Web-App:
@@ -121,8 +121,8 @@ dsh web
 Lieber ohne globale DSH-Installation? Führe dieselben zwei Schritte über `pnpm dlx` aus:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > Das OpenPencil-Plugin ist öffentlich und benötigt kein npm-Token. Wenn die DSH-Prerelease selbst eine Registry-Authentifizierung erfordert, bewahren Sie diese Anmeldedaten in einer npm-Konfiguration auf Benutzer- oder temporärer Ebene außerhalb des Checkouts auf. Dieses Repository enthält bewusst keine Registry-Anmeldedaten.
@@ -193,14 +193,14 @@ Das für das Modell sichtbare Ergebnis bleibt einfaches JSON. Das nur im Browser
 
 Das Ergebnis erfasst außerdem `renderer`, `rendererBinary`, `fidelity` und etwaige Warnungen. Vorhandene reine PNG-Schema-v1-Nachrichten bleiben renderbar.
 
-DSH `0.1.0-rc.6` speichert Browser-Präsentationsmetadaten für Tools, die unter PTC/Code Mode verschachtelt sind, nicht dauerhaft. Das Plugin stellt diese reine UI-Projektion über einen Same-Origin-, sitzungsgebundenen Endpunkt wieder her: Der Browser sendet nur die Sitzungs-ID, die Call-ID und den unveränderlichen Dokument-SHA-256, während der Host das maßgebliche Ergebnis aus dem dauerhaften DSH-Sitzungsprotokoll auflöst und einen kurzlebigen In-Process-Marker ausschließlich zur Autorisierung aktueller Live-Bearbeitungen verwendet. Signierte Vorschau-/Editor-Capabilities gelangen nie in das kanonische Tool-Ergebnis oder den Modellkontext. Der dauerhafte Verlauf kann schreibgeschützte Vorschauen wiederherstellen; Editor-Grants werden nur für aktuelle, vertrauenswürdige Live-Ergebnisse ausgestellt.
+DSH `0.1.1-rc.1` speichert Browser-Präsentationsmetadaten für Tools, die unter PTC/Code Mode verschachtelt sind, nicht dauerhaft. Das Plugin stellt diese reine UI-Projektion über einen Same-Origin-, sitzungsgebundenen Endpunkt wieder her: Der Browser sendet nur die Sitzungs-ID, die Call-ID und den unveränderlichen Dokument-SHA-256, während der Host das maßgebliche Ergebnis aus dem dauerhaften DSH-Sitzungsprotokoll auflöst und einen kurzlebigen In-Process-Marker ausschließlich zur Autorisierung aktueller Live-Bearbeitungen verwendet. Signierte Vorschau-/Editor-Capabilities gelangen nie in das kanonische Tool-Ergebnis oder den Modellkontext. Der dauerhafte Verlauf kann schreibgeschützte Vorschauen wiederherstellen; Editor-Grants werden nur für aktuelle, vertrauenswürdige Live-Ergebnisse ausgestellt.
 
 Für eine begrenzte Wiedergabe akzeptiert die verschachtelte Metadaten-Wiederherstellung bis zu 128 Frames der obersten Ebene; größere Code-Mode-Ergebnisse bleiben über ihren kanonischen JSON-Fallback verfügbar.
 
 ## Aktuelle Einschränkungen
 
 - Folgeänderungen an einer vorhandenen Leinwand setzen einen bereits geöffneten verwalteten Editor voraus. Änderungen bleiben ungespeichert, bis der Benutzer dessen Aktion „Speichern“ ausführt.
-- Die leichtgewichtige Leinwand der Web-SDK ist schreibgeschützt; die vollständige Bearbeitung nutzt die separate Oberfläche des verwalteten Editors. Auf DSH `0.1.0-rc.6` verwendet das Plugin den in der Größe veränderbaren rechten Arbeitsbereich mit Vollbild-Option.
+- Die leichtgewichtige Leinwand der Web-SDK ist schreibgeschützt; die vollständige Bearbeitung nutzt die separate Oberfläche des verwalteten Editors. Auf DSH `0.1.1-rc.1` verwendet das Plugin den in der Größe veränderbaren rechten Arbeitsbereich mit Vollbild-Option.
 - Die exakte Galerie umfasst Frames der obersten Ebene auf der aktiven Seite; die interaktive Leinwand bleibt der Weg, um inaktive Seiten und verschachtelte Knoten zu untersuchen.
 - Render- und Snapshot-Caches benötigen weiterhin eine produktweite Aufbewahrungsrichtlinie.
 
@@ -241,7 +241,7 @@ Builds erfordern Node 24.11 oder neuer und pnpm. DSH-Host-/Client-Pakete sind Pe
 Für eine private DSH-Prerelease bewahren Sie die ausgegebene npm-Anmeldeinformation außerhalb dieses Repositorys auf (zum Beispiel in einer `.npmrc` auf Benutzer- oder temporärer Ebene) und führen Sie die angeforderte Version direkt aus:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 Committen Sie niemals `.npmrc`, `NPM_TOKEN` oder kopierte Registry-Anmeldedaten. Dieses Repository ignoriert die lokale npm-Konfiguration standardmäßig.

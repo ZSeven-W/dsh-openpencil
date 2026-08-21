@@ -108,7 +108,7 @@ La tarjeta de la herramienta y el editor administrado siguen la configuración r
 DSH es un paquete aparte. Instálalo una vez si aún no lo tienes:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 Luego añade el plugin a un perfil e inicia la app web:
@@ -121,8 +121,8 @@ dsh web
 ¿Prefieres no instalar DSH globalmente? Ejecuta los mismos dos pasos con `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > El plugin de OpenPencil es público y no requiere un token de npm. Si la versión preliminar de DSH en sí requiere autenticación del registro, mantén esa credencial en una configuración de npm a nivel de usuario o temporal, fuera del checkout. Este repositorio no contiene credenciales de registro a propósito.
@@ -193,14 +193,14 @@ El resultado visible para el modelo sigue siendo JSON simple. El `presentationMe
 
 El resultado también registra `renderer`, `rendererBinary`, `fidelity` y cualquier advertencia. Los mensajes existentes de esquema v1 de solo PNG siguen siendo renderizables.
 
-DSH `0.1.0-rc.6` no persiste los metadatos de presentación del navegador para las herramientas anidadas bajo PTC/Code Mode. El plugin recupera esa proyección UI-only a través de un endpoint del mismo origen vinculado a la sesión: el navegador envía únicamente el session id, el call id y el SHA-256 inmutable del documento, mientras que el host resuelve el resultado canónico a partir del registro de sesión duradero de DSH y usa un marcador breve en proceso solo para autorizar la edición en vivo reciente. Las capacidades firmadas de vista previa/editor nunca entran en el resultado canónico de la herramienta ni en el contexto del modelo. El historial duradero puede restaurar vistas previas de solo lectura; los otorgamientos de editor solo se emiten para resultados en vivo recientes y de confianza.
+DSH `0.1.1-rc.1` no persiste los metadatos de presentación del navegador para las herramientas anidadas bajo PTC/Code Mode. El plugin recupera esa proyección UI-only a través de un endpoint del mismo origen vinculado a la sesión: el navegador envía únicamente el session id, el call id y el SHA-256 inmutable del documento, mientras que el host resuelve el resultado canónico a partir del registro de sesión duradero de DSH y usa un marcador breve en proceso solo para autorizar la edición en vivo reciente. Las capacidades firmadas de vista previa/editor nunca entran en el resultado canónico de la herramienta ni en el contexto del modelo. El historial duradero puede restaurar vistas previas de solo lectura; los otorgamientos de editor solo se emiten para resultados en vivo recientes y de confianza.
 
 Para una reproducción acotada, la recuperación de metadatos anidados acepta hasta 128 marcos de nivel superior; los resultados mayores del modo Código siguen disponibles mediante su fallback JSON canónico.
 
 ## Limitaciones actuales
 
 - Las ediciones posteriores de un lienzo existente requieren un editor administrado ya abierto. Los cambios permanecen sin guardar hasta que el usuario invoca su acción de guardado.
-- El lienzo ligero del SDK web es de solo lectura; la edición completa usa la superficie separada del editor administrado. En DSH `0.1.0-rc.6`, el plugin usa el panel lateral derecho redimensionable con opción de pantalla completa.
+- El lienzo ligero del SDK web es de solo lectura; la edición completa usa la superficie separada del editor administrado. En DSH `0.1.1-rc.1`, el plugin usa el panel lateral derecho redimensionable con opción de pantalla completa.
 - La galería exacta cubre los marcos de nivel superior de la página activa; el lienzo interactivo sigue siendo la forma de inspeccionar páginas inactivas y nodos anidados.
 - Las cachés de renderizado e instantáneas aún necesitan una política de retención a nivel de producto.
 
@@ -241,7 +241,7 @@ Las compilaciones requieren Node 24.11 o superior y pnpm. Los paquetes de host/c
 Para una versión preliminar privada de DSH, mantén la credencial npm emitida fuera de este repositorio (por ejemplo, en un `.npmrc` a nivel de usuario o temporal) y ejecuta directamente la versión solicitada:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 Nunca hagas commit de `.npmrc`, `NPM_TOKEN` ni credenciales de registro copiadas. Este repositorio ignora la configuración local de npm por defecto.

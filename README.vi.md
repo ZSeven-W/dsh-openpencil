@@ -108,7 +108,7 @@ Thẻ công cụ và trình biên tập quản lý tuân theo ngôn ngữ Trung/
 DSH là một gói riêng. Cài một lần nếu bạn chưa có:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 Sau đó thêm plugin vào một profile và khởi động ứng dụng web:
@@ -121,8 +121,8 @@ dsh web
 Không muốn cài DSH toàn cục? Chạy đúng hai bước đó qua `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > Plugin OpenPencil là công khai và không yêu cầu token npm. Nếu bản prerelease của DSH tự nó yêu cầu xác thực registry, hãy giữ thông tin xác thực đó trong một cấu hình npm cấp người dùng hoặc tạm thời bên ngoài thư mục checkout. Kho lưu trữ này cố ý không chứa bất kỳ thông tin xác thực registry nào.
@@ -193,14 +193,14 @@ Kết quả hiển thị cho mô hình vẫn là JSON thuần. `presentationMeta
 
 Kết quả cũng ghi lại `renderer`, `rendererBinary`, `fidelity` và mọi cảnh báo. Các thông điệp schema-v1 chỉ có PNG hiện có vẫn có thể được kết xuất.
 
-DSH `0.1.0-rc.6` không lưu trữ siêu dữ liệu trình bày của trình duyệt cho các công cụ nằm lồng bên dưới PTC/Code Mode. Plugin khôi phục phép chiếu UI-only đó qua một endpoint same-origin, session-bound: trình duyệt chỉ gửi session id, call id và SHA-256 bất biến của tài liệu, trong khi host phân giải kết quả có thẩm quyền từ nhật ký phiên DSH bền vững và chỉ sử dụng một marker trong tiến trình có thời hạn ngắn để ủy quyền cho việc chỉnh sửa trực tiếp gần đây. Các capability xem trước/biên tập được ký không bao giờ đi vào kết quả công cụ chuẩn hoặc ngữ cảnh mô hình. Lịch sử bền vững có thể khôi phục các bản xem trước chỉ đọc; các quyền truy cập biên tập chỉ được cấp cho các kết quả trực tiếp gần đây, đáng tin cậy.
+DSH `0.1.1-rc.1` không lưu trữ siêu dữ liệu trình bày của trình duyệt cho các công cụ nằm lồng bên dưới PTC/Code Mode. Plugin khôi phục phép chiếu UI-only đó qua một endpoint same-origin, session-bound: trình duyệt chỉ gửi session id, call id và SHA-256 bất biến của tài liệu, trong khi host phân giải kết quả có thẩm quyền từ nhật ký phiên DSH bền vững và chỉ sử dụng một marker trong tiến trình có thời hạn ngắn để ủy quyền cho việc chỉnh sửa trực tiếp gần đây. Các capability xem trước/biên tập được ký không bao giờ đi vào kết quả công cụ chuẩn hoặc ngữ cảnh mô hình. Lịch sử bền vững có thể khôi phục các bản xem trước chỉ đọc; các quyền truy cập biên tập chỉ được cấp cho các kết quả trực tiếp gần đây, đáng tin cậy.
 
 Đối với phát lại có giới hạn, việc phục hồi siêu dữ liệu lồng nhau chấp nhận tối đa 128 khung cấp cao nhất; các kết quả Code Mode lớn hơn vẫn khả dụng qua dự phòng JSON chuẩn của chúng.
 
 ## Giới hạn Hiện tại
 
 - Các chỉnh sửa tiếp theo trên một canvas hiện có yêu cầu một trình biên tập quản lý đã được mở. Thay đổi vẫn chưa được lưu cho đến khi người dùng gọi hành động Lưu của nó.
-- Canvas của Web SDK nhẹ chỉ đọc; chỉnh sửa đầy đủ sử dụng bề mặt trình biên tập quản lý riêng. Trên DSH `0.1.0-rc.6`, plugin sử dụng khu làm việc bên phải có thể thay đổi kích thước kèm tùy chọn toàn màn hình.
+- Canvas của Web SDK nhẹ chỉ đọc; chỉnh sửa đầy đủ sử dụng bề mặt trình biên tập quản lý riêng. Trên DSH `0.1.1-rc.1`, plugin sử dụng khu làm việc bên phải có thể thay đổi kích thước kèm tùy chọn toàn màn hình.
 - Thư viện ảnh chính xác bao phủ các khung cấp cao nhất trên trang đang hoạt động; canvas tương tác vẫn là cách để kiểm tra các trang không hoạt động và các nút lồng nhau.
 - Các bộ nhớ đệm kết xuất và ảnh chụp vẫn cần một chính sách lưu giữ ở cấp sản phẩm.
 
@@ -241,7 +241,7 @@ Việc xây dựng yêu cầu Node 24.11 trở lên và pnpm. Các gói host/cli
 Đối với một bản prerelease riêng tư của DSH, hãy giữ thông tin xác thực npm được cấp bên ngoài kho lưu trữ này (ví dụ trong một `.npmrc` cấp người dùng hoặc tạm thời) và chạy trực tiếp phiên bản được yêu cầu:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 Không bao giờ commit `.npmrc`, `NPM_TOKEN` hoặc thông tin xác thực registry được sao chép. Kho lưu trữ này mặc định bỏ qua cấu hình npm cục bộ.

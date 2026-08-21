@@ -108,7 +108,7 @@ DSH OpenPencil 将 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 与 [O
 DSH 是独立的包。若尚未安装，先装一次：
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 然后把插件装进某个 profile 并启动 Web 应用：
@@ -121,8 +121,8 @@ dsh web
 不想全局安装 DSH？用 `pnpm dlx` 跑同样的两步：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > OpenPencil 插件是公开的，无需 npm token。如果 DSH 预发布版本本身需要 registry 身份验证，请将该凭据保存在仓库检出目录之外的用户级或临时 npm 配置中。本仓库刻意不包含任何 registry 凭据。
@@ -193,14 +193,14 @@ pnpm run sync:viewer-assets
 
 结果还会记录 `renderer`、`rendererBinary`、`fidelity` 以及任何警告。现有的仅 PNG 的 schema-v1 消息仍然可以渲染。
 
-DSH `0.1.0-rc.6` 不会为嵌套在 PTC/Code Mode 下的工具持久化浏览器展示元数据。插件会通过同源、会话绑定的端点恢复该仅 UI（UI-only）投影：浏览器仅发送 session id、call id 以及不可变文档的 SHA-256，而宿主则从持久的 DSH 会话日志中解析权威结果，并仅使用一个短暂存活的进程内标记（in-process marker）来授权近期的实时编辑。签名的预览/编辑器能力永远不会进入规范的工具结果或模型上下文。持久的历史记录可以恢复只读预览；编辑器授权仅针对最近、可信的实时结果签发。
+DSH `0.1.1-rc.1` 不会为嵌套在 PTC/Code Mode 下的工具持久化浏览器展示元数据。插件会通过同源、会话绑定的端点恢复该仅 UI（UI-only）投影：浏览器仅发送 session id、call id 以及不可变文档的 SHA-256，而宿主则从持久的 DSH 会话日志中解析权威结果，并仅使用一个短暂存活的进程内标记（in-process marker）来授权近期的实时编辑。签名的预览/编辑器能力永远不会进入规范的工具结果或模型上下文。持久的历史记录可以恢复只读预览；编辑器授权仅针对最近、可信的实时结果签发。
 
 为了限制回放范围，嵌套元数据恢复最多接受 128 个顶层帧；更大的 Code Mode 结果仍可通过其规范 JSON 回退获得。
 
 ## 当前限制
 
 - 对现有画布的后续编辑需要一个已打开的托管编辑器。在用户调用其保存（Save）操作之前，更改保持未保存状态。
-- 轻量级 Web SDK 画布是只读的；完整编辑使用独立的托管编辑器界面。在 DSH `0.1.0-rc.6` 上，插件使用带全屏选项的可调整大小右侧工作台。
+- 轻量级 Web SDK 画布是只读的；完整编辑使用独立的托管编辑器界面。在 DSH `0.1.1-rc.1` 上，插件使用带全屏选项的可调整大小右侧工作台。
 - 精确图库涵盖活动页面上的顶层帧；交互式画布仍是检查非活动页面与嵌套节点的方式。
 - 渲染与快照缓存仍需要产品级的保留策略。
 
@@ -241,7 +241,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 对于私有 DSH 预发布版本，请将签发的 npm 凭据保存在本仓库之外（例如用户级或临时的 `.npmrc` 中），并直接运行所需版本：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 切勿提交 `.npmrc`、`NPM_TOKEN` 或复制的 registry 凭据。本仓库默认忽略本地 npm 配置。

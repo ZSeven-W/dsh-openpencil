@@ -108,7 +108,7 @@ DSH OpenPencil은 [DeepSeek Harness](https://github.com/deepseek-ai/DSH)와 [Ope
 DSH는 별도 패키지입니다. 아직 없다면 한 번 설치하세요:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+npm install -g @deepseek-ai/dsh@0.1.1-rc.1
 ```
 
 그다음 플러그인을 프로필에 추가하고 웹 앱을 실행합니다:
@@ -121,8 +121,8 @@ dsh web
 DSH를 전역 설치하고 싶지 않다면 같은 두 단계를 `pnpm dlx`로 실행하세요:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 > OpenPencil 플러그인은 공개되어 npm 토큰이 필요 없습니다. DSH 프리릴리스 자체가 레지스트리 인증을 요구하는 경우, 해당 자격 증명은 체크아웃 외부의 사용자 수준 또는 임시 npm 구성에 보관하세요. 이 저장소에는 의도적으로 레지스트리 자격 증명이 포함되어 있지 않습니다.
@@ -193,14 +193,14 @@ pnpm run sync:viewer-assets
 
 결과에는 `renderer`, `rendererBinary`, `fidelity` 및 모든 경고도 기록됩니다. 기존의 PNG 전용 schema-v1 메시지는 계속 렌더링할 수 있습니다.
 
-DSH `0.1.0-rc.6`은 PTC/Code Mode 아래에 중첩된 도구에 대한 브라우저 프레젠테이션 메타데이터를 유지하지 않습니다. 플러그인은 동일 출처의 세션 바인딩 엔드포인트를 통해 해당 UI-only 투영(projection)을 복구합니다: 브라우저는 세션 id, 호출 id 및 변경 불가능한 문서 SHA-256만 전송하고, 호스트는 영속적인 DSH 세션 로그에서 권위 있는 결과를 확인하며, 최근 라이브 편집을 승인하는 용도로만 수명이 짧은 인프로세스 마커를 사용합니다. 서명된 미리보기/편집기 권한은 정식 도구 결과나 모델 컨텍스트에 절대 들어가지 않습니다. 영속 기록은 읽기 전용 미리보기를 복원할 수 있으며, 편집기 권한은 최근의 신뢰할 수 있는 라이브 결과에 대해서만 발급됩니다.
+DSH `0.1.1-rc.1`은 PTC/Code Mode 아래에 중첩된 도구에 대한 브라우저 프레젠테이션 메타데이터를 유지하지 않습니다. 플러그인은 동일 출처의 세션 바인딩 엔드포인트를 통해 해당 UI-only 투영(projection)을 복구합니다: 브라우저는 세션 id, 호출 id 및 변경 불가능한 문서 SHA-256만 전송하고, 호스트는 영속적인 DSH 세션 로그에서 권위 있는 결과를 확인하며, 최근 라이브 편집을 승인하는 용도로만 수명이 짧은 인프로세스 마커를 사용합니다. 서명된 미리보기/편집기 권한은 정식 도구 결과나 모델 컨텍스트에 절대 들어가지 않습니다. 영속 기록은 읽기 전용 미리보기를 복원할 수 있으며, 편집기 권한은 최근의 신뢰할 수 있는 라이브 결과에 대해서만 발급됩니다.
 
 제한된 재생을 위해 중첩 메타데이터 복구는 최대 128개의 최상위 프레임을 허용하며, 더 큰 Code Mode 결과는 정식 JSON 폴백을 통해 계속 사용할 수 있습니다.
 
 ## 현재 제한 사항
 
 - 기존 캔버스에 대한 후속 편집에는 이미 열려 있는 관리형 편집기가 필요합니다. 변경 사항은 사용자가 저장(Save) 작업을 호출할 때까지 저장되지 않은 상태로 유지됩니다.
-- 경량 웹 SDK 캔버스는 읽기 전용입니다. 전체 편집은 별도의 관리형 편집기 표면을 사용합니다. DSH `0.1.0-rc.6`에서 플러그인은 전체 화면 옵션이 있는 크기 조절 가능한 오른쪽 워크벤치를 사용합니다.
+- 경량 웹 SDK 캔버스는 읽기 전용입니다. 전체 편집은 별도의 관리형 편집기 표면을 사용합니다. DSH `0.1.1-rc.1`에서 플러그인은 전체 화면 옵션이 있는 크기 조절 가능한 오른쪽 워크벤치를 사용합니다.
 - 정확한 갤러리는 활성 페이지의 최상위 프레임을 다룹니다. 비활성 페이지와 중첩 노드를 검사하는 방법은 인터랙티브 캔버스입니다.
 - 렌더 및 스냅샷 캐시에는 여전히 제품 수준의 보존 정책이 필요합니다.
 
@@ -241,7 +241,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 비공개 DSH 프리릴리스의 경우, 발급된 npm 자격 증명을 이 저장소 외부에 보관하고(예: 사용자 수준 또는 임시 `.npmrc`) 요청된 버전을 직접 실행하세요:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.0-rc.6 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 ```
 
 `.npmrc`, `NPM_TOKEN` 또는 복사된 레지스트리 자격 증명을 절대 커밋하지 마세요. 이 저장소는 기본적으로 로컬 npm 구성을 무시합니다.
