@@ -1,0 +1,132 @@
+# Publish to npm when a version tag is pushed.
+#
+# Authentication, in preference order:
+# 1. npm trusted publishing (OIDC) — the workflow proves its identity to the
+#    registry, which is why `permissions.id-token` is present. One-time setup
+#    on npmjs.com, under the package's Settings -> Trusted Publisher: pick
+#    GitHub Actions, then name this repository and this file (release.yml).
+# 2. The NPM_TOKEN repository secret — npm >= 11.5 falls back to it when the
+#    OIDC exchange is unavailable (no trusted publisher configured yet). The
+#    token must be an Automation (or granular publish) token, or npm will
+#    demand a one-time password no CI run can type.
+#
+# The published tarball ships the OpenPencil read-only Web SDK under
+# `lib/viewer-assets`, which is a BUILD ARTIFACT of the vendored OpenPencil
+# submodule and is committed to no branch. So this workflow reproduces
+# check.yml's recipe — cargo + version-pinned wasm-bindgen-cli, no wasm-pack —
+# and runs the viewer-asset sync before building and testing the plugin.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    name: Build and publish @zseven-w/dsh-openpencil
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # The bundled npm predates trusted publishing. Pinned to the major so a
+      # future npm (which may e.g. reject setup-node's `always-auth` npmrc key
+      # it currently only warns about) cannot break a release out of nowhere.
+      - run: npm install -g npm@11
+
+      - run: pnpm install --frozen-lockfile
+
+      # The tag must match what is about to be published, or the release
+      # silently ships a version nobody asked for. Checked before the long
+      # wasm build so a mistyped tag fails in seconds.
+      - name: Verify the tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $tag does not match package.json $pkg" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.94'
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli (pinned to the locked version)
+        run: |
+          cd vendor/openpencil
+          # Pin the CLI to the same version as the wasm-bindgen crate in
+          # Cargo.lock so the generated JS glue matches the linked runtime —
+          # a version skew causes the classic wasm-bindgen "schema version
+          # mismatch" panic at mount time.
+          version="$(awk '/^name = "wasm-bindgen"$/{found=1; next} found && /^version = /{gsub(/[" ]/,"",$3); print $3; exit}' Cargo.lock)"
+          if [ -z "$version" ]; then
+            echo "::error::could not resolve wasm-bindgen version from Cargo.lock"
+            exit 1
+          fi
+          echo "Installing wasm-bindgen-cli $version"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+
+      - name: Build op-web-sdk wasm pkg
+        run: |
+          cd vendor/openpencil
+          cargo build -p op-web-sdk --target wasm32-unknown-unknown --features canvaskit --release
+          wasm-bindgen --target web --out-dir crates/op-web-sdk/pkg target/wasm32-unknown-unknown/release/op_web_sdk.wasm
+
+      - name: Sync viewer assets
+        run: pnpm run sync:viewer-assets
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test viewer assets
+        run: pnpm run test:viewer-assets
+
+      - name: Test client
+        run: pnpm run test:client
+
+      - name: Test host API
+        run: pnpm run test:host-api
+
+      - name: Test MCP client
+        run: pnpm run test:mcp
+
+      # A prerelease must never take the `latest` dist-tag: `npm install`
+      # with no version would hand it to everyone.
+      #
+      # Publishing is skipped when the registry already has this version.
+      # npm refuses to publish over an existing version, so without the guard
+      # a re-pushed tag — or a version first published by hand — turns the
+      # release red for a reason nobody needs to act on.
+      - name: Publish
+        env:
+          # Fallback credential for the OIDC-less case; setup-node's npmrc
+          # references exactly this variable. npm tries the trusted-publishing
+          # exchange first and only then reads the token, so configuring the
+          # trusted publisher later needs no workflow change.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          pkg="$(node -p "require('./package.json').version")"
+          if npm view "$name@$pkg" version >/dev/null 2>&1; then
+            echo "$name@$pkg is already on the registry — nothing to publish."
+            exit 0
+          fi
+          case "$pkg" in
+            *-*) dist_tag=next ;;
+            *)   dist_tag=latest ;;
+          esac
+          npm publish --access public --tag "$dist_tag"
