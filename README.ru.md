@@ -108,7 +108,7 @@ DSH OpenPencil связывает [DeepSeek Harness](https://github.com/deepseek
 DSH — отдельный пакет. Установите его один раз, если его ещё нет:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 Затем добавьте плагин в профиль и запустите веб-приложение:
@@ -131,8 +131,8 @@ dsh web
 Не хотите ставить DSH глобально? Выполните те же два шага через `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > Плагин OpenPencil публичный и не требует npm-токена. Если сам пререлиз DSH требует аутентификации в реестре, храните эти учётные данные в пользовательском или временном npm-конфиге вне этого чекаута. Этот репозиторий намеренно не содержит учётных данных реестра.
@@ -274,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 Для приватного пререлиза DSH храните выданные npm-учётные данные вне этого репозитория (например, в пользовательском или временном `.npmrc`) и запускайте запрошенную версию напрямую:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 Никогда не коммитьте `.npmrc`, `NPM_TOKEN` или скопированные учётные данные реестра. Этот репозиторий по умолчанию игнорирует локальную npm-конфигурацию.

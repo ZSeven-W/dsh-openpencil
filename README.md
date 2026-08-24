@@ -108,7 +108,7 @@ The tool card and managed editor follow DSH's Chinese/English locale and light/d
 DSH is a separate package. Install it once if you do not already have it:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 Then add the plugin to a profile and start the web app:
@@ -131,8 +131,8 @@ The `link:` dependency exposes subsequent rebuilds from this checkout, but DSH m
 Prefer not to install DSH globally? Run the same two steps through `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > The OpenPencil plugin is public and requires no npm token. If the DSH prerelease itself requires registry authentication, keep that credential in a user-level or temporary npm config outside the checkout. This repository intentionally contains no registry credentials.
@@ -274,7 +274,7 @@ Builds require Node 24.11 or newer and pnpm. DSH host/client packages are peer d
 For a private DSH prerelease, keep the issued npm credential outside this repository (for example in a user-level or temporary `.npmrc`) and run the requested version directly:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 Never commit `.npmrc`, `NPM_TOKEN`, or copied registry credentials. This repository ignores local npm configuration by default.

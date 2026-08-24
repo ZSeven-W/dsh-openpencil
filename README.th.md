@@ -108,7 +108,7 @@ DSH OpenPencil เชื่อมต่อ [DeepSeek Harness](https://github.com
 DSH เป็นแพ็กเกจแยกต่างหาก ถ้ายังไม่มีให้ติดตั้งหนึ่งครั้ง:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 จากนั้นเพิ่มปลั๊กอินเข้าโปรไฟล์แล้วเริ่มเว็บแอป:
@@ -131,8 +131,8 @@ dependency แบบ `link:` ทำให้ผลการ build ครั้�
 ไม่อยากติดตั้ง DSH แบบ global? รันสองขั้นตอนเดียวกันผ่าน `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > ปลั๊กอิน OpenPencil เป็นแบบสาธารณะและไม่ต้องใช้ npm token หาก DSH prerelease เองต้องมีการยืนยันตัวตนของ registry ให้เก็บข้อมูลรับรองนั้นไว้ใน npm config ระดับผู้ใช้หรือชั่วคราวนอก checkout ที่เก็บนี้ตั้งใจไม่ให้มีข้อมูลรับรอง registry ใด ๆ
@@ -274,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 สำหรับ DSH prerelease ส่วนตัว ให้เก็บข้อมูลรับรอง npm ที่ออกให้ไว้นอกที่เก็บนี้ (เช่นใน `.npmrc` ระดับผู้ใช้หรือชั่วคราว) และรันเวอร์ชันที่ต้องการโดยตรง:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 ห้าม commit `.npmrc`, `NPM_TOKEN` หรือข้อมูลรับรอง registry ที่คัดลอกมา ที่เก็บนี้ละเว้นการกำหนดค่า npm ในเครื่องตามค่าเริ่มต้น

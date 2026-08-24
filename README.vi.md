@@ -108,7 +108,7 @@ Thẻ công cụ và trình biên tập quản lý tuân theo ngôn ngữ Trung/
 DSH là một gói riêng. Cài một lần nếu bạn chưa có:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 Sau đó thêm plugin vào một profile và khởi động ứng dụng web:
@@ -131,8 +131,8 @@ Phụ thuộc `link:` làm cho các bản build lại sau đó hiển thị tr�
 Không muốn cài DSH toàn cục? Chạy đúng hai bước đó qua `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > Plugin OpenPencil là công khai và không yêu cầu token npm. Nếu bản prerelease của DSH tự nó yêu cầu xác thực registry, hãy giữ thông tin xác thực đó trong một cấu hình npm cấp người dùng hoặc tạm thời bên ngoài thư mục checkout. Kho lưu trữ này cố ý không chứa bất kỳ thông tin xác thực registry nào.
@@ -274,7 +274,7 @@ Việc xây dựng yêu cầu Node 24.11 trở lên và pnpm. Các gói host/cli
 Đối với một bản prerelease riêng tư của DSH, hãy giữ thông tin xác thực npm được cấp bên ngoài kho lưu trữ này (ví dụ trong một `.npmrc` cấp người dùng hoặc tạm thời) và chạy trực tiếp phiên bản được yêu cầu:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 Không bao giờ commit `.npmrc`, `NPM_TOKEN` hoặc thông tin xác thực registry được sao chép. Kho lưu trữ này mặc định bỏ qua cấu hình npm cục bộ.

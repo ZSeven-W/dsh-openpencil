@@ -108,7 +108,7 @@ O cartão da ferramenta e o editor gerenciado seguem a localização chinês/ing
 O DSH é um pacote separado. Instale-o uma vez, se ainda não tiver:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 Depois adicione o plugin a um perfil e inicie o app web:
@@ -131,8 +131,8 @@ A dependência `link:` torna recompilações posteriores visíveis a partir dest
 Prefere não instalar o DSH globalmente? Rode os mesmos dois passos via `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > O plugin do OpenPencil é público e não exige token npm. Se a pré-versão do DSH em si exigir autenticação de registro, mantenha essa credencial em um config npm no nível do usuário ou temporário, fora do checkout. Este repositório não contém intencionalmente nenhuma credencial de registro.
@@ -274,7 +274,7 @@ As compilações exigem Node 24.11 ou mais recente e pnpm. Os pacotes host/clien
 Para uma pré-versão privada do DSH, mantenha a credencial npm emitida fora deste repositório (por exemplo, em um `.npmrc` no nível do usuário ou temporário) e execute a versão solicitada diretamente:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 Nunca faça commit de `.npmrc`, `NPM_TOKEN` ou credenciais de registro copiadas. Este repositório ignora a configuração npm local por padrão.

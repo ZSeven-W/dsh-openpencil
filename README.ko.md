@@ -108,7 +108,7 @@ DSH OpenPencil은 [DeepSeek Harness](https://github.com/deepseek-ai/DSH)와 [Ope
 DSH는 별도 패키지입니다. 아직 없다면 한 번 설치하세요:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 그다음 플러그인을 프로필에 추가하고 웹 앱을 실행합니다:
@@ -131,8 +131,8 @@ dsh web
 DSH를 전역 설치하고 싶지 않다면 같은 두 단계를 `pnpm dlx`로 실행하세요:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > OpenPencil 플러그인은 공개되어 npm 토큰이 필요 없습니다. DSH 프리릴리스 자체가 레지스트리 인증을 요구하는 경우, 해당 자격 증명은 체크아웃 외부의 사용자 수준 또는 임시 npm 구성에 보관하세요. 이 저장소에는 의도적으로 레지스트리 자격 증명이 포함되어 있지 않습니다.
@@ -274,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 비공개 DSH 프리릴리스의 경우, 발급된 npm 자격 증명을 이 저장소 외부에 보관하고(예: 사용자 수준 또는 임시 `.npmrc`) 요청된 버전을 직접 실행하세요:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 `.npmrc`, `NPM_TOKEN` 또는 복사된 레지스트리 자격 증명을 절대 커밋하지 마세요. 이 저장소는 기본적으로 로컬 npm 구성을 무시합니다.

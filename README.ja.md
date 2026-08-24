@@ -108,7 +108,7 @@ DSH OpenPencil は [DeepSeek Harness](https://github.com/deepseek-ai/DSH) と [O
 DSH は別パッケージです。未導入なら一度インストールします:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 次にプラグインをプロファイルへ追加し、Web アプリを起動します:
@@ -131,8 +131,8 @@ dsh web
 DSH をグローバルに入れたくない場合は、同じ 2 ステップを `pnpm dlx` で実行します:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > OpenPencil プラグインは公開されており、npm トークンは不要です。DSH プレリリース自体にレジストリ認証が必要な場合は、その認証情報をチェックアウト外のユーザーレベルまたは一時的な npm 設定に保持してください。このリポジトリには意図的にレジストリの認証情報が含まれていません。
@@ -274,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 プライベートな DSH プレリリースでは、発行された npm 認証情報をこのリポジトリの外（たとえばユーザーレベルまたは一時的な `.npmrc`）に保持し、要求されたバージョンを直接実行してください:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 `.npmrc`、`NPM_TOKEN`、またはコピーしたレジストリ認証情報をコミットしないでください。このリポジトリはデフォルトでローカルの npm 設定を無視します。

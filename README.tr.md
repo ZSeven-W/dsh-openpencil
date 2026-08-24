@@ -108,7 +108,7 @@ Araç kartı ve yönetilen düzenleyici, düzenleme oturumunu yeniden yüklemede
 DSH ayrı bir pakettir. Henüz yoksa bir kez kurun:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 Ardından eklentiyi bir profile ekleyin ve web uygulamasını başlatın:
@@ -131,8 +131,8 @@ dsh web
 DSH'yi global kurmak istemiyor musunuz? Aynı iki adımı `pnpm dlx` ile çalıştırın:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > OpenPencil eklentisi geneldir ve npm belirteci gerektirmez. DSH ön sürümünün kendisi kayıt defteri kimlik doğrulaması gerektiriyorsa, bu kimlik bilgisini çalışma kopyasının dışında kullanıcı düzeyinde veya geçici bir npm yapılandırmasında saklayın. Bu depo bilinçli olarak hiçbir kayıt defteri kimlik bilgisi içermez.
@@ -274,7 +274,7 @@ Derlemeler Node 24.11 veya daha yenisini ve pnpm gerektirir. DSH ana bilgisayar/
 Özel bir DSH ön sürümü için verilen npm kimlik bilgisini bu deponun dışında tutun (örneğin kullanıcı düzeyinde veya geçici bir `.npmrc` içinde) ve istenen sürümü doğrudan çalıştırın:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 `.npmrc`, `NPM_TOKEN` veya kopyalanmış kayıt defteri kimlik bilgilerini asla işlemeyin. Bu depo varsayılan olarak yerel npm yapılandırmasını yok sayar.

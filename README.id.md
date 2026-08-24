@@ -108,7 +108,7 @@ Kartu alat dan editor terkelola mengikuti lokale Tionghoa/Inggris serta tema ter
 DSH adalah paket terpisah. Pasang sekali jika belum ada:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 Lalu tambahkan plugin ke sebuah profil dan jalankan aplikasi web:
@@ -131,8 +131,8 @@ Dependensi `link:` membuat hasil build ulang berikutnya langsung terlihat dari c
 Tidak ingin memasang DSH secara global? Jalankan dua langkah yang sama lewat `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > Plugin OpenPencil bersifat publik dan tidak memerlukan token npm. Jika DSH prerelease itu sendiri memerlukan autentikasi registry, simpan kredensial tersebut di konfigurasi npm tingkat-pengguna atau sementara di luar checkout. Repositori ini sengaja tidak memuat kredensial registry apa pun.
@@ -274,7 +274,7 @@ Build memerlukan Node 24.11 atau lebih baru dan pnpm. Paket host/klien DSH adala
 Untuk DSH prerelease privat, simpan kredensial npm yang diterbitkan di luar repositori ini (misalnya di `.npmrc` tingkat-pengguna atau sementara) dan jalankan versi yang diminta secara langsung:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 Jangan pernah melakukan commit pada `.npmrc`, `NPM_TOKEN`, atau kredensial registry yang disalin. Repositori ini mengabaikan konfigurasi npm lokal secara default.

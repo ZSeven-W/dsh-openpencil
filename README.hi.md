@@ -108,7 +108,7 @@ DSH OpenPencil [DeepSeek Harness](https://github.com/deepseek-ai/DSH) को [Op
 DSH अलग पैकेज है। अगर पहले से नहीं है तो एक बार इंस्टॉल करें:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 फिर प्लगइन को किसी प्रोफ़ाइल में जोड़ें और वेब ऐप शुरू करें:
@@ -131,8 +131,8 @@ dsh web
 DSH को ग्लोबली इंस्टॉल नहीं करना चाहते? वही दो चरण `pnpm dlx` से चलाएँ:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > OpenPencil प्लगइन सार्वजनिक है और इसके लिए किसी npm टोकन की आवश्यकता नहीं है। यदि DSH प्री-रिलीज़ को स्वयं रजिस्ट्री प्रमाणीकरण की आवश्यकता होती है, तो उस क्रेडेंशियल को चेकआउट के बाहर उपयोगकर्ता-स्तरीय या अस्थायी npm कॉन्फ़िग में रखें। इस रिपॉज़िटरी में जानबूझकर कोई रजिस्ट्री क्रेडेंशियल नहीं है।
@@ -274,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 निजी DSH प्री-रिलीज़ के लिए, जारी किया गया npm क्रेडेंशियल इस रिपॉज़िटरी के बाहर रखें (उदाहरण के लिए उपयोगकर्ता-स्तरीय या अस्थायी `.npmrc` में) और अनुरोधित संस्करण सीधे चलाएँ:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 `.npmrc`, `NPM_TOKEN` या कॉपी किए गए रजिस्ट्री क्रेडेंशियल कभी कमिट न करें। यह रिपॉज़िटरी डिफ़ॉल्ट रूप से स्थानीय npm कॉन्फ़िगरेशन को अनदेखा करती है।

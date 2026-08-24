@@ -108,7 +108,7 @@ DSH OpenPencil 將 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 與 [O
 DSH 是獨立的套件。若尚未安裝，先裝一次：
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+npm install -g @deepseek-ai/dsh@latest
 ```
 
 接著把外掛裝進某個 profile 並啟動 Web 應用：
@@ -131,8 +131,8 @@ dsh web
 不想全域安裝 DSH？用 `pnpm dlx` 執行同樣的兩步：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 > OpenPencil 外掛程式是公開的，不需要 npm token。如果 DSH 預發行版本身需要 registry 驗證，請將該憑證存放在 checkout 目錄以外的使用者層級或暫時性 npm 設定中。本儲存庫刻意不包含任何 registry 憑證。
@@ -274,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 若為私有的 DSH 預發行版，請將核發的 npm 憑證存放在本儲存庫之外（例如使用者層級或暫時性的 `.npmrc`），並直接執行要求的版本：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
 絕對不要提交 `.npmrc`、`NPM_TOKEN` 或複製的 registry 憑證。本儲存庫預設會忽略本機的 npm 設定。
