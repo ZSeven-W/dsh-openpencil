@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.3</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.4</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
 </p>
 
 <p align="center">

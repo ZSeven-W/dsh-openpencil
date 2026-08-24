@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/dsh-openpencil",
-  "version": "0.1.0-rc.3",
+  "version": "0.1.0-rc.4",
   "description": "Preview, inspect, and edit real .op OpenPencil design documents inside DSH conversations — headless rendering, a read-only canvas, and a managed editor.",
   "license": "MIT",
   "keywords": [
@@ -51,7 +51,7 @@
     "sync:viewer-assets": "node scripts/sync-viewer-assets.mjs",
     "test:viewer-assets": "node scripts/test-viewer-assets.mjs",
     "test:client": "pnpm run build:client && node --test tests/client.test.mjs",
-    "test:host-api": "pnpm run build && node --test tests/host-service.test.mjs tests/new-tool.test.mjs tests/presentation-hydration.test.mjs tests/editor-host-lifecycle.test.mjs tests/editor-runtime.test.mjs tests/collab-bootstrap-config.test.mjs",
+    "test:host-api": "pnpm run build && node --test tests/host-service.test.mjs tests/new-tool.test.mjs tests/presentation-hydration.test.mjs tests/editor-host-lifecycle.test.mjs tests/editor-runtime.test.mjs tests/collab-bootstrap-config.test.mjs tests/run-tool.test.mjs",
     "test:mcp": "pnpm run build && node --test tests/mcp-client.test.mjs",
     "test:host": "pnpm run build && node scripts/test-host.mjs",
     "build:editor-web": "node scripts/build-editor-web.mjs",
@@ -104,12 +104,12 @@
     "react-dom": "^18.2.0"
   },
   "optionalDependencies": {
-    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.3",
-    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.3",
-    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.3",
-    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.3",
-    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.3",
-    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.3"
+    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.4",
+    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.4",
+    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.4",
+    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.4",
+    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.4",
+    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

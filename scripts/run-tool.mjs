@@ -10,23 +10,22 @@ if (tool !== 'tsc' && tool !== 'tsdown') {
   throw new Error(`run-tool: unsupported tool ${JSON.stringify(tool)}`)
 }
 
-const candidates = [
-  join(root, 'node_modules', '.bin', tool),
-]
-const typeRoots = [join(root, 'node_modules', '@types')]
+const toolEntrypoints = {
+  tsc: ['typescript', 'bin', 'tsc'],
+  tsdown: ['tsdown', 'dist', 'run.mjs'],
+}
+const moduleRoots = [join(root, 'node_modules')]
 
 const explicitSource = process.env.DSH_SOURCE_ROOT?.trim()
-if (explicitSource) candidates.push(join(explicitSource, 'node_modules', '.bin', tool))
-if (explicitSource) typeRoots.push(join(explicitSource, 'node_modules', '@types'))
+if (explicitSource) moduleRoots.push(join(explicitSource, 'node_modules'))
 
 // A linked DSH peer package gives us the active source checkout without a
-// machine-specific path. Walk upward until its workspace-level .bin appears.
+// machine-specific path. Walk upward through its possible workspace roots.
 const peer = join(root, 'node_modules', '@deepseek-ai', 'dsh-tools')
 if (existsSync(peer)) {
   let current = realpathSync(peer)
   for (;;) {
-    candidates.push(join(current, 'node_modules', '.bin', tool))
-    typeRoots.push(join(current, 'node_modules', '@types'))
+    moduleRoots.push(join(current, 'node_modules'))
     const parent = dirname(current)
     if (parent === current) break
     current = parent
@@ -41,15 +40,18 @@ if (existsSync(sourceStore)) {
     .filter(path => statSync(path).isDirectory())
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
   for (const source of sources) {
-    candidates.push(join(source, 'node_modules', '.bin', tool))
-    typeRoots.push(join(source, 'node_modules', '@types'))
+    moduleRoots.push(join(source, 'node_modules'))
   }
 }
 
-const binary = candidates.find(candidate => existsSync(candidate))
-if (binary === undefined) {
+const uniqueModuleRoots = [...new Set(moduleRoots)]
+const entrypoint = uniqueModuleRoots
+  .map(moduleRoot => join(moduleRoot, ...toolEntrypoints[tool]))
+  .find(candidate => existsSync(candidate))
+if (entrypoint === undefined) {
   throw new Error(`run-tool: ${tool} is unavailable; install dev dependencies or set DSH_SOURCE_ROOT`)
 }
+const typeRoots = uniqueModuleRoots.map(moduleRoot => join(moduleRoot, '@types'))
 const discoveredTypeRoots = [...new Set(typeRoots.filter(path => existsSync(path)))]
 const forwardedArgs = [...args]
 if (tool === 'tsc' && discoveredTypeRoots.length > 0) {
@@ -58,6 +60,13 @@ if (tool === 'tsc' && discoveredTypeRoots.length > 0) {
 const env = {
   ...process.env,
 }
-const result = spawnSync(binary, forwardedArgs, { cwd: root, env, stdio: 'inherit' })
+// Execute the JavaScript entrypoint through Node instead of a package-manager
+// .bin shim. Windows shims require cmd.exe while POSIX shims require a shell;
+// the underlying JavaScript CLIs are portable and preserve arguments exactly.
+const result = spawnSync(process.execPath, [entrypoint, ...forwardedArgs], {
+  cwd: root,
+  env,
+  stdio: 'inherit',
+})
 if (result.error) throw result.error
 process.exitCode = result.status ?? 1

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Текущий релиз плагина: <code>0.1.0-rc.3</code> · Проверено вплоть до DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Текущий релиз плагина: <code>0.1.0-rc.4</code> · Проверено вплоть до DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
