@@ -686,6 +686,15 @@ test('editor bridge accepts only typed JSON-string messages', () => {
   assert.equal(client.parseEditorInbound({ type: 'op-shell/save' }), undefined)
   assert.equal(client.parseEditorInbound('{"type":"op-bridge/ready","generation":-1,"revision":0}'), undefined)
   assert.equal(client.parseEditorInbound('{"type":"foreign"}'), undefined)
+  assert.deepEqual(
+    client.parseEditorInbound(JSON.stringify({ type: 'op-bridge/listening' })),
+    { type: 'op-bridge/listening' },
+  )
+  assert.deepEqual(
+    client.parseEditorInbound(JSON.stringify({ type: 'op-bridge/listening', extra: true })),
+    { type: 'op-bridge/listening' },
+    'extra keys are ignored like every other inbound message',
+  )
 })
 
 test('editor bridge accepts the first ready edge only', () => {
@@ -734,6 +743,31 @@ test('editor bridge pins loopback iframe source and origin', () => {
   ), undefined)
 })
 
+test('the listening handshake passes the same iframe source and origin gate', () => {
+  const frame = {}
+  const data = JSON.stringify({ type: 'op-bridge/listening' })
+  assert.deepEqual(client.editorMessageFrom(
+    { source: frame, origin: 'http://127.0.0.1:49152', data },
+    frame,
+    'http://127.0.0.1:49152',
+  ), { type: 'op-bridge/listening' })
+  assert.equal(client.editorMessageFrom(
+    { source: {}, origin: 'http://127.0.0.1:49152', data },
+    frame,
+    'http://127.0.0.1:49152',
+  ), undefined)
+  assert.equal(client.editorMessageFrom(
+    { source: frame, origin: 'http://127.0.0.1:7', data },
+    frame,
+    'http://127.0.0.1:49152',
+  ), undefined)
+  assert.equal(client.editorMessageFrom(
+    { source: frame, origin: 'http://127.0.0.1:49152', data: JSON.stringify({ type: 'foreign' }) },
+    frame,
+    'http://127.0.0.1:49152',
+  ), undefined, 'unknown message types are still ignored')
+})
+
 test('editor bridge emits the strict resolved DSH theme message', () => {
   assert.equal(
     client.encodeEditorOutbound({ type: 'op-bridge/theme', colorScheme: 'dark' }),
@@ -742,14 +776,13 @@ test('editor bridge emits the strict resolved DSH theme message', () => {
   assert.deepEqual(client.inject, ['slots', 'theme', 'locale'])
 })
 
-test('managed editor init starts before iframe load and retries until stopped', () => {
-  const sent = []
+function initRetryClock() {
   const scheduled = []
   const cancelled = []
-  const stop = client.beginEditorInitRetry(
-    () => { sent.push('init') },
-    () => { sent.push('timeout') },
-    {
+  return {
+    scheduled,
+    cancelled,
+    timer: {
       schedule(callback, delayMs) {
         const handle = { callback, delayMs }
         scheduled.push(handle)
@@ -757,53 +790,135 @@ test('managed editor init starts before iframe load and retries until stopped', 
       },
       cancel(handle) { cancelled.push(handle) },
     },
-    { intervalMs: 500, maxAttempts: 3 },
+  }
+}
+
+test('managed editor init starts before iframe load and retries until stopped', () => {
+  const sent = []
+  const clock = initRetryClock()
+  const controller = client.beginEditorInitRetry(
+    () => { sent.push('init') },
+    () => { sent.push('timeout') },
+    clock.timer,
+    { intervalMs: 500, timeoutMs: 3_000 },
   )
 
   assert.deepEqual(sent, ['init'], 'first init must not wait for the iframe load event')
-  assert.equal(scheduled.length, 1)
-  assert.equal(scheduled[0].delayMs, 500)
-  scheduled[0].callback()
+  assert.deepEqual(clock.scheduled.map(handle => handle.delayMs), [500, 3_000], 'retry interval plus timeout budget')
+  clock.scheduled[0].callback()
   assert.deepEqual(sent, ['init', 'init'])
 
-  stop()
-  assert.deepEqual(cancelled, [scheduled[0]])
-  scheduled[0].callback()
+  controller.stop()
+  assert.equal(clock.cancelled.length, 2, 'stop cancels the pending retry and the timeout budget')
+  clock.scheduled[0].callback()
   assert.deepEqual(sent, ['init', 'init'], 'stopped retry callbacks are inert')
 })
 
-test('managed editor init can renew its full retry window after listening arrives late', () => {
+test('managed editor init exhausts the longer budget exactly once', () => {
   const sent = []
-  const scheduled = []
-  const cancelled = []
-  const timer = {
-    schedule(callback, delayMs) {
-      const handle = { callback, delayMs }
-      scheduled.push(handle)
-      return handle
-    },
-    cancel(handle) { cancelled.push(handle) },
-  }
-  const start = () => client.beginEditorInitRetry(
+  const clock = initRetryClock()
+  client.beginEditorInitRetry(
     () => { sent.push('init') },
     () => { sent.push('timeout') },
-    timer,
-    { intervalMs: 500, maxAttempts: 2 },
+    clock.timer,
+    { intervalMs: 500, timeoutMs: 3_000 },
   )
 
-  let stop = start()
-  scheduled.at(-1).callback()
-  assert.deepEqual(sent, ['init', 'init', 'timeout'])
+  assert.equal(clock.scheduled[1].delayMs, 3_000)
+  clock.scheduled[1].callback()
+  assert.deepEqual(sent, ['init', 'timeout'], 'the timeout budget still surfaces an error')
+  clock.scheduled[0].callback()
+  assert.deepEqual(sent, ['init', 'timeout'], 'exhaustion stops the retry interval')
+  clock.scheduled[1].callback()
+  assert.deepEqual(sent, ['init', 'timeout'], 'the exhausted budget never fires twice')
+})
 
-  // Mirrors ManagedOpenPencilEditor handling `op-bridge/listening`: stop any
-  // old loop and begin a fresh bounded window, whose first init is immediate.
-  stop()
-  stop = start()
-  assert.deepEqual(sent, ['init', 'init', 'timeout', 'init'])
-  scheduled.at(-1).callback()
-  assert.deepEqual(sent, ['init', 'init', 'timeout', 'init', 'init', 'timeout'])
-  assert.ok(cancelled.length >= 2)
-  stop()
+test('managed editor init defaults to a 500 ms interval and a 60 s budget', () => {
+  const clock = initRetryClock()
+  client.beginEditorInitRetry(() => {}, () => {}, clock.timer)
+  assert.deepEqual(clock.scheduled.map(handle => handle.delayMs), [500, 60_000])
+})
+
+test('an editor that never announces listening keeps retrying far beyond the former 20-attempt cap', () => {
+  const sent = []
+  const clock = initRetryClock()
+  const controller = client.beginEditorInitRetry(
+    () => { sent.push('init') },
+    () => { sent.push('timeout') },
+    clock.timer,
+    { intervalMs: 500, timeoutMs: 60_000 },
+  )
+  // The old 20 x 500 ms budget (~10 s) killed a first Wasm load on slow
+  // machines. An old editor (no op-bridge/listening) must keep receiving
+  // init until ready arrives or the 60 s budget runs out.
+  for (let tick = 0; tick < 40; tick += 1) {
+    const next = clock.scheduled.find(handle => handle.delayMs === 500 && !handle.fired)
+    assert.ok(next, 'each retry tick schedules the next one')
+    next.fired = true
+    next.callback()
+  }
+  assert.equal(sent.length, 41, '40 retries after the immediate init')
+  assert.equal(sent.includes('timeout'), false, 'the longer budget must not exhaust at 40 attempts')
+  controller.stop()
+  assert.equal(sent.includes('timeout'), false)
+})
+
+test('op-bridge/listening resends init immediately and stops the periodic retries', () => {
+  const sent = []
+  const clock = initRetryClock()
+  const controller = client.beginEditorInitRetry(
+    () => { sent.push('init') },
+    () => { sent.push('timeout') },
+    clock.timer,
+    { intervalMs: 500, timeoutMs: 3_000 },
+  )
+
+  controller.acknowledgeListening()
+  assert.deepEqual(sent, ['init', 'init'], 'listening must resend init without waiting for the next tick')
+  assert.equal(clock.cancelled.length, 2, 'listening cancels the retry interval and restarts the timeout budget')
+  clock.scheduled[0].callback()
+  assert.deepEqual(sent, ['init', 'init'], 'cancelled retry callbacks are inert after listening')
+
+  controller.stop()
+  clock.scheduled[2].callback()
+  assert.deepEqual(sent, ['init', 'init'], 'stopping after listening disarms the restarted budget')
+})
+
+test('a listening editor that never becomes ready still times out once', () => {
+  const sent = []
+  const clock = initRetryClock()
+  const controller = client.beginEditorInitRetry(
+    () => { sent.push('init') },
+    () => { sent.push('timeout') },
+    clock.timer,
+    { intervalMs: 500, timeoutMs: 3_000 },
+  )
+
+  controller.acknowledgeListening()
+  const restarted = clock.scheduled[2]
+  assert.equal(restarted.delayMs, 3_000, 'listening restarts one full bounded budget for boot to finish')
+  restarted.callback()
+  assert.deepEqual(sent, ['init', 'init', 'timeout'])
+  restarted.callback()
+  assert.deepEqual(sent, ['init', 'init', 'timeout'], 'the timeout fires exactly once')
+})
+
+test('a duplicate listening message resends init but never restarts the budget again', () => {
+  const sent = []
+  const clock = initRetryClock()
+  const controller = client.beginEditorInitRetry(
+    () => { sent.push('init') },
+    () => { sent.push('timeout') },
+    clock.timer,
+    { intervalMs: 500, timeoutMs: 3_000 },
+  )
+
+  controller.acknowledgeListening()
+  controller.acknowledgeListening()
+  assert.deepEqual(sent, ['init', 'init', 'init'], 'every listening message resends init immediately')
+  assert.equal(clock.cancelled.length, 2, 'only the first listening restarts the timers')
+  clock.scheduled[1].callback()
+  assert.deepEqual(sent, ['init', 'init', 'init'], 'the original budget is inert after the restart')
 })
 
 test('registers canonical OpenPencil new/render views and client-only legacy replay aliases', () => {

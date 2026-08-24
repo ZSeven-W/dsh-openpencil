@@ -357,9 +357,22 @@ export interface EditorInitRetryTimer<T> {
   cancel: (handle: T) => void
 }
 
+export interface EditorInitRetryController {
+  /** Stop retrying and disarm the timeout budget. Called once `op-bridge/ready` arrives. */
+  stop: () => void
+  /**
+   * The editor announced its message listener (`op-bridge/listening`): deliver
+   * init immediately and stop the periodic retries, because this init is now
+   * guaranteed to arrive. The timeout stays armed so a listening editor that
+   * never becomes ready still surfaces the bounded timeout error.
+   */
+  acknowledgeListening: () => void
+}
+
 /**
  * Start the managed-editor init handshake immediately, then retry on a bounded
- * interval until the caller stops it after `op-bridge/ready`.
+ * interval until the caller stops it after `op-bridge/ready` or the timeout
+ * budget is exhausted.
  *
  * This deliberately starts before the iframe `load` event. OpenPencil waits
  * briefly for this token before starting daemon-backed services (including the
@@ -367,35 +380,86 @@ export interface EditorInitRetryTimer<T> {
  * startup is already complete. Waiting for `load` can therefore make the first
  * account request run unauthenticated and hide the login button until the
  * editor's later health refresh.
+ *
+ * postMessage drops messages sent before the iframe registered a listener, so
+ * the budget must outlive the editor's first Wasm download (~24 MB on a cold
+ * start). Newer editors announce that moment with `op-bridge/listening`;
+ * `acknowledgeListening` then delivers init immediately and stops the now
+ * redundant periodic retries. Older editors never announce it and simply keep
+ * receiving retries until `ready` or the timeout.
  */
 export function beginEditorInitRetry<T>(
   send: () => void,
   onExhausted: () => void,
   timer: EditorInitRetryTimer<T>,
-  options: { intervalMs?: number; maxAttempts?: number } = {},
-): () => void {
+  options: { intervalMs?: number; timeoutMs?: number } = {},
+): EditorInitRetryController {
   const intervalMs = options.intervalMs ?? 500
-  const maxAttempts = options.maxAttempts ?? 20
-  let attempts = 0
-  let handle: T | undefined
+  const timeoutMs = options.timeoutMs ?? 60_000
+  let intervalHandle: T | undefined
+  let intervalGeneration = 0
+  let deadlineHandle: T | undefined
+  let deadlineGeneration = 0
+  let listeningAcknowledged = false
   let stopped = false
+
+  const cancelInterval = (): void => {
+    intervalGeneration += 1
+    if (intervalHandle !== undefined) {
+      timer.cancel(intervalHandle)
+      intervalHandle = undefined
+    }
+  }
+  const cancelDeadline = (): void => {
+    deadlineGeneration += 1
+    if (deadlineHandle !== undefined) {
+      timer.cancel(deadlineHandle)
+      deadlineHandle = undefined
+    }
+  }
   const stop = (): void => {
     if (stopped) return
     stopped = true
-    if (handle !== undefined) timer.cancel(handle)
+    cancelInterval()
+    cancelDeadline()
+  }
+  const scheduleNext = (): void => {
+    if (stopped) return
+    const generation = ++intervalGeneration
+    intervalHandle = timer.schedule(() => {
+      if (stopped || generation !== intervalGeneration) return
+      attempt()
+    }, intervalMs)
   }
   const attempt = (): void => {
     if (stopped) return
-    attempts += 1
     send()
-    if (attempts >= maxAttempts) {
+    scheduleNext()
+  }
+  const scheduleDeadline = (): void => {
+    if (stopped) return
+    const generation = ++deadlineGeneration
+    deadlineHandle = timer.schedule(() => {
+      if (stopped || generation !== deadlineGeneration) return
       stop()
       onExhausted()
+    }, timeoutMs)
+  }
+  const acknowledgeListening = (): void => {
+    if (stopped) return
+    // The editor's listener is registered: this init is guaranteed to arrive.
+    send()
+    if (!listeningAcknowledged) {
+      listeningAcknowledged = true
+      cancelInterval()
+      cancelDeadline()
+      scheduleDeadline()
     }
   }
+
   attempt()
-  if (!stopped) handle = timer.schedule(attempt, intervalMs)
-  return stop
+  scheduleDeadline()
+  return { stop, acknowledgeListening }
 }
 
 export namespace beginEditorInitRetry {
@@ -458,7 +522,7 @@ export function ManagedOpenPencilEditor({
   lifecycleStateRef.current = onLifecycleState
   const lifecycleControllerRef = useRef(onLifecycleController)
   lifecycleControllerRef.current = onLifecycleController
-  const stopInitLoopRef = useRef<() => void>()
+  const stopInitLoopRef = useRef<EditorInitRetryController>()
   const bridgeReadyRef = useRef(false)
   const selectionPollStopRef = useRef<() => void>()
   const requestCounterRef = useRef(0)
@@ -670,7 +734,7 @@ export function ManagedOpenPencilEditor({
       cancelled = true
       abort.abort()
       releaseEditor()
-      stopInitLoopRef.current?.()
+      stopInitLoopRef.current?.stop()
       stopInitLoopRef.current = undefined
       const disposed = new Error('OpenPencil editor closed')
       for (const waiter of saveWaitersRef.current.values()) waiter.reject(disposed)
@@ -694,7 +758,7 @@ export function ManagedOpenPencilEditor({
   const startInitLoop = useCallback((): void => {
     const launch = launchRef.current
     if (launch === undefined || bridgeReadyRef.current) return
-    stopInitLoopRef.current?.()
+    stopInitLoopRef.current?.stop()
     stopInitLoopRef.current = beginEditorInitRetry(
       () => {
         post({ type: 'op-bridge/init', token: launch.token })
@@ -707,8 +771,8 @@ export function ManagedOpenPencilEditor({
         updatePhase('error')
       },
       {
-        schedule: (callback, delayMs) => window.setInterval(callback, delayMs),
-        cancel: handle => { window.clearInterval(handle) },
+        schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        cancel: handle => { window.clearTimeout(handle) },
       },
     )
   }, [post, updatePhase])
@@ -720,7 +784,7 @@ export function ManagedOpenPencilEditor({
     if (phase !== 'loading' || launchRef.current === undefined || iframeRef.current === null) return
     startInitLoop()
     return () => {
-      stopInitLoopRef.current?.()
+      stopInitLoopRef.current?.stop()
       stopInitLoopRef.current = undefined
     }
   }, [phase, startInitLoop])
@@ -752,21 +816,23 @@ export function ManagedOpenPencilEditor({
       switch (message.type) {
         case 'op-bridge/listening':
           // The page installs this early listener only after the main Wasm
-          // module has instantiated. Renew the finite init window even when
-          // the original attempts expired while the bundle was loading.
+          // module has instantiated. If an exceptionally slow load already
+          // exhausted the budget, recover with one fresh controller; then the
+          // listening acknowledgement sends init into the live listener and
+          // stops periodic retries while retaining a bounded ready deadline.
           if (bridgeReadyRef.current || launchRef.current === undefined) break
-          if (phaseRef.current === 'error') {
+          if (phaseRef.current === 'error' || stopInitLoopRef.current === undefined) {
             setFailure('')
             updatePhase('loading')
-          } else {
             startInitLoop()
           }
+          stopInitLoopRef.current?.acknowledgeListening()
           break
         case 'op-bridge/ready':
           // A rebuilt iframe may announce readiness more than once. Opening
           // the authoritative boot document twice could overwrite live edits.
           if (!beginEditorInitRetry.takeReady(bridgeReadyRef)) break
-          stopInitLoopRef.current?.()
+          stopInitLoopRef.current?.stop()
           stopInitLoopRef.current = undefined
           post({ type: 'op-bridge/theme', colorScheme: colorSchemeRef.current })
           post({ type: 'op-bridge/locale', locale: localeRef.current })

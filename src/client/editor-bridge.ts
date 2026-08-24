@@ -47,6 +47,9 @@ export function parseEditorInbound(raw: unknown): EditorInboundMessage | undefin
   if (!isRecord(value) || typeof value.type !== 'string') return undefined
   switch (value.type) {
     case 'op-bridge/listening':
+      // Editor-side announcement that its message listener just registered.
+      // The contract payload carries no other fields; extra keys are ignored
+      // exactly like every other inbound message in this parser.
       return { type: value.type }
     case 'op-bridge/ready':
       return safeInteger(value.generation) && safeInteger(value.revision)
