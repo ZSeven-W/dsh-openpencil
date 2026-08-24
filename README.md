@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.2</code> · Tested with DSH <code>0.1.1-rc.1</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.3</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ The tool card and managed editor follow DSH's Chinese/English locale and light/d
 DSH is a separate package. Install it once if you do not already have it:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 Then add the plugin to a profile and start the web app:
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+For local development, build the checkout, link its absolute path into the Web profile, and then restart DSH:
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+The `link:` dependency exposes subsequent rebuilds from this checkout, but DSH must be fully restarted after replacing the profile dependency because the shipped Web profile does not hot-reload host bundles by default.
+
 Prefer not to install DSH globally? Run the same two steps through `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > The OpenPencil plugin is public and requires no npm token. If the DSH prerelease itself requires registry authentication, keep that credential in a user-level or temporary npm config outside the checkout. This repository intentionally contains no registry credentials.
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | Tool | What it does |
 | --- | --- |
-| `openpencil_new` | Creates a brand-new `.op` from one transactional `batch_design` program, saves it atomically through DSH's sandboxed filesystem, and requires no pre-opened editor. |
+| `openpencil_new` | Creates a brand-new `.op` from one transactional QuickJS `batch_design` script, saves it atomically through DSH's sandboxed filesystem, and returns a signed editable presentation that DSH opens in the sidebar in the same tool call. No pre-opened editor, PNG preview, or follow-up render is required. |
 | `openpencil_create` | Applies a transactional `batch_design` program to generate or restructure nodes on an existing live canvas. |
 | `openpencil_edit` | Modifies an explicit node or the single node selected by the user. |
 | `openpencil_render` | Creates an immutable, content-addressed `.op` snapshot and renders every top-level frame on the active page — optional `scale` and `editable`. |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## Agent Design Workflow
 
-For a natural-language request with no existing document, the Agent should call `openpencil_new` with a new workspace-relative `.op` path and the first complete `batch_design` program. The tool runs that program in a private managed OpenPencil daemon and publishes the authoritative document only after the whole batch succeeds. It never overwrites an existing path and a failed batch leaves no empty file behind. The Agent should then call `openpencil_render` with the returned path, `editable: true`, and `autoOpen: true` to present the gallery and expand the editor once. Replayed or initially-settled historical cards never auto-open.
+For a natural-language request with no existing document, the Agent should call `openpencil_new` with a new workspace-relative `.op` path and the first complete `batch_design` program. The tool runs that program in a private managed OpenPencil daemon and publishes the authoritative document only after the whole batch succeeds. It never overwrites an existing path and a failed batch leaves no empty file behind. The same successful tool call returns a signed, document-scoped editable presentation, and DSH automatically opens the editor sidebar with the authoritative document JSON. No second `openpencil_render` call or PNG preview is involved. Replayed, hydrated, or initially-settled historical cards can recover the document presentation but never receive an editor grant or auto-open.
+
+`openpencil_new` uses the real QuickJS `script` surface of `batch_design`: the Agent builds with `I`/`K` calls and ordinary JavaScript data, arrays, and loops instead of hand-writing low-level `operations`. DSH always enables `postProcess`, then explicitly calls `finalize_design` after creation. This supplies the same end-of-run cleanup as the built-in OpenPencil host before the document is published. The managed runtime is bundled with the plugin and does not require the desktop binary. This is the current creation path; it does not claim to route creation through the separate `design_skeleton`, `design_content`, or `design_refine` tools.
 
 Use `openpencil_create` and `openpencil_edit` only for an existing live canvas. Their edits remain unsaved until the editor Save action.
 
@@ -172,12 +184,33 @@ Viewer assets are lazy-loaded only after the user opens the canvas. If they are 
 
 Editable sessions use OpenPencil's managed web host — the same architecture used by `op-vscode`. The plugin starts the host only after an authorized user action, keeps the daemon token in memory, validates iframe source and origin, and closes the process when the editor session ends. The editor surface is selected progressively: native Tool details when the host declares that seam, otherwise the plugin's right-hand workbench with resize and full-screen controls.
 
+Startup uses a slow-mount-safe listening handshake: readiness probes begin only after the bundled host announces its bound address. No desktop OpenPencil installation is required.
+
+Published installations provide six native package targets: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, and `win32-x64`; both Linux packages target glibc. The root package declares every platform package under exact-version `optionalDependencies`, allowing npm to select the matching package by OS and CPU. Each platform package stages `op-host-web-server`, the editor web bundle, and CanvasKit as one matching atomic runtime. The managed editor therefore does not depend on `/Applications/OpenPencil.app`, `openpencil-desktop` on `PATH`, or an OpenPencil source checkout. This applies to managed editable sessions; the exact PNG renderer retains the separate binary discovery contract described above.
+
 If DSH reloads or unloads the plugin while the canvas is dirty, the host keeps an opaque local recovery draft for up to seven days. Reopening the same source asks before restoring it into the live canvas; recovery never overwrites the `.op` file until the user explicitly saves.
 
-Binary and source discovery can be overridden with:
+Official six-platform packages receive their China and Global collaboration bootstrap endpoints during the protected release build, which validates the injected endpoints before publishing. A local self-build without that injection may override the bootstrap before starting DSH with `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap`; the value must use `https` and exactly the `/api/v1/collaboration/bootstrap` path.
+
+Cross-device canvas synchronization requires both the PC/DSH native runtime and the mobile app to be updated to the same OpenPencil release line that includes the current collaboration queue fix. Mixing an older mobile app with a newer PC runtime may still show remote cursors while failing to receive canvas commits.
+
+When developing from this repository, build the editor Web bundle, build the native host, and then stage that matching runtime before launching DSH.
+
+`pnpm run build:editor-web` runs OpenPencil's supported WASM bundle gate. It requires Bash, Cargo/Rust with the `wasm32-unknown-unknown` target, the `wasm-bindgen` CLI, Binaryen's `wasm-opt`, Node.js, and `gzip`; CanvasKit does not require EMSDK. The Web build does not use the collaboration bootstrap build variables. Before `pnpm run build:editor-runtime`, set both `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` and `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL`; they are used only by the native Cargo build, which fails closed if either is missing. After both builds succeed, stage the runtime with the final command below.
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+Explicit runtime overrides are accepted only as one complete, matching set:
 
 - `DSH_OPENPENCIL_EDITOR_BINARY` for `op-host-web-server`;
-- `DSH_OPENPENCIL_SOURCE_ROOT` (or `OPENPENCIL_SOURCE_ROOT`) for the web bundle and CanvasKit assets.
+- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` for the built editor web bundle;
+- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` for the CanvasKit assets.
+
+Providing only part of the set is invalid; the plugin does not combine custom paths with packaged runtime assets.
 
 Saves use an optimistic source hash, an atomic replace, and a successor capability. If the source changes outside the editor, the plugin reports a conflict instead of overwriting it.
 
@@ -193,14 +226,14 @@ The model-visible result stays plain JSON. Browser-only `presentationMeta.$dshOp
 
 The result also records `renderer`, `rendererBinary`, `fidelity`, and any warnings. Existing PNG-only schema-v1 messages remain renderable.
 
-DSH `0.1.1-rc.1` does not persist browser presentation metadata for tools nested under PTC/Code Mode. The plugin recovers that UI-only projection through a same-origin, session-bound endpoint: the browser sends only the session id, call id, and immutable document SHA-256, while the host resolves the authoritative result from the durable DSH session log and uses a short-lived in-process marker only to authorize recent live editing. Signed preview/editor capabilities never enter the canonical tool result or model context. Durable history can restore read-only previews; editor grants are issued only for recent, trusted live results.
+DSH `0.1.1-rc.2` does not persist browser presentation metadata for tools nested under PTC/Code Mode. The plugin recovers that UI-only projection through a same-origin, session-bound endpoint: the browser sends only the session id, call id, and immutable document SHA-256, while the host resolves the authoritative result from the durable DSH session log and uses a short-lived in-process marker only to authorize recent live editing. Signed preview/editor capabilities never enter the canonical tool result or model context. Durable history can restore read-only previews; editor grants are issued only for recent, trusted live results.
 
 For bounded replay, nested metadata recovery accepts up to 128 top-level frames; larger Code Mode results remain available through their canonical JSON fallback.
 
 ## Current Limits
 
 - Follow-up edits to an existing canvas require an already-open managed editor. Changes remain unsaved until the user invokes its Save action.
-- The lightweight Web SDK canvas is read-only; full editing uses the separate managed editor surface. On DSH `0.1.1-rc.1`, the plugin uses the resizable right workbench with a full-screen option.
+- The lightweight Web SDK canvas is read-only; full editing uses the separate managed editor surface. On DSH `0.1.1-rc.2`, the plugin uses the resizable right workbench with a full-screen option.
 - The exact gallery covers top-level frames on the active page; the interactive canvas remains the way to inspect inactive pages and nested nodes.
 - Render and snapshot caches still need a product-level retention policy.
 
@@ -241,7 +274,7 @@ Builds require Node 24.11 or newer and pnpm. DSH host/client packages are peer d
 For a private DSH prerelease, keep the issued npm credential outside this repository (for example in a user-level or temporary `.npmrc`) and run the requested version directly:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 Never commit `.npmrc`, `NPM_TOKEN`, or copied registry credentials. This repository ignores local npm configuration by default.

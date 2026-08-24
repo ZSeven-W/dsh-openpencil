@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 
 const { createDesignNewTool } = await import('../lib/new-tool.js')
+const { RenderAccessController } = await import('../lib/renderer.js')
+
+const previousDshHome = process.env.DSH_HOME
+const testRoot = await mkdtemp(join(tmpdir(), 'dsh-openpencil-new-tool-'))
+const SIMPLE_SCRIPT = 'const root = I(null, { type: "frame", name: "Forage", width: 390, height: 844 });\nI(root, { type: "text", name: "Title", content: "Forage", width: "fill_container", height: 44 });'
+process.env.DSH_HOME = join(testRoot, 'dsh-home')
+after(async () => {
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
+  await rm(testRoot, { recursive: true, force: true })
+})
 
 function createHarness(options = {}) {
   const workspaceRoot = '/workspace/project'
@@ -22,6 +34,7 @@ function createHarness(options = {}) {
     resolve: [],
     processPath: [],
     batch: [],
+    grant: [],
     write: [],
     observe: [],
   }
@@ -73,10 +86,21 @@ function createHarness(options = {}) {
         result: options.batchResult ?? { applied: true, inserted: 1 },
       }
     },
+    grantFor(sourcePath, sourceSha256) {
+      calls.grant.push({ sourcePath, sourceSha256 })
+      return {
+        enabled: true,
+        launchUrl: '/_dsh/dsh-openpencil/editor/live/launch',
+        refreshUrl: '/_dsh/dsh-openpencil/editor/live/refresh',
+      }
+    },
   }
+  const render = new RenderAccessController(randomBytes(32))
+  render.attachRoute()
   const tool = createDesignNewTool(editorHost, {
     fs,
     sandboxPolicy,
+    render,
     observe(receivedTarget, observation, actor) {
       calls.observe.push({ target: receivedTarget, observation, actor })
     },
@@ -84,15 +108,14 @@ function createHarness(options = {}) {
   return { calls, documentJson, exec, policy, processPath, requestedPath, signal, target, tool, writeVersion }
 }
 
-test('openpencil_new publishes one completed batch through guarded DSH filesystem services', async () => {
+test('openpencil_new publishes one completed QuickJS build through guarded DSH filesystem services', async () => {
   const harness = createHarness()
-  const operations = 'root=I(null,{"type":"frame","name":"Forage","width":390,"height":844})'
+  const script = SIMPLE_SCRIPT
 
   const result = await harness.tool.execute({
     path: harness.requestedPath,
-    operations,
+    script,
     canvasWidth: 390,
-    postProcess: true,
   }, harness.exec)
 
   assert.deepEqual(harness.calls.policy, [{ session: harness.exec.agent.session }])
@@ -109,9 +132,8 @@ test('openpencil_new publishes one completed batch through guarded DSH filesyste
   })
   assert.deepEqual(harness.calls.processPath, [harness.target])
   assert.deepEqual(harness.calls.batch, [{
-    operations,
+    script,
     canvasWidth: 390,
-    postProcess: true,
     signal: harness.signal,
   }])
   assert.deepEqual(harness.calls.write, [{
@@ -135,8 +157,19 @@ test('openpencil_new publishes one completed batch through guarded DSH filesyste
     created: true,
     applied: true,
     saved: true,
+    sourceTool: 'openpencil_new',
+    previewIntent: 'document',
+    editable: true,
+    autoOpenEditor: true,
+    document: {
+      path: join(process.env.DSH_HOME, 'cache', 'dsh-openpencil', 'snapshots', `${createHash('sha256').update(expectedText).digest('hex')}.op`),
+      filename: `${createHash('sha256').update(expectedText).digest('hex')}.op`,
+      mimeType: 'application/json',
+      bytes: Buffer.byteLength(expectedText),
+      sha256: createHash('sha256').update(expectedText).digest('hex'),
+    },
     result: { applied: true, inserted: 1 },
-    note: `Created and saved ${harness.processPath}. Call openpencil_render with this path, editable=true, and autoOpen=true now.`,
+    note: `Created and saved ${harness.processPath}; the managed OpenPencil editor opens in the sidebar automatically.`,
   })
 })
 
@@ -146,11 +179,36 @@ test('openpencil_new hashes the filesystem-authoritative written text', async ()
 
   const result = await harness.tool.execute({
     path: harness.requestedPath,
-    operations: 'root=I(null,{"type":"frame","width":390,"height":844})',
+    script: SIMPLE_SCRIPT,
   }, harness.exec)
 
   assert.equal(result.bytes, Buffer.byteLength(normalized))
   assert.equal(result.sha256, createHash('sha256').update(normalized).digest('hex'))
+  assert.equal(await readFile(result.document.path, 'utf8'), normalized)
+  assert.notEqual(normalized, harness.documentJson, 'the authoritative filesystem result differs from the daemon proposal')
+})
+
+test('openpencil_new projects a signed document-only grant and auto-opens the editor', async () => {
+  const harness = createHarness()
+  const result = await harness.tool.execute({
+    path: harness.requestedPath,
+    script: SIMPLE_SCRIPT,
+  }, harness.exec)
+
+  const projected = harness.tool.output.presentationMeta({}, result)
+  const envelope = projected.$dshOpenPencil
+  assert.equal(envelope.schemaVersion, 2)
+  assert.equal('image' in envelope, false)
+  assert.equal(envelope.document.path, harness.processPath)
+  assert.equal(envelope.document.sha256, result.document.sha256)
+  assert.match(envelope.document.url, /^\/_dsh\/dsh-openpencil\/render\//)
+  assert.equal(envelope.document.downloadUrl, `${envelope.document.url}?download=1`)
+  assert.equal(envelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
+  assert.equal(envelope.autoOpenEditor, true)
+  assert.deepEqual(harness.calls.grant, [{
+    sourcePath: harness.processPath,
+    sourceSha256: result.document.sha256,
+  }])
 })
 
 test('openpencil_new rejects an existing target before starting a design daemon', async () => {
@@ -161,7 +219,7 @@ test('openpencil_new rejects an existing target before starting a design daemon'
   await assert.rejects(
     harness.tool.execute({
       path: harness.requestedPath,
-      operations: 'root=I(null,{"type":"frame"})',
+      script: SIMPLE_SCRIPT,
     }, harness.exec),
     /target already exists: designs\/forage\.op/,
   )
@@ -179,7 +237,7 @@ test('openpencil_new rejects a resolved target that appeared after the no-follow
   await assert.rejects(
     harness.tool.execute({
       path: harness.requestedPath,
-      operations: 'root=I(null,{"type":"frame"})',
+      script: SIMPLE_SCRIPT,
     }, harness.exec),
     /target already exists: designs\/forage\.op/,
   )
@@ -197,7 +255,7 @@ test('openpencil_new fails before daemon startup in a read-only sandbox', async 
   await assert.rejects(
     harness.tool.execute({
       path: harness.requestedPath,
-      operations: 'root=I(null,{"type":"frame"})',
+      script: SIMPLE_SCRIPT,
     }, harness.exec),
     /requires Workspace Write access/,
   )
@@ -213,7 +271,7 @@ test('openpencil_new preserves create-if-absent publication failures', async () 
   await assert.rejects(
     harness.tool.execute({
       path: harness.requestedPath,
-      operations: 'root=I(null,{"type":"frame"})',
+      script: SIMPLE_SCRIPT,
     }, harness.exec),
     error => error === race,
   )
@@ -226,13 +284,13 @@ test('openpencil_new preserves create-if-absent publication failures', async () 
 })
 
 test('openpencil_new never publishes a target when the transactional design batch fails', async () => {
-  const batchFailure = new Error('batch_design rejected line 4')
+  const batchFailure = new Error('batch_design rejected the QuickJS script')
   const harness = createHarness({ batchError: batchFailure })
 
   await assert.rejects(
     harness.tool.execute({
       path: harness.requestedPath,
-      operations: 'root=I(null,{"type":"frame"})',
+      script: SIMPLE_SCRIPT,
     }, harness.exec),
     error => error === batchFailure,
   )
@@ -247,12 +305,12 @@ test('openpencil_new validates paths and programs before acquiring filesystem or
   const harness = createHarness()
   const tooLarge = 'x'.repeat(256 * 1024 + 1)
   for (const [args, pattern] of [
-    [{ path: '   ', operations: 'root=I(null,{"type":"frame"})' }, /path is required/],
-    [{ path: 'design.json', operations: 'root=I(null,{"type":"frame"})' }, /path must end in \.op/],
-    [{ path: 'design.op', operations: '   ' }, /operations must not be empty/],
-    [{ path: 'design.op', operations: tooLarge }, /operations are too large/],
-    [{ path: 'design.op', operations: 'root=I(null,{"type":"frame"})', canvasWidth: 0 }, /canvasWidth must be greater than 0/],
-    [{ path: 'design.op', operations: 'root=I(null,{"type":"frame"})', canvasWidth: 16385 }, /canvasWidth must be greater than 0/],
+    [{ path: '   ', script: SIMPLE_SCRIPT }, /path is required/],
+    [{ path: 'design.json', script: SIMPLE_SCRIPT }, /path must end in \.op/],
+    [{ path: 'design.op', script: '   ' }, /script must not be empty/],
+    [{ path: 'design.op', script: tooLarge }, /script is too large/],
+    [{ path: 'design.op', script: SIMPLE_SCRIPT, canvasWidth: 0 }, /canvasWidth must be greater than 0/],
+    [{ path: 'design.op', script: SIMPLE_SCRIPT, canvasWidth: 16385 }, /canvasWidth must be greater than 0/],
   ]) {
     await assert.rejects(harness.tool.execute(args, harness.exec), pattern)
   }
@@ -268,7 +326,7 @@ test('openpencil_new refuses a provider-resolved non-op process path', async () 
   await assert.rejects(
     harness.tool.execute({
       path: harness.requestedPath,
-      operations: 'root=I(null,{"type":"frame"})',
+      script: SIMPLE_SCRIPT,
     }, harness.exec),
     /resolved target must end in \.op/,
   )
@@ -280,14 +338,21 @@ test('openpencil_new refuses a provider-resolved non-op process path', async () 
 test('openpencil_new exposes a strict creation schema and output contract', () => {
   const harness = createHarness()
   assert.equal(harness.tool.name, 'openpencil_new')
-  assert.deepEqual([...harness.tool.parameters.required].sort(), ['operations', 'path'])
+  assert.deepEqual([...harness.tool.parameters.required].sort(), ['path', 'script'])
+  assert.deepEqual(Object.keys(harness.tool.parameters.properties).sort(), ['canvasWidth', 'path', 'script'])
+  assert.equal('operations' in harness.tool.parameters.properties, false)
+  assert.equal('postProcess' in harness.tool.parameters.properties, false)
   assert.equal(harness.tool.output.schema.additionalProperties, false)
   assert.equal(harness.tool.output.schema.properties.created.const, true)
   assert.equal(harness.tool.output.schema.properties.applied.const, true)
   assert.equal(harness.tool.output.schema.properties.saved.const, true)
+  assert.equal(harness.tool.output.schema.properties.sourceTool.const, 'openpencil_new')
+  assert.equal(harness.tool.output.schema.properties.previewIntent.const, 'document')
+  assert.equal(harness.tool.output.schema.properties.editable.const, true)
+  assert.equal(harness.tool.output.schema.properties.autoOpenEditor.const, true)
   assert.deepEqual(harness.tool.presentCall({
     path: harness.requestedPath,
-    operations: 'root=I(null,{"type":"frame"})',
+    script: SIMPLE_SCRIPT,
   }), {
     card: 'generic',
     title: `Create ${harness.requestedPath}`,
@@ -295,14 +360,33 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
     locations: [{ path: harness.requestedPath }],
   })
 
-  const decisionContract = `${harness.tool.description}\n${harness.tool.parameters.properties.operations.description}`
+  const decisionContract = `${harness.tool.description}\n${harness.tool.parameters.properties.script.description}`
   assert.doesNotMatch(decisionContract, /\{\.\.\.\}/, 'model-facing examples must be executable rather than schematic')
   assert.match(decisionContract, /no \.op file or live editor/i)
   assert.match(decisionContract, /do not ask the user to open a sidebar/i)
-  assert.match(decisionContract, /prefer(?:ably)? at most 25 top-level operations/i)
-  assert.match(decisionContract, /root=I\(null,/)
-  assert.match(decisionContract, /photo=G\(slot,"search","seasonal food photography"\)/)
-  assert.match(decisionContract, /do not ask image-provider questions/i)
-  assert.match(decisionContract, /openpencil_render.*editable=true/i)
-  assert.match(decisionContract, /autoOpen=true/i)
+  assert.match(decisionContract, /sandboxed QuickJS/i)
+  assert.match(decisionContract, /script (?:program )?string.*outer run_code runtime/i)
+  assert.match(decisionContract, /I\/K do not exist in the outer run_code runtime/i)
+  assert.match(decisionContract, /I\(parent, node\).*K\(kitId, parent, overrides\)/i)
+  assert.match(decisionContract, /const\/let.*arrays.*for\.\.\.of/i)
+  assert.match(decisionContract, /C\/U\/D\/M\/R\/G.*not available/i)
+  assert.match(decisionContract, /const root = I\(null,/)
+  assert.match(decisionContract, /const card = I\(root,/)
+  assert.match(decisionContract, /binding returned from an earlier I\(\)/i)
+  assert.match(decisionContract, /never (?:write )?I\("root",/i)
+  assert.match(decisionContract, /do not set node ids yourself/i)
+  assert.match(decisionContract, /multiple semantic I\(\) calls/i)
+  assert.match(decisionContract, /layout, gap, padding, justifyContent, alignItems, cornerRadius, and textAlign/i)
+  assert.match(decisionContract, /fill: \[\{type:"solid",color:/i)
+  assert.match(decisionContract, /stroke: \{thickness:1,fill:/i)
+  assert.match(decisionContract, /justifyContent start\/center\/end\/space_between\/space_around/i)
+  assert.match(decisionContract, /native text_input/i)
+  assert.match(decisionContract, /never invent paddingX, paddingY, radius, strokeWidth, align/i)
+  assert.match(decisionContract, /negative space/i)
+  assert.match(decisionContract, /at most two saturated colors/i)
+  assert.match(decisionContract, /16-20px horizontal padding/i)
+  assert.match(decisionContract, /post-processing and finalization pipeline/i)
+  assert.match(decisionContract, /one call completes the workflow/i)
+  assert.match(decisionContract, /automatically opens.*sidebar/i)
+  assert.doesNotMatch(decisionContract, /call openpencil_render.*editable=true/i)
 })

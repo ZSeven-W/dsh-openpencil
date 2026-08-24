@@ -2,7 +2,7 @@
  * Safe recovery of browser-only presentation metadata for nested Code Mode
  * tool calls.
  *
- * DSH persists a nested `openpencil_render` outcome as a
+ * DSH persists nested `openpencil_render` / `openpencil_new` outcomes as a
  * `tool/code-dispatch` event, but published DSH through 0.1.0-rc.6 omits the native
  * `tool/result` presentation metadata from that event. The browser can ask
  * this same-origin endpoint to re-project that metadata without submitting
@@ -19,18 +19,20 @@ import { basename, isAbsolute, join } from 'node:path'
 import { SessionId, type SessionStore } from '@deepseek-ai/dsh-session'
 import type { JsonValue, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { isLoopbackRemoteAddress, type EditorHostController } from './editor-host.js'
+import type { DesignNewResult } from './new-tool.js'
 import {
   MAX_DOCUMENT_BYTES,
   MAX_RENDER_BYTES,
   PRESENTATION_META_KEY,
   RenderAccessController,
+  projectDocumentGrant,
   projectRenderGrant,
   renderDir,
   snapshotDir,
   type RenderFrame,
   type RenderResult,
 } from './renderer.js'
-import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
+import { OPENPENCIL_NEW_TOOL_NAME, OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
 import type { ViewerAssetController } from './viewer-assets.js'
 
 /** Exact same-origin endpoint used by the client to recover nested metadata. */
@@ -46,6 +48,8 @@ const DEFAULT_MAX_ENTRIES = 256
 const DEFAULT_MAX_RECORD_BYTES = 32 * 1024
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 const MAX_HYDRATION_FRAMES = 128
+
+type HydratableResult = RenderResult | DesignNewResult
 
 interface HydrationRequest {
   sessionId: string
@@ -170,7 +174,7 @@ function isDocumentSnapshot(value: unknown): value is NonNullable<RenderResult['
     && isSafeInteger(value.bytes, 1, MAX_DOCUMENT_BYTES)
 }
 
-const RESULT_KEYS = new Set([
+const RENDER_RESULT_KEYS = new Set([
   'path', 'filename', 'mimeType', 'kind', 'description', 'sourceTool',
   'previewIntent', 'bytes', 'width', 'height', 'sha256', 'sourcePath',
   'renderer', 'rendererBinary', 'fidelity', 'warnings', 'frames',
@@ -183,7 +187,7 @@ const RESULT_KEYS = new Set([
  * plugin. Hydration never signs a legacy absolute-path-only render.
  */
 export function parseHydratableRenderResult(value: unknown): RenderResult | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, RESULT_KEYS)) return undefined
+  if (!isRecord(value) || !hasExactKeys(value, RENDER_RESULT_KEYS)) return undefined
   if (
     typeof value.filename !== 'string'
     || !RENDER_FILENAME_PATTERN.test(value.filename)
@@ -236,6 +240,57 @@ export function parseHydratableRenderResult(value: unknown): RenderResult | unde
   return value as unknown as RenderResult
 }
 
+const NEW_RESULT_KEYS = new Set([
+  'path', 'filename', 'bytes', 'sha256', 'created', 'applied', 'saved',
+  'sourceTool', 'previewIntent', 'editable', 'autoOpenEditor', 'document',
+  'result', 'note',
+])
+
+/** Accept only the canonical document-only result emitted by openpencil_new. */
+export function parseHydratableNewResult(value: unknown): DesignNewResult | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, NEW_RESULT_KEYS)) return undefined
+  if (
+    !isSafeString(value.path)
+    || !isAbsolute(value.path)
+    || !value.path.toLowerCase().endsWith('.op')
+    || typeof value.filename !== 'string'
+    || basename(value.path) !== value.filename
+    || !isSafeInteger(value.bytes, 1, MAX_DOCUMENT_BYTES)
+    || !isSha256(value.sha256)
+    || value.created !== true
+    || value.applied !== true
+    || value.saved !== true
+    || value.sourceTool !== OPENPENCIL_NEW_TOOL_NAME
+    || value.previewIntent !== 'document'
+    || value.editable !== true
+    || value.autoOpenEditor !== true
+    || !isDocumentSnapshot(value.document)
+    || value.document.bytes !== value.bytes
+    || value.document.sha256 !== value.sha256
+    || (value.result !== undefined && !isRecord(value.result))
+    || !isSafeString(value.note)
+  ) return undefined
+  return value as unknown as DesignNewResult
+}
+
+function parseHydratableResult(toolName: unknown, value: unknown): HydratableResult | undefined {
+  if (toolName === OPENPENCIL_RENDER_TOOL_NAME) return parseHydratableRenderResult(value)
+  if (toolName === OPENPENCIL_NEW_TOOL_NAME) return parseHydratableNewResult(value)
+  return undefined
+}
+
+function resultDocument(result: HydratableResult): NonNullable<RenderResult['document']> {
+  return result.document!
+}
+
+function resultSourcePath(result: HydratableResult): string | undefined {
+  return result.sourceTool === OPENPENCIL_NEW_TOOL_NAME ? result.path : result.sourcePath
+}
+
+function resultEditable(result: HydratableResult): boolean {
+  return result.editable === true
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
   if (Array.isArray(value)) return `[${value.map(item => canonicalJson(item)).join(',')}]`
@@ -247,7 +302,7 @@ function canonicalJson(value: unknown): string {
   return `{${members.join(',')}}`
 }
 
-function renderResultDigest(result: RenderResult): string {
+function resultDigest(result: HydratableResult): string {
   return createHash('sha256').update(canonicalJson(result)).digest('hex')
 }
 
@@ -406,12 +461,11 @@ export class PresentationHydrationController {
   /** Observe one trusted in-process result before Code Mode drops its meta. */
   observeToolResult(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): void {
     if (
-      exec.name !== OPENPENCIL_RENDER_TOOL_NAME
-      || exec.parent === undefined
+      exec.parent === undefined
       || result.isError
       || exec.agent === undefined
     ) return
-    const parsed = parseHydratableRenderResult(result.value)
+    const parsed = parseHydratableResult(exec.name, result.value)
     if (parsed === undefined) return
     const sessionId = String(exec.agent.session.id)
     const callId = String(exec.callId)
@@ -440,10 +494,10 @@ export class PresentationHydrationController {
       kind: 'authorization',
       expiresAt: now + this.#ttlMs,
       bytes: 0,
-      documentSha256: parsed.document!.sha256,
-      sourcePath: parsed.sourcePath,
-      editable: parsed.editable === true,
-      resultDigest: renderResultDigest(parsed),
+      documentSha256: resultDocument(parsed).sha256,
+      sourcePath: resultSourcePath(parsed),
+      editable: resultEditable(parsed),
+      resultDigest: resultDigest(parsed),
     }
     const bytes = Buffer.byteLength(JSON.stringify(authorization), 'utf8')
     if (bytes > this.#maxRecordBytes || bytes > this.#maxBytes) {
@@ -501,18 +555,21 @@ export class PresentationHydrationController {
     if (result === undefined) return undefined
     const authorization = this.#liveAuthorization(request, result)
     if (authorization === null) return undefined
+    const sourcePath = resultSourcePath(result)
     const editor = authorization !== undefined
       && editorAllowed
       && authorization.editable
-      && authorization.sourcePath !== undefined
-      ? this.dependencies.editor?.grantFor(authorization.sourcePath, authorization.documentSha256)
+      && sourcePath !== undefined
+      ? this.dependencies.editor?.grantFor(sourcePath, authorization.documentSha256)
       : undefined
-    const projected = projectRenderGrant(
-      result as unknown as JsonValue,
-      this.dependencies.render,
-      this.dependencies.viewer?.viewerGrant,
-      editor,
-    )
+    const projected = result.sourceTool === OPENPENCIL_NEW_TOOL_NAME
+      ? projectDocumentGrant(result as unknown as JsonValue, this.dependencies.render, editor)
+      : projectRenderGrant(
+          result as unknown as JsonValue,
+          this.dependencies.render,
+          this.dependencies.viewer?.viewerGrant,
+          editor,
+        )
     if (!isRecord(projected) || !(PRESENTATION_META_KEY in projected)) return undefined
     const envelope = projected[PRESENTATION_META_KEY]
     if (!isRecord(envelope)) return undefined
@@ -521,7 +578,7 @@ export class PresentationHydrationController {
 
   #liveAuthorization(
     request: HydrationRequest,
-    result: RenderResult,
+    result: HydratableResult,
   ): LiveAuthorizationRecord | null | undefined {
     const now = this.#now()
     this.#prune(now)
@@ -537,15 +594,15 @@ export class PresentationHydrationController {
     }
     if (
       record.documentSha256 !== request.documentSha256
-      || record.sourcePath !== result.sourcePath
-      || record.editable !== (result.editable === true)
-      || record.resultDigest !== renderResultDigest(result)
+      || record.sourcePath !== resultSourcePath(result)
+      || record.editable !== resultEditable(result)
+      || record.resultDigest !== resultDigest(result)
     ) return undefined
     this.#touchLive(key, record)
     return record
   }
 
-  #historicalResult(request: HydrationRequest): RenderResult | undefined {
+  #historicalResult(request: HydrationRequest): HydratableResult | undefined {
     const session = this.dependencies.sessions.get(SessionId(request.sessionId))
     if (session === undefined) return undefined
     const index = this.#historyIndex(session)
@@ -553,7 +610,7 @@ export class PresentationHydrationController {
     if (settlement === undefined || settlement.duplicate || settlement.event === undefined) return undefined
 
     const result = this.#parseHistoricalEvent(settlement.event)
-    return result?.document?.sha256 === request.documentSha256 ? result : undefined
+    return result !== undefined && resultDocument(result).sha256 === request.documentSha256 ? result : undefined
   }
 
   #historyIndex(session: StoredSession): SessionHistoryIndex {
@@ -575,7 +632,10 @@ export class PresentationHydrationController {
     // last hydration; replacement, truncation, or tail mutation resets safely.
     for (let eventIndex = index.indexedLength; eventIndex < events.length; eventIndex += 1) {
       const event = events[eventIndex]
-      if (event?.type !== 'tool/code-dispatch' || event.data.name !== OPENPENCIL_RENDER_TOOL_NAME) continue
+      if (
+        event?.type !== 'tool/code-dispatch'
+        || (event.data.name !== OPENPENCIL_RENDER_TOOL_NAME && event.data.name !== OPENPENCIL_NEW_TOOL_NAME)
+      ) continue
       const callId = String(event.data.subCallId)
       if (!isSafeString(callId, 512)) continue
       const existing = index.settlements.get(callId)
@@ -590,7 +650,7 @@ export class PresentationHydrationController {
     return index
   }
 
-  #parseHistoricalEvent(event: StoredEvent): RenderResult | undefined {
+  #parseHistoricalEvent(event: StoredEvent): HydratableResult | undefined {
     if (event.type !== 'tool/code-dispatch') return undefined
     const data = event.data
     if (data.isError !== false || !Array.isArray(data.content) || data.content.length !== 1) return undefined
@@ -603,7 +663,7 @@ export class PresentationHydrationController {
     } catch {
       return undefined
     }
-    return parseHydratableRenderResult(parsedValue)
+    return parseHydratableResult(data.name, parsedValue)
   }
 
   #prune(now: number): void {

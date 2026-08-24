@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Rilis plugin saat ini: <code>0.1.0-rc.2</code> · Diuji dengan DSH <code>0.1.1-rc.1</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Rilis plugin saat ini: <code>0.1.0-rc.3</code> · Diuji hingga DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ Kartu alat dan editor terkelola mengikuti lokale Tionghoa/Inggris serta tema ter
 DSH adalah paket terpisah. Pasang sekali jika belum ada:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 Lalu tambahkan plugin ke sebuah profil dan jalankan aplikasi web:
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+Untuk pengembangan lokal, bangun checkout ini, tautkan path absolutnya ke profil Web, lalu mulai ulang DSH sepenuhnya:
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+Dependensi `link:` membuat hasil build ulang berikutnya langsung terlihat dari checkout ini. Namun, DSH harus dimulai ulang sepenuhnya setelah dependensi profil diganti karena profil Web bawaan tidak melakukan hot reload bundle host secara default.
+
 Tidak ingin memasang DSH secara global? Jalankan dua langkah yang sama lewat `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > Plugin OpenPencil bersifat publik dan tidak memerlukan token npm. Jika DSH prerelease itu sendiri memerlukan autentikasi registry, simpan kredensial tersebut di konfigurasi npm tingkat-pengguna atau sementara di luar checkout. Repositori ini sengaja tidak memuat kredensial registry apa pun.
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | Alat | Fungsinya |
 | --- | --- |
-| `openpencil_new` | Membuat `.op` baru dari satu program `batch_design` transaksional, menyimpannya secara atomik melalui sistem file sandbox DSH, dan tidak memerlukan editor yang dibuka sebelumnya. |
+| `openpencil_new` | Membuat `.op` baru dari satu skrip QuickJS `batch_design` transaksional, menyimpannya secara atomik melalui sistem file sandbox DSH, lalu dalam pemanggilan alat yang sama mengembalikan presentasi dapat diedit yang bertanda tangan sehingga DSH otomatis membuka bilah samping editor. |
 | `openpencil_create` | Menerapkan program `batch_design` transaksional untuk menghasilkan atau menyusun ulang simpul pada kanvas langsung yang sudah ada. |
 | `openpencil_edit` | Mengubah simpul eksplisit atau simpul tunggal yang dipilih pengguna. |
 | `openpencil_render` | Membuat snapshot `.op` yang tidak dapat diubah dan diarahkan-oleh-konten, lalu merender setiap frame tingkat-teratas pada halaman aktif — `scale` dan `editable` opsional. |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## Alur Kerja Desain Agen
 
-Untuk permintaan berbahasa alami tanpa dokumen yang sudah ada, Agen sebaiknya memanggil `openpencil_new` dengan jalur `.op` baru yang relatif terhadap workspace dan program `batch_design` lengkap pertama. Alat ini menjalankan program tersebut di daemon OpenPencil terkelola yang privat dan menerbitkan dokumen otoritatif hanya setelah seluruh batch berhasil. Alat ini tidak pernah menimpa jalur yang sudah ada, dan batch yang gagal tidak meninggalkan file kosong. Agen selanjutnya memanggil `openpencil_render` dengan jalur yang dikembalikan, `editable: true`, dan `autoOpen: true` untuk menampilkan galeri dan membuka editor satu kali. Kartu historis yang diputar ulang atau yang awalnya sudah mapan tidak pernah terbuka otomatis.
+Untuk permintaan berbahasa alami tanpa dokumen yang sudah ada, Agen sebaiknya memanggil `openpencil_new` dengan jalur `.op` baru yang relatif terhadap workspace dan program `batch_design` lengkap pertama. Alat ini menjalankan program tersebut di daemon OpenPencil terkelola yang privat dan menerbitkan dokumen otoritatif hanya setelah seluruh batch berhasil. Alat ini tidak pernah menimpa jalur yang sudah ada, dan batch yang gagal tidak meninggalkan file kosong. Presentasi dapat diedit yang bertanda tangan dari pemanggilan sukses yang sama membuat DSH otomatis membuka bilah samping editor; tidak diperlukan pemanggilan `openpencil_render` kedua ataupun pratinjau PNG. Kartu yang diputar ulang, historis, atau dihidrasi tidak pernah terbuka otomatis.
+
+`openpencil_new` memakai antarmuka QuickJS `script` yang sebenarnya dari `batch_design`: Agen membangun dengan panggilan `I`/`K` serta data, array, dan loop JavaScript biasa tanpa menulis `operations` tingkat rendah secara manual. DSH selalu mengaktifkan `postProcess`, lalu secara eksplisit memanggil `finalize_design` setelah pembuatan. Langkah ini melengkapi pembersihan akhir yang setara dengan tahap penutup host bawaan OpenPencil sebelum dokumen diterbitkan. Runtime terkelola dibundel bersama plugin dan tidak bergantung pada biner desktop. Inilah jalur pembuatan saat ini; dokumentasi ini tidak menyatakan bahwa jalur tersebut melewati alat terpisah `design_skeleton`, `design_content`, atau `design_refine`.
 
 Gunakan `openpencil_create` dan `openpencil_edit` hanya untuk kanvas langsung yang sudah ada. Pengeditannya tetap belum disimpan hingga aksi Simpan pada editor.
 
@@ -172,12 +184,33 @@ Aset penampil dimuat secara lazy hanya setelah pengguna membuka kanvas. Jika tid
 
 Sesi yang dapat diedit menggunakan host web terkelola OpenPencil — arsitektur yang sama dengan `op-vscode`. Plugin memulai host hanya setelah aksi pengguna yang berwenang, menyimpan token daemon di memori, memvalidasi sumber dan origin iframe, serta menutup proses saat sesi editor berakhir. Permukaan editor dipilih secara progresif: detail Tool native saat host mendeklarasikan sambungan tersebut, jika tidak maka workbench sisi kanan plugin dengan kontrol ubah-ukuran dan layar penuh.
 
+Startup menggunakan listening handshake yang aman untuk mount lambat: probe kesiapan baru dimulai setelah host bawaan mengumumkan alamat yang telah di-bind. Instalasi OpenPencil desktop tidak diperlukan.
+
+Instalasi yang dipublikasikan memilih paket yang sesuai dengan OS/CPU saat ini dari enam paket platform native: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, dan `win32-x64`; kedua paket Linux menargetkan glibc. Paket root mendeklarasikan semuanya sebagai `optionalDependencies` dengan versi persis agar pengelola paket memilih varian yang benar (misalnya `@zseven-w/dsh-openpencil-darwin-arm64`). Paket tersebut menyertakan `op-host-web-server`, bundel web editor, dan CanvasKit sebagai satu runtime yang saling cocok. Karena itu, editor terkelola tidak bergantung pada `/Applications/OpenPencil.app`, `openpencil-desktop` di `PATH`, ataupun checkout sumber OpenPencil. Ketentuan ini berlaku untuk sesi terkelola yang dapat diedit; renderer PNG presisi tetap mengikuti kontrak penemuan biner terpisah yang dijelaskan di atas.
+
 Jika DSH memuat ulang atau melepas plugin saat kanvas masih kotor (belum disimpan), host menyimpan draf pemulihan lokal yang tidak transparan hingga tujuh hari. Membuka ulang sumber yang sama akan menanyakan sebelum memulihkannya ke kanvas langsung; pemulihan tidak pernah menimpa file `.op` hingga pengguna menyimpan secara eksplisit.
 
-Penemuan biner dan sumber dapat diganti dengan:
+Paket resmi untuk keenam platform menerima endpoint bootstrap kolaborasi China dan Global selama build release yang dilindungi; nilai yang disuntikkan divalidasi sebelum dipublikasikan. Build mandiri lokal tanpa penyuntikan tersebut dapat menimpa bootstrap sebelum memulai DSH dengan `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap`; nilainya harus menggunakan `https` dan path harus tepat `/api/v1/collaboration/bootstrap`.
+
+Sinkronisasi kanvas lintas perangkat mengharuskan runtime native PC/DSH dan aplikasi seluler sama-sama diperbarui ke lini rilis OpenPencil yang sama dan memuat perbaikan antrean kolaborasi saat ini. Menggabungkan aplikasi seluler lama dengan runtime PC yang lebih baru masih dapat menampilkan kursor jarak jauh tanpa menerima commit kanvas.
+
+Saat mengembangkan dari repositori ini, sebelum menjalankan DSH build terlebih dahulu Web bundle editor, lalu host native, kemudian stage runtime yang saling cocok tersebut.
+
+`pnpm run build:editor-web` menjalankan WASM bundle gate yang didukung resmi oleh OpenPencil. Langkah ini memerlukan Bash, Cargo/Rust dengan target `wasm32-unknown-unknown`, CLI `wasm-bindgen`, `wasm-opt` dari Binaryen, Node.js, dan `gzip`; CanvasKit tidak memerlukan EMSDK. Web build tidak menggunakan variabel build bootstrap kolaborasi. Sebelum `pnpm run build:editor-runtime`, tetapkan `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` dan `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL`. Keduanya hanya digunakan oleh native Cargo build, yang akan fail closed jika salah satunya tidak ada. Setelah kedua build berhasil, stage runtime dengan perintah terakhir.
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+Override runtime eksplisit hanya diterima sebagai satu set lengkap yang saling cocok:
 
 - `DSH_OPENPENCIL_EDITOR_BINARY` untuk `op-host-web-server`;
-- `DSH_OPENPENCIL_SOURCE_ROOT` (atau `OPENPENCIL_SOURCE_ROOT`) untuk bundel web dan aset CanvasKit.
+- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` untuk bundel web editor yang telah dibangun;
+- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` untuk aset CanvasKit.
+
+Memberikan hanya sebagian dari set tersebut merupakan konfigurasi yang tidak valid; plugin tidak menggabungkan path khusus dengan aset runtime yang disertakan dalam paket.
 
 Penyimpanan menggunakan hash sumber optimistis, penggantian atomik, dan kapabilitas penerus. Jika sumber berubah di luar editor, plugin melaporkan konflik alih-alih menimpanya.
 
@@ -193,14 +226,14 @@ Hasil yang terlihat model tetap berupa JSON polos. `presentationMeta.$dshOpenPen
 
 Hasil juga mencatat `renderer`, `rendererBinary`, `fidelity`, dan peringatan apa pun. Pesan schema-v1 yang hanya berisi PNG yang sudah ada tetap dapat dirender.
 
-DSH `0.1.1-rc.1` tidak menyimpan metadata presentasi peramban secara persisten untuk alat yang bersarang di bawah PTC/Code Mode. Plugin memulihkan proyeksi UI-only tersebut melalui endpoint same-origin yang terikat sesi: peramban hanya mengirim session id, call id, dan SHA-256 dokumen yang tidak dapat diubah, sementara host menyelesaikan hasil otoritatif dari log sesi DSH yang tahan lama dan menggunakan penanda dalam-proses berumur pendek hanya untuk mengotorisasi pengeditan langsung terbaru. Kapabilitas pratinjau/editor bertanda tangan tidak pernah masuk ke hasil alat kanonis atau konteks model. Riwayat tahan lama dapat memulihkan pratinjau baca-saja; izin editor hanya diterbitkan untuk hasil langsung terbaru yang tepercaya.
+DSH `0.1.1-rc.2` tidak menyimpan metadata presentasi peramban secara persisten untuk alat yang bersarang di bawah PTC/Code Mode. Plugin memulihkan proyeksi UI-only tersebut melalui endpoint same-origin yang terikat sesi: peramban hanya mengirim session id, call id, dan SHA-256 dokumen yang tidak dapat diubah, sementara host menyelesaikan hasil otoritatif dari log sesi DSH yang tahan lama dan menggunakan penanda dalam-proses berumur pendek hanya untuk mengotorisasi pengeditan langsung terbaru. Kapabilitas pratinjau/editor bertanda tangan tidak pernah masuk ke hasil alat kanonis atau konteks model. Riwayat tahan lama dapat memulihkan pratinjau baca-saja; izin editor hanya diterbitkan untuk hasil langsung terbaru yang tepercaya.
 
 Untuk pemutaran ulang yang terbatas, pemulihan metadata bersarang menerima hingga 128 frame tingkat-teratas; hasil Code Mode yang lebih besar tetap tersedia melalui fallback JSON kanonisnya.
 
 ## Batasan Saat Ini
 
 - Pengeditan lanjutan pada kanvas yang sudah ada memerlukan editor terkelola yang sudah terbuka. Perubahan tetap belum disimpan hingga pengguna memanggil aksi Simpan.
-- Kanvas Web SDK yang ringan bersifat baca-saja; pengeditan penuh menggunakan permukaan editor terkelola terpisah. Pada DSH `0.1.1-rc.1`, plugin menggunakan workbench kanan yang dapat diubah ukurannya dengan opsi layar penuh.
+- Kanvas Web SDK yang ringan bersifat baca-saja; pengeditan penuh menggunakan permukaan editor terkelola terpisah. Pada DSH `0.1.1-rc.2`, plugin menggunakan workbench kanan yang dapat diubah ukurannya dengan opsi layar penuh.
 - Galeri akurat mencakup frame tingkat-teratas pada halaman aktif; kanvas interaktif tetap menjadi cara untuk memeriksa halaman nonaktif dan simpul bersarang.
 - Cache render dan snapshot masih memerlukan kebijakan retensi tingkat produk.
 
@@ -241,7 +274,7 @@ Build memerlukan Node 24.11 atau lebih baru dan pnpm. Paket host/klien DSH adala
 Untuk DSH prerelease privat, simpan kredensial npm yang diterbitkan di luar repositori ini (misalnya di `.npmrc` tingkat-pengguna atau sementara) dan jalankan versi yang diminta secara langsung:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 Jangan pernah melakukan commit pada `.npmrc`, `NPM_TOKEN`, atau kredensial registry yang disalin. Repositori ini mengabaikan konfigurasi npm lokal secara default.

@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import {
   PRESENTATION_HYDRATION_ROUTE,
   PresentationHydrationController,
+  parseHydratableNewResult,
   parseHydratableRenderResult,
 } from '../lib/presentation-hydration.js'
 import {
@@ -70,6 +71,33 @@ function renderResult(overrides = {}) {
   }
 }
 
+function newResult(overrides = {}) {
+  const documentFilename = `${DOCUMENT_SHA}.op`
+  return {
+    path: '/tmp/generated.op',
+    filename: 'generated.op',
+    bytes: 4567,
+    sha256: DOCUMENT_SHA,
+    created: true,
+    applied: true,
+    saved: true,
+    sourceTool: 'openpencil_new',
+    previewIntent: 'document',
+    editable: true,
+    autoOpenEditor: true,
+    document: {
+      path: join(snapshotDir(), documentFilename),
+      filename: documentFilename,
+      mimeType: 'application/json',
+      bytes: 4567,
+      sha256: DOCUMENT_SHA,
+    },
+    result: { applied: true, inserted: 1 },
+    note: 'Created and saved /tmp/generated.op; the managed OpenPencil editor opens in the sidebar automatically.',
+    ...overrides,
+  }
+}
+
 function historicalEvent(callId, result, content) {
   return {
     type: 'tool/code-dispatch',
@@ -77,7 +105,7 @@ function historicalEvent(callId, result, content) {
       rootCallId: 'outer',
       parentCallId: 'outer',
       subCallId: callId,
-      name: 'openpencil_render',
+      name: result.sourceTool,
       arguments: { path: '/tmp/design.op' },
       isError: false,
       content: content ?? [{ type: 'text', text: JSON.stringify(result) }],
@@ -192,12 +220,77 @@ async function createHarness({
 
 function observe(hydration, sessionId, callId, result) {
   hydration.observeToolResult({
-    name: 'openpencil_render',
+    name: result.sourceTool,
     callId,
     parent: Symbol('run-code'),
     agent: { id: sessionId, session: { id: sessionId } },
   }, { isError: false, value: result, content: [] })
 }
+
+test('nested openpencil_new restores a document-only live editor grant but history stays preview-only', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = newResult()
+    const callId = 'outer:code:new'
+    observe(harness.hydration, 'session-new-live', callId, result)
+    sessions.set('session-new-live', { events: [historicalEvent(callId, result)] })
+    const live = await harness.request({
+      sessionId: 'session-new-live',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(live.status, 200)
+    const liveEnvelope = (await live.json()).$dshOpenPencil
+    assert.equal('image' in liveEnvelope, false)
+    assert.equal(liveEnvelope.document.path, '/tmp/generated.op')
+    assert.match(liveEnvelope.document.url, /^\/_dsh\/dsh-openpencil\/render\//)
+    assert.equal(liveEnvelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
+    assert.equal(liveEnvelope.autoOpenEditor, true)
+    assert.deepEqual(harness.editorCalls, [{
+      sourcePath: '/tmp/generated.op',
+      sourceSha256: DOCUMENT_SHA,
+    }])
+
+    sessions.set('session-new-history', { events: [historicalEvent(callId, result)] })
+    const historical = await harness.request({
+      sessionId: 'session-new-history',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(historical.status, 200)
+    const historicalEnvelope = (await historical.json()).$dshOpenPencil
+    assert.equal('image' in historicalEnvelope, false)
+    assert.equal(historicalEnvelope.document.path, '/tmp/generated.op')
+    assert.equal('editor' in historicalEnvelope, false)
+    assert.equal('autoOpenEditor' in historicalEnvelope, false)
+    assert.equal(harness.editorCalls.length, 1)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('duplicate nested openpencil_new settlements fail closed', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = newResult()
+    const callId = 'outer:code:new-duplicate'
+    observe(harness.hydration, 'session-new-duplicate', callId, result)
+    sessions.set('session-new-duplicate', {
+      events: [historicalEvent(callId, result), historicalEvent(callId, result)],
+    })
+    const response = await harness.request({
+      sessionId: 'session-new-duplicate',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(response.status, 404)
+    assert.deepEqual(harness.editorCalls, [])
+  } finally {
+    await harness.cleanup()
+  }
+})
 
 test('live nested results hydrate only the presentation envelope and may restore editing', async () => {
   const sessions = new Map()
@@ -543,4 +636,14 @@ test('strict parser refuses legacy path-only and presentation-bearing values', (
   const { sha256: _sha256, ...withoutSha } = result
   assert.equal(parseHydratableRenderResult(withoutSha), undefined)
   assert.equal(parseHydratableRenderResult({ ...result, $dshOpenPencil: {} }), undefined)
+})
+
+test('strict new-result parser binds the source and immutable document fingerprint', () => {
+  const result = newResult()
+  assert.ok(parseHydratableNewResult(result))
+  assert.equal(parseHydratableNewResult({ ...result, sourceTool: 'openpencil_render' }), undefined)
+  assert.equal(parseHydratableNewResult({ ...result, path: '/tmp/other.op' }), undefined)
+  assert.equal(parseHydratableNewResult({ ...result, sha256: 'c'.repeat(64) }), undefined)
+  assert.equal(parseHydratableNewResult({ ...result, autoOpenEditor: false }), undefined)
+  assert.equal(parseHydratableNewResult({ ...result, image: {} }), undefined)
 })

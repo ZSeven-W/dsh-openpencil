@@ -142,6 +142,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     () => hostCtx.tools.register(createDesignNewTool(editorHost, {
       fs: hostCtx.fs,
       sandboxPolicy: hostCtx.sandboxPolicy,
+      render: controller,
       observe: (target, observation, exec) => eventCtx.emit('fs/observed', target, observation, exec),
     })),
     `dsh-openpencil: ${OPENPENCIL_NEW_TOOL_NAME} tool`,

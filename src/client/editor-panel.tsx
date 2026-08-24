@@ -47,6 +47,7 @@ export interface LaunchResponse {
 }
 
 const DEFAULT_REFRESH_URL = '/_dsh/dsh-openpencil/editor/refresh'
+const MAX_RESPONSE_ERROR_LENGTH = 512
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -78,7 +79,21 @@ function launchResponseOf(value: unknown): LaunchResponse {
 }
 
 async function responseJson(response: Response, action: string): Promise<unknown> {
-  if (!response.ok) throw new Error(`${action} failed (${response.status})`)
+  if (!response.ok) {
+    const fallback = `${action} failed (${response.status})`
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      throw new Error(fallback)
+    }
+    if (!isRecord(body) || typeof body.error !== 'string' || body.error.length > MAX_RESPONSE_ERROR_LENGTH) {
+      throw new Error(fallback)
+    }
+    const detail = body.error.trim()
+    if (detail.length === 0) throw new Error(fallback)
+    throw new Error(`${fallback}: ${detail}`)
+  }
   return response.json()
 }
 
@@ -383,6 +398,15 @@ export function beginEditorInitRetry<T>(
   return stop
 }
 
+export namespace beginEditorInitRetry {
+  /** Accept the first ready edge only; duplicate readiness must not reopen a document. */
+  export function takeReady(latch: { current: boolean }): boolean {
+    if (latch.current) return false
+    latch.current = true
+    return true
+  }
+}
+
 /**
  * Apply the unmount policy without letting React cleanup accidentally issue
  * DELETE. Dirty live launches are retained by default even when their native
@@ -435,6 +459,7 @@ export function ManagedOpenPencilEditor({
   const lifecycleControllerRef = useRef(onLifecycleController)
   lifecycleControllerRef.current = onLifecycleController
   const stopInitLoopRef = useRef<() => void>()
+  const bridgeReadyRef = useRef(false)
   const selectionPollStopRef = useRef<() => void>()
   const requestCounterRef = useRef(0)
   const saveWaitersRef = useRef(new Map<string, { resolve: (message: Extract<EditorInboundMessage, { type: 'op-bridge/snapshot-result' }>) => void; reject: (error: Error) => void }>())
@@ -596,6 +621,7 @@ export function ManagedOpenPencilEditor({
     }
     const boot = async (): Promise<void> => {
       try {
+        bridgeReadyRef.current = false
         const bootGrant = editorGrantForBoot(editorGrant)
         const prepared = await prepareManagedEditorForMount(bootGrant, documentGrant, () => (
           !cancelled && !abort.signal.aborted
@@ -667,7 +693,7 @@ export function ManagedOpenPencilEditor({
 
   const startInitLoop = useCallback((): void => {
     const launch = launchRef.current
-    if (launch === undefined) return
+    if (launch === undefined || bridgeReadyRef.current) return
     stopInitLoopRef.current?.()
     stopInitLoopRef.current = beginEditorInitRetry(
       () => {
@@ -724,7 +750,22 @@ export function ManagedOpenPencilEditor({
       const message = editorMessageFrom(event, iframeRef.current?.contentWindow ?? null, originRef.current)
       if (message === undefined) return
       switch (message.type) {
+        case 'op-bridge/listening':
+          // The page installs this early listener only after the main Wasm
+          // module has instantiated. Renew the finite init window even when
+          // the original attempts expired while the bundle was loading.
+          if (bridgeReadyRef.current || launchRef.current === undefined) break
+          if (phaseRef.current === 'error') {
+            setFailure('')
+            updatePhase('loading')
+          } else {
+            startInitLoop()
+          }
+          break
         case 'op-bridge/ready':
+          // A rebuilt iframe may announce readiness more than once. Opening
+          // the authoritative boot document twice could overwrite live edits.
+          if (!beginEditorInitRetry.takeReady(bridgeReadyRef)) break
           stopInitLoopRef.current?.()
           stopInitLoopRef.current = undefined
           post({ type: 'op-bridge/theme', colorScheme: colorSchemeRef.current })
@@ -762,7 +803,7 @@ export function ManagedOpenPencilEditor({
     }
     window.addEventListener('message', listener)
     return () => { window.removeEventListener('message', listener) }
-  }, [post, save, updateDirty, updatePhase])
+  }, [post, save, startInitLoop, updateDirty, updatePhase])
 
   useEffect(() => {
     post({ type: 'op-bridge/theme', colorScheme })

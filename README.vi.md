@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Bản phát hành plugin hiện tại: <code>0.1.0-rc.2</code> · Đã kiểm thử với DSH <code>0.1.1-rc.1</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Bản phát hành plugin hiện tại: <code>0.1.0-rc.3</code> · Đã kiểm thử đến DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ Thẻ công cụ và trình biên tập quản lý tuân theo ngôn ngữ Trung/
 DSH là một gói riêng. Cài một lần nếu bạn chưa có:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 Sau đó thêm plugin vào một profile và khởi động ứng dụng web:
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+Để phát triển cục bộ, hãy build checkout này, liên kết đường dẫn tuyệt đối của nó vào profile Web, rồi khởi động lại DSH hoàn toàn:
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+Phụ thuộc `link:` làm cho các bản build lại sau đó hiển thị trực tiếp từ checkout này. Tuy nhiên, DSH phải được khởi động lại hoàn toàn sau khi thay thế phụ thuộc profile vì profile Web đi kèm không hot-reload các bundle host theo mặc định.
+
 Không muốn cài DSH toàn cục? Chạy đúng hai bước đó qua `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > Plugin OpenPencil là công khai và không yêu cầu token npm. Nếu bản prerelease của DSH tự nó yêu cầu xác thực registry, hãy giữ thông tin xác thực đó trong một cấu hình npm cấp người dùng hoặc tạm thời bên ngoài thư mục checkout. Kho lưu trữ này cố ý không chứa bất kỳ thông tin xác thực registry nào.
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | Công cụ | Chức năng |
 | --- | --- |
-| `openpencil_new` | Tạo một tệp `.op` hoàn toàn mới từ một chương trình `batch_design` giao dịch, lưu nó một cách nguyên tử qua hệ thống tệp sandbox của DSH và không yêu cầu trình biên tập mở sẵn. |
+| `openpencil_new` | Tạo một tệp `.op` hoàn toàn mới từ một script QuickJS `batch_design` giao dịch, lưu nó một cách nguyên tử qua hệ thống tệp sandbox của DSH, rồi trả về một phần trình bày có thể chỉnh sửa đã ký ngay trong cùng lời gọi công cụ để DSH tự động mở thanh bên của trình biên tập. |
 | `openpencil_create` | Áp dụng một chương trình `batch_design` giao dịch để tạo hoặc tái cấu trúc các nút trên một canvas trực tiếp hiện có. |
 | `openpencil_edit` | Sửa đổi một nút tường minh hoặc nút duy nhất do người dùng chọn. |
 | `openpencil_render` | Tạo một ảnh chụp `.op` bất biến, định địa chỉ theo nội dung và kết xuất mọi khung cấp cao nhất trên trang đang hoạt động — `scale` và `editable` tùy chọn. |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## Quy trình Thiết kế của Agent
 
-Với một yêu cầu ngôn ngữ tự nhiên không kèm tài liệu hiện có, Agent nên gọi `openpencil_new` với một đường dẫn `.op` mới tương đối với workspace và chương trình `batch_design` hoàn chỉnh đầu tiên. Công cụ chạy chương trình đó trong một daemon OpenPencil được quản lý riêng tư và chỉ công bố tài liệu có thẩm quyền sau khi toàn bộ batch thành công. Nó không bao giờ ghi đè một đường dẫn đã tồn tại và một batch thất bại không để lại tệp rỗng nào. Agent sau đó nên gọi `openpencil_render` với đường dẫn được trả về, `editable: true` và `autoOpen: true` để trình bày thư viện ảnh và mở rộng trình biên tập một lần. Các thẻ lịch sử được phát lại hoặc được kết xuất ban đầu không bao giờ tự mở.
+Với một yêu cầu ngôn ngữ tự nhiên không kèm tài liệu hiện có, Agent nên gọi `openpencil_new` với một đường dẫn `.op` mới tương đối với workspace và chương trình `batch_design` hoàn chỉnh đầu tiên. Công cụ chạy chương trình đó trong một daemon OpenPencil được quản lý riêng tư và chỉ công bố tài liệu có thẩm quyền sau khi toàn bộ batch thành công. Nó không bao giờ ghi đè một đường dẫn đã tồn tại và một batch thất bại không để lại tệp rỗng nào. Phần trình bày có thể chỉnh sửa đã ký từ chính lời gọi công cụ thành công đó khiến DSH tự động mở thanh bên của trình biên tập; không cần lời gọi `openpencil_render` thứ hai hay bản xem trước PNG. Các thẻ được phát lại, thẻ lịch sử hoặc thẻ được hydrate không bao giờ tự mở.
+
+`openpencil_new` dùng giao diện QuickJS `script` thực của `batch_design`: Agent xây dựng bằng các lời gọi `I`/`K` cùng dữ liệu, mảng và vòng lặp JavaScript thông thường, thay vì tự viết `operations` cấp thấp. DSH luôn bật `postProcess`, rồi gọi rõ ràng `finalize_design` sau khi tạo. Bước này bổ sung quy trình dọn dẹp cuối tương đương với giai đoạn kết thúc của host OpenPencil tích hợp trước khi công bố tài liệu. Runtime được quản lý đi kèm plugin và không phụ thuộc vào binary desktop. Đây là đường tạo tài liệu hiện tại; tài liệu này không khẳng định nó đi qua các công cụ riêng `design_skeleton`, `design_content` hoặc `design_refine`.
 
 Chỉ dùng `openpencil_create` và `openpencil_edit` cho một canvas trực tiếp hiện có. Các chỉnh sửa của chúng vẫn chưa được lưu cho đến khi hành động Lưu của trình biên tập được thực hiện.
 
@@ -172,12 +184,33 @@ Tài nguyên viewer chỉ được tải trễ sau khi người dùng mở canva
 
 Các phiên có thể chỉnh sửa sử dụng web host được quản lý của OpenPencil — cùng kiến trúc được `op-vscode` sử dụng. Plugin chỉ khởi động host sau một hành động người dùng được ủy quyền, giữ token daemon trong bộ nhớ, xác thực nguồn và origin của iframe, và đóng tiến trình khi phiên trình biên tập kết thúc. Bề mặt trình biên tập được chọn dần: chi tiết Tool gốc khi host khai báo ranh giới đó, nếu không thì là khu làm việc bên phải của plugin với các điều khiển thay đổi kích thước và toàn màn hình.
 
+Quá trình khởi động dùng listening handshake an toàn với mount chậm: các probe sẵn sàng chỉ bắt đầu sau khi host đi kèm công bố địa chỉ đã bind. Không cần cài OpenPencil bản desktop.
+
+Các bản cài đặt đã phát hành chọn gói phù hợp với OS/CPU hiện tại trong sáu gói nền tảng native: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` và `win32-x64`; cả hai gói Linux đều nhắm tới glibc. Gói gốc khai báo chúng là `optionalDependencies` với phiên bản chính xác để trình quản lý gói chọn đúng biến thể (ví dụ `@zseven-w/dsh-openpencil-darwin-arm64`). Gói đó phân phối `op-host-web-server`, web bundle của trình biên tập và CanvasKit tương thích với nhau như một runtime duy nhất. Vì vậy, trình biên tập được quản lý không phụ thuộc vào `/Applications/OpenPencil.app`, `openpencil-desktop` trong `PATH` hay một checkout mã nguồn OpenPencil. Điều này áp dụng cho các phiên chỉnh sửa được quản lý; trình kết xuất PNG chính xác vẫn tuân theo hợp đồng tìm kiếm nhị phân riêng được mô tả ở trên.
+
 Nếu DSH tải lại hoặc gỡ plugin trong khi canvas đang có thay đổi chưa lưu, host giữ một bản nháp phục hồi cục bộ không thể đọc được trong tối đa bảy ngày. Việc mở lại cùng nguồn đó sẽ hỏi trước khi khôi phục nó vào canvas trực tiếp; phục hồi không bao giờ ghi đè tệp `.op` cho đến khi người dùng lưu một cách tường minh.
 
-Việc tìm kiếm nhị phân và nguồn có thể được ghi đè bằng:
+Các gói chính thức cho sáu nền tảng được chèn endpoint bootstrap cộng tác dành cho Trung Quốc và Toàn cầu trong build release được bảo vệ; các giá trị đã chèn được xác thực trước khi phát hành. Bản tự build cục bộ không có bước chèn này có thể ghi đè bootstrap trước khi khởi động DSH bằng `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap`; giá trị phải dùng `https` và đường dẫn phải chính xác là `/api/v1/collaboration/bootstrap`.
+
+Để đồng bộ canvas giữa các thiết bị, cả runtime native PC/DSH và ứng dụng di động phải được cập nhật lên cùng một dòng phát hành OpenPencil có bản sửa hàng đợi cộng tác hiện tại. Khi dùng ứng dụng di động cũ với runtime PC mới hơn, con trỏ từ xa vẫn có thể xuất hiện nhưng các commit canvas không được nhận.
+
+Khi phát triển từ kho lưu trữ này, trước khi khởi động DSH hãy build Web bundle của trình biên tập, tiếp theo build host native, rồi stage runtime tương thích đó.
+
+`pnpm run build:editor-web` chạy WASM bundle gate được OpenPencil hỗ trợ chính thức. Bước này cần Bash, Cargo/Rust với target `wasm32-unknown-unknown`, CLI `wasm-bindgen`, `wasm-opt` của Binaryen, Node.js và `gzip`; CanvasKit không cần EMSDK. Web build không sử dụng các biến build bootstrap cộng tác. Trước `pnpm run build:editor-runtime`, phải đặt đồng thời `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` và `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL`. Chúng chỉ được dùng cho native Cargo build, bước này sẽ fail closed nếu thiếu một biến. Sau khi cả hai build thành công, hãy stage runtime bằng lệnh cuối cùng.
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+Các ghi đè runtime tường minh chỉ được chấp nhận dưới dạng một bộ đầy đủ và tương thích:
 
 - `DSH_OPENPENCIL_EDITOR_BINARY` cho `op-host-web-server`;
-- `DSH_OPENPENCIL_SOURCE_ROOT` (hoặc `OPENPENCIL_SOURCE_ROOT`) cho web bundle và các tài nguyên CanvasKit.
+- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` cho web bundle trình biên tập đã được build;
+- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` cho các tài nguyên CanvasKit.
+
+Chỉ cung cấp một phần của bộ này là cấu hình không hợp lệ; plugin không kết hợp các đường dẫn tùy chỉnh với tài nguyên runtime được đóng gói.
 
 Việc lưu sử dụng một băm nguồn lạc quan, một thay thế nguyên tử và một capability kế thừa. Nếu nguồn thay đổi bên ngoài trình biên tập, plugin báo cáo một xung đột thay vì ghi đè nó.
 
@@ -193,14 +226,14 @@ Kết quả hiển thị cho mô hình vẫn là JSON thuần. `presentationMeta
 
 Kết quả cũng ghi lại `renderer`, `rendererBinary`, `fidelity` và mọi cảnh báo. Các thông điệp schema-v1 chỉ có PNG hiện có vẫn có thể được kết xuất.
 
-DSH `0.1.1-rc.1` không lưu trữ siêu dữ liệu trình bày của trình duyệt cho các công cụ nằm lồng bên dưới PTC/Code Mode. Plugin khôi phục phép chiếu UI-only đó qua một endpoint same-origin, session-bound: trình duyệt chỉ gửi session id, call id và SHA-256 bất biến của tài liệu, trong khi host phân giải kết quả có thẩm quyền từ nhật ký phiên DSH bền vững và chỉ sử dụng một marker trong tiến trình có thời hạn ngắn để ủy quyền cho việc chỉnh sửa trực tiếp gần đây. Các capability xem trước/biên tập được ký không bao giờ đi vào kết quả công cụ chuẩn hoặc ngữ cảnh mô hình. Lịch sử bền vững có thể khôi phục các bản xem trước chỉ đọc; các quyền truy cập biên tập chỉ được cấp cho các kết quả trực tiếp gần đây, đáng tin cậy.
+DSH `0.1.1-rc.2` không lưu trữ siêu dữ liệu trình bày của trình duyệt cho các công cụ nằm lồng bên dưới PTC/Code Mode. Plugin khôi phục phép chiếu UI-only đó qua một endpoint same-origin, session-bound: trình duyệt chỉ gửi session id, call id và SHA-256 bất biến của tài liệu, trong khi host phân giải kết quả có thẩm quyền từ nhật ký phiên DSH bền vững và chỉ sử dụng một marker trong tiến trình có thời hạn ngắn để ủy quyền cho việc chỉnh sửa trực tiếp gần đây. Các capability xem trước/biên tập được ký không bao giờ đi vào kết quả công cụ chuẩn hoặc ngữ cảnh mô hình. Lịch sử bền vững có thể khôi phục các bản xem trước chỉ đọc; các quyền truy cập biên tập chỉ được cấp cho các kết quả trực tiếp gần đây, đáng tin cậy.
 
 Đối với phát lại có giới hạn, việc phục hồi siêu dữ liệu lồng nhau chấp nhận tối đa 128 khung cấp cao nhất; các kết quả Code Mode lớn hơn vẫn khả dụng qua dự phòng JSON chuẩn của chúng.
 
 ## Giới hạn Hiện tại
 
 - Các chỉnh sửa tiếp theo trên một canvas hiện có yêu cầu một trình biên tập quản lý đã được mở. Thay đổi vẫn chưa được lưu cho đến khi người dùng gọi hành động Lưu của nó.
-- Canvas của Web SDK nhẹ chỉ đọc; chỉnh sửa đầy đủ sử dụng bề mặt trình biên tập quản lý riêng. Trên DSH `0.1.1-rc.1`, plugin sử dụng khu làm việc bên phải có thể thay đổi kích thước kèm tùy chọn toàn màn hình.
+- Canvas của Web SDK nhẹ chỉ đọc; chỉnh sửa đầy đủ sử dụng bề mặt trình biên tập quản lý riêng. Trên DSH `0.1.1-rc.2`, plugin sử dụng khu làm việc bên phải có thể thay đổi kích thước kèm tùy chọn toàn màn hình.
 - Thư viện ảnh chính xác bao phủ các khung cấp cao nhất trên trang đang hoạt động; canvas tương tác vẫn là cách để kiểm tra các trang không hoạt động và các nút lồng nhau.
 - Các bộ nhớ đệm kết xuất và ảnh chụp vẫn cần một chính sách lưu giữ ở cấp sản phẩm.
 
@@ -241,7 +274,7 @@ Việc xây dựng yêu cầu Node 24.11 trở lên và pnpm. Các gói host/cli
 Đối với một bản prerelease riêng tư của DSH, hãy giữ thông tin xác thực npm được cấp bên ngoài kho lưu trữ này (ví dụ trong một `.npmrc` cấp người dùng hoặc tạm thời) và chạy trực tiếp phiên bản được yêu cầu:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 Không bao giờ commit `.npmrc`, `NPM_TOKEN` hoặc thông tin xác thực registry được sao chép. Kho lưu trữ này mặc định bỏ qua cấu hình npm cục bộ.

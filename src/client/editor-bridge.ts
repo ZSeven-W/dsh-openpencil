@@ -1,6 +1,7 @@
 /** Browser-side protocol helpers for the managed OpenPencil editor iframe. */
 
 export type EditorInboundMessage =
+  | { type: 'op-bridge/listening' }
   | { type: 'op-bridge/ready'; generation: number; revision: number }
   | { type: 'op-bridge/opened'; generation: number }
   | { type: 'op-bridge/dirty-changed'; generation: number; revision: number; dirty: boolean }
@@ -45,6 +46,8 @@ export function parseEditorInbound(raw: unknown): EditorInboundMessage | undefin
   }
   if (!isRecord(value) || typeof value.type !== 'string') return undefined
   switch (value.type) {
+    case 'op-bridge/listening':
+      return { type: value.type }
     case 'op-bridge/ready':
       return safeInteger(value.generation) && safeInteger(value.revision)
         ? { type: value.type, generation: value.generation, revision: value.revision }

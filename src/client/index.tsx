@@ -1,6 +1,6 @@
 /**
- * Browser presentation for `openpencil_render` and historical
- * `design_render` conversation cards.
+ * Browser presentation for `openpencil_new`, `openpencil_render`, and
+ * historical `design_render` conversation cards.
  *
  * PNG remains the replay-safe default. When the host also grants access to
  * the source `.op`, the user can opt into one shared, read-only Web SDK
@@ -39,11 +39,13 @@ import {
 } from './presentation-hydration.js'
 import {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
+  OPENPENCIL_NEW_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
 export {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
+  OPENPENCIL_NEW_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
@@ -199,10 +201,12 @@ export type PresentationLocale = GalleryLocale
 const DESIGN_RENDER_COPY = {
   en: {
     designRender: 'OpenPencil render',
+    designNew: 'OpenPencil design',
     error: 'error',
     rendering: 'rendering…',
     done: 'done',
     renderingDocument: 'Rendering the design document…',
+    creatingDocument: 'Creating the design document…',
     renderFailed: 'The render failed.',
     frames: 'frames',
     openInteractiveCanvas: 'Open interactive canvas',
@@ -231,10 +235,12 @@ const DESIGN_RENDER_COPY = {
   },
   zh: {
     designRender: 'OpenPencil 渲染',
+    designNew: 'OpenPencil 设计',
     error: '错误',
     rendering: '渲染中…',
     done: '完成',
     renderingDocument: '正在渲染设计文档…',
+    creatingDocument: '正在创建设计文档…',
     renderFailed: '渲染失败。',
     frames: '页',
     openInteractiveCanvas: '打开交互画布',
@@ -265,6 +271,24 @@ const DESIGN_RENDER_COPY = {
 
 export function designRenderCopy(locale: PresentationLocale) {
   return DESIGN_RENDER_COPY[locale]
+}
+
+/** Keep canonical create cards visually distinct while reusing one workbench. */
+export function openPencilPresentationTitle(toolName: string, locale: PresentationLocale): string {
+  const copy = designRenderCopy(locale)
+  return toolName === OPENPENCIL_NEW_TOOL_NAME ? copy.designNew : copy.designRender
+}
+
+/**
+ * Arm live auto-open even when a very fast tool settles before its running
+ * card is committed. Replayed calls predate this client-bundle activation.
+ */
+export function shouldArmLiveAutoOpen(
+  error: boolean,
+  blockTime: number,
+  activatedAt = liveAutoOpenActivatedAt,
+): boolean {
+  return !error && Number.isFinite(blockTime) && blockTime >= activatedAt
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -782,6 +806,7 @@ export function DesignRenderView({
     ?? (hydrated !== undefined && hydrated.key === hydrationKey ? hydrated.grant : undefined)
   const hydrationPending = hydrationKey !== undefined && hydrationFailedKey !== hydrationKey
   const copy = designRenderCopy(locale)
+  const creating = toolName === OPENPENCIL_NEW_TOOL_NAME
   const text = resultText(block)
   const frames = grant?.frames ?? []
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
@@ -833,7 +858,7 @@ export function DesignRenderView({
   }, [embeddedGrant, grant, openDetails, openEditorWorkbench, sessionId])
 
   useEffect(() => {
-    if (running && block.time >= liveAutoOpenActivatedAt) rememberLiveAutoOpenCall(liveAutoOpenCallKey)
+    if (shouldArmLiveAutoOpen(error, block.time)) rememberLiveAutoOpenCall(liveAutoOpenCallKey)
     else if (error) forgetLiveAutoOpenCall(liveAutoOpenCallKey)
   }, [error, liveAutoOpenCallKey, running])
 
@@ -859,10 +884,10 @@ export function DesignRenderView({
       : <span style={{ ...styles.badge, ...styles.badgeOk }}>{copy.done}</span>
 
   return (
-    <section style={styles.card} data-tool={OPENPENCIL_RENDER_TOOL_NAME} data-state={error ? 'error' : running ? 'running' : 'success'}>
-      <div style={styles.head}><span>{copy.designRender}</span>{badge}</div>
+    <section style={styles.card} data-tool={toolName} data-state={error ? 'error' : running ? 'running' : 'success'}>
+      <div style={styles.head}><span>{openPencilPresentationTitle(toolName, locale)}</span>{badge}</div>
       <div style={styles.body}>
-        {running ? <p style={styles.muted}>{copy.renderingDocument}</p> : null}
+        {running ? <p style={styles.muted}>{creating ? copy.creatingDocument : copy.renderingDocument}</p> : null}
         {error ? <p style={styles.muted}>{text ?? copy.renderFailed}</p> : null}
         {!running && !error && frames.length > 0 ? (
           <FrameGallery frames={frames} selectedIndex={currentFrameIndex} onSelect={setSelectedFrameIndex} locale={locale} />
@@ -970,7 +995,7 @@ export function apply(ctx: ClientContext): void {
     const locale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     return <OpenPencilSelectionDock {...props} locale={locale} />
   }
-  for (const toolName of [OPENPENCIL_RENDER_TOOL_NAME, LEGACY_DESIGN_RENDER_TOOL_NAME]) {
+  for (const toolName of [OPENPENCIL_RENDER_TOOL_NAME, OPENPENCIL_NEW_TOOL_NAME, LEGACY_DESIGN_RENDER_TOOL_NAME]) {
     ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(
       { name: 'tool.call.toolview', key: toolName },
       HostSyncedDesignRenderView,

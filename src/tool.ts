@@ -64,7 +64,7 @@ export interface DesignRenderArgs {
   scale?: number
   /** Explicitly expose the original source to the managed sidebar editor. */
   editable?: boolean
-  /** Expand the editor once on the live result card; intended for openpencil_new follow-ups. */
+  /** Expand the editor once for this live render result. */
   autoOpen?: boolean
 }
 
@@ -79,9 +79,9 @@ export function createDesignRenderTool(
     description: 'Render an existing OpenPencil .op design document exactly as the design canvas, '
       + 'then show a PNG and an optional interactive read-only canvas in the conversation. '
       + 'Give the absolute path to a .op file (or a path relative to the session workspace). '
-      + 'For a new design when no .op file exists, call openpencil_new first. '
+      + 'For a new design when no .op file exists, call openpencil_new instead; it runs the QuickJS script-first build plus OpenPencil post-processing/finalization, creates the file, and opens the editable sidebar in the same call, so do not render it afterward unless the user explicitly requests a PNG preview. '
       + 'The image appears directly in the chat; the file path is returned for further use. '
-      + 'Set editable=true when the user asks for an editable design. For the immediate render after openpencil_new, set editable=true and autoOpen=true; no extra confirmation is needed. '
+      + 'Set editable=true when the user asks to edit an existing design, and set autoOpen=true only when this render result should open its editor immediately. '
       + 'Leave width/height unset for design-accurate output. Width/height are only supported '
       + 'by the lower-fidelity Jian runtime fallback.',
     parameters: {
@@ -90,7 +90,7 @@ export function createDesignRenderTool(
       height: { type: 'number', description: 'Explicit logical viewport height in pixels. Omit to use the document size.' },
       scale: { type: 'number', description: 'Pixel scale factor applied to the output (device-pixel ratio). Default 1.' },
       editable: { type: 'boolean', description: 'Expose an Edit in sidebar action for the original .op source. Default false.' },
-      autoOpen: { type: 'boolean', description: 'Automatically expand the editor once when this is the immediate render after openpencil_new. Default false.' },
+      autoOpen: { type: 'boolean', description: 'Automatically expand the editor once for this live editable render result. Default false.' },
     },
     output: {
       schema: {

@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/dsh-openpencil",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "description": "Preview, inspect, and edit real .op OpenPencil design documents inside DSH conversations — headless rendering, a read-only canvas, and a managed editor.",
   "license": "MIT",
   "keywords": [
@@ -37,6 +37,7 @@
     "lib",
     "src",
     "scripts",
+    "platforms.json",
     "cordis.patch.yml",
     "README.*.md",
     "docs/images/dsh-openpencil-overview.png",
@@ -50,9 +51,19 @@
     "sync:viewer-assets": "node scripts/sync-viewer-assets.mjs",
     "test:viewer-assets": "node scripts/test-viewer-assets.mjs",
     "test:client": "pnpm run build:client && node --test tests/client.test.mjs",
-    "test:host-api": "pnpm run build && node --test tests/host-service.test.mjs tests/new-tool.test.mjs tests/presentation-hydration.test.mjs tests/editor-host-lifecycle.test.mjs",
+    "test:host-api": "pnpm run build && node --test tests/host-service.test.mjs tests/new-tool.test.mjs tests/presentation-hydration.test.mjs tests/editor-host-lifecycle.test.mjs tests/editor-runtime.test.mjs tests/collab-bootstrap-config.test.mjs",
     "test:mcp": "pnpm run build && node --test tests/mcp-client.test.mjs",
-    "test:host": "pnpm run build && node scripts/test-host.mjs"
+    "test:host": "pnpm run build && node scripts/test-host.mjs",
+    "build:editor-web": "node scripts/build-editor-web.mjs",
+    "build:editor-runtime": "node scripts/build-editor-runtime.mjs",
+    "stage:editor-runtime": "node scripts/stage-editor-runtime.mjs",
+    "stage:runtime": "pnpm run stage:editor-runtime",
+    "verify:packages": "node scripts/verify-platform-packages.mjs",
+    "release:sync": "node scripts/sync-platform-versions.mjs",
+    "release:check": "node scripts/check-release-version.mjs",
+    "pack:artifact": "node scripts/pack-package.mjs",
+    "verify:install": "node scripts/verify-selective-install.mjs",
+    "release:publish": "node scripts/publish-release.mjs"
   },
   "packageManager": "pnpm@10.12.1",
   "pnpm": {
@@ -91,6 +102,14 @@
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
+  },
+  "optionalDependencies": {
+    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.3",
+    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.3",
+    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.3",
+    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.3",
+    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.3",
+    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -111,6 +111,13 @@ export interface DocumentGrant extends DocumentSnapshot {
   downloadUrl: string
 }
 
+/** Minimal document-bearing result accepted by the document-only projector. */
+export interface DocumentPresentationResult {
+  path: string
+  document: DocumentSnapshot
+  autoOpenEditor?: boolean
+}
+
 /** Canonical result shape the tool returns and the envelope enriches. */
 export interface RenderResult {
   path: string
@@ -488,9 +495,7 @@ export async function resolveInputFile(raw: string, cwd: string): Promise<string
   return real
 }
 
-/** Freeze source bytes before rendering so preview and web viewer cannot diverge. */
-export async function createDocumentSnapshot(input: string): Promise<DocumentSnapshot> {
-  const bytes = await readFile(input)
+async function persistDocumentSnapshot(bytes: Buffer): Promise<DocumentSnapshot> {
   if (bytes.length === 0) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: source document is empty`)
   if (bytes.length > MAX_DOCUMENT_BYTES) {
     throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: source document exceeds ${MAX_DOCUMENT_BYTES} bytes`)
@@ -509,6 +514,21 @@ export async function createDocumentSnapshot(input: string): Promise<DocumentSna
     }
   }
   return { path, filename, mimeType: 'application/json', bytes: bytes.length, sha256 }
+}
+
+/** Freeze source bytes before rendering so preview and web viewer cannot diverge. */
+export async function createDocumentSnapshot(input: string): Promise<DocumentSnapshot> {
+  return persistDocumentSnapshot(await readFile(input))
+}
+
+/**
+ * Freeze an authoritative document string without reopening its published
+ * source path. `openpencil_new` uses the exact `writeText().after` value so a
+ * path replacement cannot create a TOCTOU split between the saved result and
+ * the document capability handed to the editor.
+ */
+export async function createDocumentSnapshotFromText(documentJson: string): Promise<DocumentSnapshot> {
+  return persistDocumentSnapshot(Buffer.from(documentJson, 'utf8'))
 }
 
 /** Locate the exact OpenPencil renderer, preferring an explicit override. */
@@ -768,6 +788,58 @@ export async function runOpenPencilRender(options: {
   }
 }
 
+/** Mint one immutable document capability while retaining its workspace path. */
+function projectDocumentCapability(
+  document: DocumentSnapshot,
+  sourcePath: string,
+  controller: RenderAccessController,
+): DocumentGrant {
+  const token = controller.signArtifact({
+    kind: 'document',
+    filename: document.filename,
+    bytes: document.bytes,
+    sha256: document.sha256,
+  })
+  const url = `${RENDER_ROUTE_PREFIX}/${token}`
+  return {
+    ...document,
+    path: sourcePath,
+    url,
+    previewUrl: url,
+    downloadUrl: `${url}?download=1`,
+  }
+}
+
+/**
+ * Project a newly-created document directly into the existing editor
+ * workbench contract. No image grant is minted and no renderer is involved.
+ */
+export function projectDocumentGrant(
+  value: JsonValue,
+  controller: RenderAccessController,
+  editor?: EditorGrant,
+): JsonValue {
+  if (!controller.routeAvailable || !isRecord(value)) return value
+  const result = value as unknown as DocumentPresentationResult
+  if (
+    typeof result.path !== 'string'
+    || !isAbsolute(result.path)
+    || result.document === undefined
+    || typeof result.document.filename !== 'string'
+    || typeof result.document.bytes !== 'number'
+    || typeof result.document.sha256 !== 'string'
+  ) return value
+  const document = projectDocumentCapability(result.document, result.path, controller)
+  const envelope = {
+    schemaVersion: 2,
+    document,
+    sourcePath: result.path,
+    ...(editor === undefined ? {} : { editor }),
+    ...(editor === undefined || result.autoOpenEditor !== true ? {} : { autoOpenEditor: true }),
+  }
+  return { ...value, [PRESENTATION_META_KEY]: envelope } as unknown as JsonValue
+}
+
 /**
  * Purely enrich a canonical tool-result value with a browser render grant.
  * Returns the value unchanged when no route/artifact exists.
@@ -814,20 +886,11 @@ export function projectRenderGrant(
   }
   let document: DocumentGrant | undefined
   if (result.document !== undefined) {
-    const documentToken = controller.signArtifact({
-      kind: 'document',
-      filename: result.document.filename,
-      bytes: result.document.bytes,
-      sha256: result.document.sha256,
-    })
-    const url = `${RENDER_ROUTE_PREFIX}/${documentToken}`
-    document = {
-      ...result.document,
-      path: result.sourcePath ?? result.document.path,
-      url,
-      previewUrl: url,
-      downloadUrl: `${url}?download=1`,
-    }
+    document = projectDocumentCapability(
+      result.document,
+      result.sourcePath ?? result.document.path,
+      controller,
+    )
   }
   const envelope = {
     schemaVersion: projectedFrames === undefined ? 1 : 2,

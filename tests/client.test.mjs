@@ -173,6 +173,35 @@ test('supports schema v2 and legacy source URL aliases', () => {
   assert.equal(grant.document.path, '/designs/legacy.op')
 })
 
+test('accepts an openpencil_new document-only auto-open grant', () => {
+  const grant = client.grantOf(settled({
+    $dshOpenPencil: {
+      schemaVersion: 2,
+      document: {
+        path: '/designs/generated.op',
+        url: '/document-token',
+        downloadUrl: '/document-token?download=1',
+        sha256: DOCUMENT_SHA256,
+      },
+      editor: {
+        enabled: true,
+        launchUrl: '/editor/launch-token',
+      },
+      autoOpenEditor: true,
+    },
+  }))
+  assert.equal(grant.image, undefined)
+  assert.equal(grant.document.path, '/designs/generated.op')
+  assert.equal(grant.editor.launchUrl, '/editor/launch-token')
+  assert.equal(grant.autoOpenEditor, true)
+  assert.equal(client.openPencilPresentationTitle('openpencil_new', 'en'), 'OpenPencil design')
+  assert.equal(client.openPencilPresentationTitle('openpencil_render', 'en'), 'OpenPencil render')
+  assert.equal(client.openPencilPresentationTitle('openpencil_new', 'zh'), 'OpenPencil 设计')
+  assert.equal(client.shouldArmLiveAutoOpen(false, 101, 100), true, 'a fast settled live result must still auto-open')
+  assert.equal(client.shouldArmLiveAutoOpen(true, 101, 100), false)
+  assert.equal(client.shouldArmLiveAutoOpen(false, 99, 100), false, 'historical replay must not auto-open')
+})
+
 test('extracts only a valid document fingerprint from one canonical text result', () => {
   assert.equal(client.documentSha256FromCanonicalResult(canonicalRenderResult()), DOCUMENT_SHA256)
   assert.equal(client.documentSha256FromCanonicalResult(canonicalRenderResult('not-a-sha256')), undefined)
@@ -348,7 +377,7 @@ test('embedded presentation metadata prevents a hydration request', async () => 
   assert.equal(calls, 0)
 })
 
-test('only the canonical openpencil_render registration can request hydration', () => {
+test('only canonical OpenPencil presentation tools can request hydration', () => {
   const block = canonicalRenderResult()
   assert.deepEqual(client.presentationHydrationRequestOf({
     block,
@@ -359,6 +388,17 @@ test('only the canonical openpencil_render registration can request hydration', 
   }), {
     sessionId: 'session-canonical',
     callId: 'call-canonical',
+    documentSha256: DOCUMENT_SHA256,
+  })
+  assert.deepEqual(client.presentationHydrationRequestOf({
+    block,
+    toolName: 'openpencil_new',
+    sessionId: 'session-new',
+    callId: 'call-new',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-new',
+    callId: 'call-new',
     documentSha256: DOCUMENT_SHA256,
   })
   assert.equal(client.presentationHydrationRequestOf({
@@ -633,6 +673,11 @@ test('canvas backing sizing safely handles an unavailable layout or DPR', () => 
 
 test('editor bridge accepts only typed JSON-string messages', () => {
   assert.deepEqual(client.parseEditorInbound(JSON.stringify({
+    type: 'op-bridge/listening',
+  })), {
+    type: 'op-bridge/listening',
+  })
+  assert.deepEqual(client.parseEditorInbound(JSON.stringify({
     type: 'op-bridge/dirty-changed', generation: 2, revision: 5, dirty: true,
   })), {
     type: 'op-bridge/dirty-changed', generation: 2, revision: 5, dirty: true,
@@ -641,6 +686,13 @@ test('editor bridge accepts only typed JSON-string messages', () => {
   assert.equal(client.parseEditorInbound({ type: 'op-shell/save' }), undefined)
   assert.equal(client.parseEditorInbound('{"type":"op-bridge/ready","generation":-1,"revision":0}'), undefined)
   assert.equal(client.parseEditorInbound('{"type":"foreign"}'), undefined)
+})
+
+test('editor bridge accepts the first ready edge only', () => {
+  const latch = { current: false }
+  assert.equal(client.beginEditorInitRetry.takeReady(latch), true)
+  assert.equal(latch.current, true)
+  assert.equal(client.beginEditorInitRetry.takeReady(latch), false, 'duplicate ready must not reopen the boot document')
 })
 
 test('editor bridge pins loopback iframe source and origin', () => {
@@ -720,7 +772,41 @@ test('managed editor init starts before iframe load and retries until stopped', 
   assert.deepEqual(sent, ['init', 'init'], 'stopped retry callbacks are inert')
 })
 
-test('registers canonical OpenPencil render views and client-only legacy replay aliases', () => {
+test('managed editor init can renew its full retry window after listening arrives late', () => {
+  const sent = []
+  const scheduled = []
+  const cancelled = []
+  const timer = {
+    schedule(callback, delayMs) {
+      const handle = { callback, delayMs }
+      scheduled.push(handle)
+      return handle
+    },
+    cancel(handle) { cancelled.push(handle) },
+  }
+  const start = () => client.beginEditorInitRetry(
+    () => { sent.push('init') },
+    () => { sent.push('timeout') },
+    timer,
+    { intervalMs: 500, maxAttempts: 2 },
+  )
+
+  let stop = start()
+  scheduled.at(-1).callback()
+  assert.deepEqual(sent, ['init', 'init', 'timeout'])
+
+  // Mirrors ManagedOpenPencilEditor handling `op-bridge/listening`: stop any
+  // old loop and begin a fresh bounded window, whose first init is immediate.
+  stop()
+  stop = start()
+  assert.deepEqual(sent, ['init', 'init', 'timeout', 'init'])
+  scheduled.at(-1).callback()
+  assert.deepEqual(sent, ['init', 'init', 'timeout', 'init', 'init', 'timeout'])
+  assert.ok(cancelled.length >= 2)
+  stop()
+})
+
+test('registers canonical OpenPencil new/render views and client-only legacy replay aliases', () => {
   const registrations = []
   client.apply({
     on() { return () => {} },
@@ -736,14 +822,19 @@ test('registers canonical OpenPencil render views and client-only legacy replay 
   })
 
   assert.equal(client.OPENPENCIL_RENDER_TOOL_NAME, 'openpencil_render')
+  assert.equal(client.OPENPENCIL_NEW_TOOL_NAME, 'openpencil_new')
   assert.equal(client.LEGACY_DESIGN_RENDER_TOOL_NAME, 'design_render')
   assert.deepEqual(registrations.map(({ definition }) => definition), [
     { name: 'tool.call.toolview', key: 'openpencil_render' },
     { name: 'tool.details.toolview', key: 'openpencil_render' },
+    { name: 'tool.call.toolview', key: 'openpencil_new' },
+    { name: 'tool.details.toolview', key: 'openpencil_new' },
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'tool.details.toolview', key: 'design_render' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
+  assert.equal(registrations[2].component, registrations[0].component, 'new uses the existing auto-open call view')
+  assert.equal(registrations[3].component, registrations[1].component, 'new uses the existing editor workbench details view')
 })
 
 test('stock rc.2 can leave the optional details slot undeclared', () => {
@@ -768,9 +859,10 @@ test('stock rc.2 can leave the optional details slot undeclared', () => {
     },
   })
 
-  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview'])
+  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview'])
   assert.deepEqual(registrations, [
     { name: 'tool.call.toolview', key: 'openpencil_render' },
+    { name: 'tool.call.toolview', key: 'openpencil_new' },
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
@@ -1457,6 +1549,82 @@ test('editor launch refresh is limited to 410 and one retry', async () => {
   assert.equal(goneUrls[1], 'http://127.0.0.1:3080/editor/custom-refresh')
 })
 
+test('editor responses surface only a bounded top-level error string', async () => {
+  const editor = {
+    enabled: true,
+    launchUrl: '/editor/error-detail',
+  }
+  const document = {
+    path: '/workspace/design.op',
+    url: '/render/document',
+  }
+  const launch = response => client.launchManagedEditor(editor, document, {
+    fetcher: async () => response,
+  })
+
+  await assert.rejects(launch(Response.json({
+    ok: false,
+    error: '  OpenPencil editor web bundle was not ready  ',
+    token: 'must-not-appear',
+    iframeUrl: 'https://must-not-appear.example/editor',
+    message: 'must-not-appear',
+  }, { status: 500 })), error => {
+    assert.equal(
+      error.message,
+      'OpenPencil editor launch failed (500): OpenPencil editor web bundle was not ready',
+    )
+    return true
+  })
+
+  for (const response of [
+    Response.json({
+      ok: false,
+      error: { message: 'must-not-appear' },
+      token: 'must-not-appear',
+      iframeUrl: 'https://must-not-appear.example/editor',
+    }, { status: 500 }),
+    new Response('not json: must-not-appear', {
+      status: 500,
+      headers: { 'content-type': 'text/plain' },
+    }),
+  ]) {
+    await assert.rejects(launch(response), {
+      message: 'OpenPencil editor launch failed (500)',
+    })
+  }
+
+  await assert.rejects(launch(Response.json({
+    ok: false,
+    error: 'x'.repeat(513),
+    token: 'must-not-appear',
+  }, { status: 500 })), {
+    message: 'OpenPencil editor launch failed (500)',
+  })
+})
+
+test('successful editor JSON responses retain the launch contract', async () => {
+  const launch = await client.launchManagedEditor({
+    enabled: true,
+    launchUrl: '/editor/success-response',
+  }, {
+    path: '/workspace/design.op',
+    url: '/render/document',
+  }, {
+    fetcher: async () => Response.json({
+      sessionId: 'success-session',
+      iframeUrl: 'http://127.0.0.1:49156/?embed=vscode',
+      token: 'daemon-secret',
+      saveUrl: '/editor/save/success-session',
+      closeUrl: '/editor/close/success-session',
+      docJson: '{"source":"current"}',
+    }),
+  })
+
+  assert.equal(launch.sessionId, 'success-session')
+  assert.equal(launch.docJson, '{"source":"current"}')
+  assert.equal(launch.saveUrl, 'http://127.0.0.1:3080/editor/save/success-session')
+})
+
 test('refresh conflict is surfaced without launching or reading the historical document', async () => {
   const calls = []
   await assert.rejects(client.prepareManagedEditor({
@@ -1475,7 +1643,7 @@ test('refresh conflict is surfaced without launching or reading the historical d
         message: 'render again before editing',
       }, { status: 409 })
     },
-  }), /refresh failed \(409\)/)
+  }), /refresh failed \(409\): source-changed/)
   assert.equal(calls.length, 2, '409 must not launch again or fetch the historical document')
   assert.equal(calls[1].url, 'http://127.0.0.1:3080/editor/refresh-cap')
 })

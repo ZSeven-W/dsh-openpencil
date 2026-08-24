@@ -89,8 +89,11 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
     ])
     assert.equal(registeredTools.some(tool => tool.name === 'design_render'), false, 'legacy render alias must remain client-only')
     assert.equal(registeredTools[0].output.schema.properties.sourceTool.const, 'openpencil_render')
-    assert.deepEqual([...registeredTools[2].parameters.required].sort(), ['operations', 'path'])
+    assert.deepEqual([...registeredTools[2].parameters.required].sort(), ['path', 'script'])
     assert.equal(registeredTools[2].output.schema.properties.created.const, true)
+    assert.equal(registeredTools[2].output.schema.properties.sourceTool.const, 'openpencil_new')
+    assert.equal(registeredTools[2].output.schema.properties.previewIntent.const, 'document')
+    assert.equal(typeof registeredTools[2].output.presentationMeta, 'function')
     assert.deepEqual(emittedEvents, [], 'registration alone must not claim a filesystem observation')
     assert.deepEqual(
       routeRegistrations.map(route => ({ kind: route.kind, path: route.path })),

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 現在のプラグインリリース: <code>0.1.0-rc.2</code> · DSH <code>0.1.1-rc.1</code> でテスト済み</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 現在のプラグインリリース: <code>0.1.0-rc.3</code> · DSH <code>0.1.1-rc.2</code> までテスト済み</sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ DSH OpenPencil は [DeepSeek Harness](https://github.com/deepseek-ai/DSH) と [O
 DSH は別パッケージです。未導入なら一度インストールします:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 次にプラグインをプロファイルへ追加し、Web アプリを起動します:
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+ローカル開発では、このチェックアウトをビルドし、その絶対パスを Web プロファイルへリンクしてから DSH を完全に再起動します:
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+`link:` 依存関係により以後の再ビルドがこのチェックアウトから反映されます。ただし、同梱の Web プロファイルはホストバンドルを既定でホットリロードしないため、プロファイル依存関係を置き換えた後は DSH の完全な再起動が必要です。
+
 DSH をグローバルに入れたくない場合は、同じ 2 ステップを `pnpm dlx` で実行します:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > OpenPencil プラグインは公開されており、npm トークンは不要です。DSH プレリリース自体にレジストリ認証が必要な場合は、その認証情報をチェックアウト外のユーザーレベルまたは一時的な npm 設定に保持してください。このリポジトリには意図的にレジストリの認証情報が含まれていません。
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | ツール | 機能 |
 | --- | --- |
-| `openpencil_new` | 1つのトランザクション型 `batch_design` プログラムから新しい `.op` を作成し、DSH のサンドボックス化されたファイルシステムを介してアトミックに保存します。事前にエディターを開く必要はありません。 |
+| `openpencil_new` | 1つのトランザクション型 QuickJS `batch_design` スクリプトから新しい `.op` を作成し、DSH のサンドボックス化されたファイルシステムを介してアトミックに保存します。同じツール呼び出しで署名済みの編集可能なプレゼンテーションを返し、DSH がエディターのサイドバーを自動的に開きます。 |
 | `openpencil_create` | 既存のライブキャンバス上でノードを生成・再構築するために、トランザクション型 `batch_design` プログラムを適用します。 |
 | `openpencil_edit` | 明示的なノード、またはユーザーが選択した単一のノードを変更します。 |
 | `openpencil_render` | 不変でコンテンツアドレス型の `.op` スナップショットを作成し、アクティブページ上のすべてのトップレベルフレームをレンダリングします — オプションの `scale` と `editable` 付き。 |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## エージェントのデザインワークフロー
 
-既存のドキュメントがない自然言語のリクエストでは、エージェントは新しいワークスペース相対の `.op` パスと最初の完全な `batch_design` プログラムを指定して `openpencil_new` を呼び出す必要があります。このツールはプライベートなマネージド OpenPencil デーモンでそのプログラムを実行し、バッチ全体が成功した場合にのみ正式なドキュメントを公開します。既存のパスを上書きすることはなく、失敗したバッチが空のファイルを残すこともありません。その後、エージェントは返されたパス、`editable: true`、`autoOpen: true` を指定して `openpencil_render` を呼び出し、ギャラリーを表示してエディターを1回展開する必要があります。リプレイされたカードや初期状態で確定した過去のカードが自動的に開くことはありません。
+既存のドキュメントがない自然言語のリクエストでは、エージェントは新しいワークスペース相対の `.op` パスと最初の完全な `batch_design` プログラムを指定して `openpencil_new` を呼び出す必要があります。このツールはプライベートなマネージド OpenPencil デーモンでそのプログラムを実行し、バッチ全体が成功した場合にのみ正式なドキュメントを公開します。既存のパスを上書きすることはなく、失敗したバッチが空のファイルを残すこともありません。同じ成功したツール呼び出しから返される署名済みの編集可能なプレゼンテーションにより、DSH はエディターのサイドバーを自動的に開きます。2回目の `openpencil_render` 呼び出しや PNG プレビューは不要です。リプレイ、履歴表示、またはハイドレーションされたカードが自動的に開くことはありません。
+
+`openpencil_new` は `batch_design` の本物の QuickJS `script` モードを使用します。エージェントは低レベルの `operations` を手書きする代わりに、`I`/`K` 呼び出しと通常の JavaScript データ、配列、ループで構築します。DSH は `postProcess` を常に有効にし、作成後に `finalize_design` を明示的に呼び出します。これにより、ドキュメントの公開前に OpenPencil の組み込みホストが終了時に行うものと同等のクリーンアップが補われます。管理ランタイムはプラグインに同梱され、デスクトップ版バイナリには依存しません。これが現在の新規作成パスであり、独立した `design_skeleton`、`design_content`、`design_refine` ツールを経由するという意味ではありません。
 
 `openpencil_create` と `openpencil_edit` は、既存のライブキャンバスに対してのみ使用します。これらの編集は、エディターの保存アクションが実行されるまで未保存のままです。
 
@@ -172,12 +184,33 @@ pnpm run sync:viewer-assets
 
 編集可能なセッションは OpenPencil のマネージド Web ホストを使用します — `op-vscode` と同じアーキテクチャです。プラグインは、認可されたユーザー操作の後にのみホストを起動し、デーモントークンをメモリ内に保持し、iframe のソースとオリジンを検証し、エディターセッションが終了するとプロセスを閉じます。エディターのサーフェスは段階的に選択されます。ホストがそのシームを宣言する場合はネイティブの Tool 詳細、それ以外の場合はリサイズと全画面コントロールを備えたプラグインの右側ワークベンチです。
 
+起動時は低速マウントにも安全な listening handshake を使い、同梱ホストがバインド済みアドレスを通知してから readiness probe を開始します。デスクトップ版 OpenPencil のインストールは不要です。
+
+公開パッケージをインストールすると、`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64`、`win32-x64` の6つのネイティブプラットフォームパッケージから、現在の OS/CPU に対応するものが選択されます。Linux の2パッケージは glibc 向けです。ルートパッケージはこれらを厳密なバージョンの `optionalDependencies` として宣言し、パッケージマネージャーが適切なバリアント（例: `@zseven-w/dsh-openpencil-darwin-arm64`）を選択できるようにします。このパッケージには、互いに対応する `op-host-web-server`、エディターの Web バンドル、CanvasKit が1つのランタイムとして同梱されています。そのため、マネージドエディターは `/Applications/OpenPencil.app`、`PATH` 上の `openpencil-desktop`、OpenPencil のソースチェックアウトに依存しません。これはマネージドな編集可能セッションに関する説明です。正確な PNG レンダラーは、上記の独立したバイナリ検出規約を引き続き使用します。
+
 キャンバスが未保存の状態で DSH がプラグインをリロードまたはアンロードした場合、ホストは不透明なローカルリカバリードラフトを最大7日間保持します。同じソースを再度開くと、ライブキャンバスへの復元前に確認を求められます。リカバリーはユーザーが明示的に保存するまで `.op` ファイルを上書きしません。
 
-バイナリとソースの検出は次のもので上書きできます:
+公式の6プラットフォームパッケージでは、保護された release ビルド中に中国向け／グローバル向けのコラボレーション bootstrap エンドポイントが注入および検証され、検証に成功した場合のみ公開されます。この注入を行わないローカルのセルフビルドでは、DSH を起動する前に `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap` で bootstrap を上書きできます。値は `https` を使用し、パスは厳密に `/api/v1/collaboration/bootstrap` でなければなりません。
+
+デバイス間のキャンバス同期には、PC/DSH ネイティブランタイムとモバイルアプリの両方を、現在のコラボレーションキュー修正を含む同じ OpenPencil リリース系列へ更新する必要があります。古いモバイルアプリと新しい PC ランタイムを組み合わせると、リモートカーソルは表示されてもキャンバスのコミットを受信できない場合があります。
+
+このリポジトリで開発する場合は、DSH を起動する前にエディターの Web bundle、ネイティブホストの順でビルドし、対応するランタイムをステージングします。
+
+`pnpm run build:editor-web` は、OpenPencil が正式にサポートする WASM bundle gate を実行します。Bash、`wasm32-unknown-unknown` target を含む Cargo/Rust、`wasm-bindgen` CLI、Binaryen の `wasm-opt`、Node.js、`gzip` が必要です。CanvasKit に EMSDK は不要です。Web ビルドはコラボレーション bootstrap のビルド変数を使用しません。`pnpm run build:editor-runtime` の前に `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` と `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL` の両方を設定してください。これらはネイティブ Cargo ビルドだけで使用され、どちらかが未設定なら fail closed で失敗します。両方のビルドが成功した後、最後のコマンドでランタイムをステージングします。
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+ランタイムを明示的に上書きする場合は、対応する次の3項目を完全な1セットとして指定する必要があります:
 
 - `DSH_OPENPENCIL_EDITOR_BINARY` — `op-host-web-server` 用;
-- `DSH_OPENPENCIL_SOURCE_ROOT`（または `OPENPENCIL_SOURCE_ROOT`）— Web バンドルと CanvasKit アセット用。
+- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` — ビルド済みのエディター Web バンドル用;
+- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` — CanvasKit アセット用。
+
+一部だけを指定した構成は無効です。プラグインがカスタムパスと同梱ランタイムのアセットを組み合わせることはありません。
 
 保存は楽観的ソースハッシュ、アトミックな置き換え、後継ケーパビリティを使用します。エディターの外部でソースが変更された場合、プラグインは上書きせずに競合を報告します。
 
@@ -193,14 +226,14 @@ pnpm run sync:viewer-assets
 
 結果には `renderer`、`rendererBinary`、`fidelity`、および任意の警告も記録されます。既存の PNG のみの schema-v1 メッセージは引き続きレンダリング可能です。
 
-DSH `0.1.1-rc.1` は、PTC/Code Mode 配下にネストされたツールのブラウザプレゼンテーションメタデータを永続化しません。プラグインは、同一オリジンでセッションにバインドされたエンドポイントを通じて、その UI-only の投影を復元します。ブラウザは session id、call id、不変のドキュメント SHA-256 のみを送信し、ホストは永続的な DSH セッションログから正式な結果を解決し、短命のインプロセスマーカーを直近のライブ編集の認可にのみ使用します。署名付きのプレビュー/エディターのケーパビリティが正規のツール結果やモデルコンテキストに入ることはありません。永続的な履歴は読み取り専用のプレビューを復元でき、エディターの認可は直近の信頼できるライブ結果に対してのみ発行されます。
+DSH `0.1.1-rc.2` は、PTC/Code Mode 配下にネストされたツールのブラウザプレゼンテーションメタデータを永続化しません。プラグインは、同一オリジンでセッションにバインドされたエンドポイントを通じて、その UI-only の投影を復元します。ブラウザは session id、call id、不変のドキュメント SHA-256 のみを送信し、ホストは永続的な DSH セッションログから正式な結果を解決し、短命のインプロセスマーカーを直近のライブ編集の認可にのみ使用します。署名付きのプレビュー/エディターのケーパビリティが正規のツール結果やモデルコンテキストに入ることはありません。永続的な履歴は読み取り専用のプレビューを復元でき、エディターの認可は直近の信頼できるライブ結果に対してのみ発行されます。
 
 制限付きリプレイのため、ネストされたメタデータのリカバリーは最大128個のトップレベルフレームを受け入れます。より大きな Code Mode の結果は、正規の JSON フォールバックを通じて引き続き利用可能です。
 
 ## 現在の制限
 
 - 既存キャンバスへの追跡編集には、すでに開いているマネージドエディターが必要です。変更は、ユーザーがその保存アクションを実行するまで未保存のままです。
-- 軽量な Web SDK キャンバスは読み取り専用です。本格的な編集には別のマネージドエディターのサーフェスを使用します。DSH `0.1.1-rc.1` では、プラグインは全画面オプション付きのリサイズ可能な右ワークベンチを使用します。
+- 軽量な Web SDK キャンバスは読み取り専用です。本格的な編集には別のマネージドエディターのサーフェスを使用します。DSH `0.1.1-rc.2` では、プラグインは全画面オプション付きのリサイズ可能な右ワークベンチを使用します。
 - 正確なギャラリーはアクティブページ上のトップレベルフレームを対象とします。非アクティブなページやネストされたノードの検査には、引き続きインタラクティブキャンバスを使用します。
 - レンダリングとスナップショットのキャッシュには、製品レベルの保持ポリシーがまだ必要です。
 
@@ -241,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 プライベートな DSH プレリリースでは、発行された npm 認証情報をこのリポジトリの外（たとえばユーザーレベルまたは一時的な `.npmrc`）に保持し、要求されたバージョンを直接実行してください:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 `.npmrc`、`NPM_TOKEN`、またはコピーしたレジストリ認証情報をコミットしないでください。このリポジトリはデフォルトでローカルの npm 設定を無視します。

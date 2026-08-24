@@ -8,12 +8,12 @@ import {
   randomBytes,
   randomUUID,
 } from 'node:crypto'
-import { constants as fsConstants, statSync } from 'node:fs'
+import { constants as fsConstants } from 'node:fs'
 import { lstat, mkdtemp, open, rename, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import {
   callOpenPencilMcp,
   getOpenPencilMcpVersion,
@@ -27,7 +27,10 @@ import {
   restoreManagedDaemonDocument,
   type EditorRecoveryReason,
 } from './editor-recovery.js'
-import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
+import {
+  resolveEditorRuntime,
+  type EditorRuntime,
+} from './editor-runtime.js'
 
 export const EDITOR_ROUTE_PREFIX = '/_dsh/dsh-openpencil/editor'
 
@@ -135,9 +138,8 @@ export interface ActiveMcpCallOptions {
 }
 
 export interface CreateDocumentBatchOptions {
-  operations: string
+  script: string
   canvasWidth?: number
-  postProcess?: boolean
   signal: AbortSignal
 }
 
@@ -201,57 +203,13 @@ async function readSourceDocument(path: string): Promise<Buffer> {
   }
 }
 
-function isRegularFile(path: string): boolean {
-  try {
-    return statSync(path).isFile()
-  } catch {
-    return false
-  }
-}
-
-function expandUserHome(path: string): string {
-  if (path === '~') return homedir()
-  if (path.startsWith('~/')) return join(homedir(), path.slice(2))
-  return path
-}
-
-/** Locate the GUI-free managed host used by op-vscode. */
+/** Locate the plugin-owned GUI-free managed host without probing a desktop app. */
 export function findEditorHostBinary(): string | undefined {
-  const override = process.env.DSH_OPENPENCIL_EDITOR_BINARY?.trim()
-  const sourceOverride = process.env.DSH_OPENPENCIL_SOURCE_ROOT?.trim()
-    || process.env.OPENPENCIL_SOURCE_ROOT?.trim()
-  const roots = [
-    ...(sourceOverride === undefined || sourceOverride.length === 0 ? [] : [expandUserHome(sourceOverride)]),
-    join(homedir(), 'workspace', 'openpencil'),
-  ]
-  const candidates = [
-    ...(override === undefined || override.length === 0 ? [] : [expandUserHome(override)]),
-    ...roots.flatMap(root => [
-      join(root, 'target', 'release', 'op-host-web-server'),
-      join(root, 'target', 'debug', 'op-host-web-server'),
-    ]),
-  ]
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (dir.length > 0) candidates.push(join(dir, 'op-host-web-server'))
+  try {
+    return resolveEditorRuntime().binary
+  } catch {
+    return undefined
   }
-  // The desktop binary shares the serve-web CLI. It is useful only when the
-  // web bundle paths below can be resolved from an OpenPencil source root.
-  candidates.push('/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop')
-  return candidates.find(isRegularFile)
-}
-
-function sourceRootForBinary(binary: string): string | undefined {
-  const configured = process.env.DSH_OPENPENCIL_SOURCE_ROOT?.trim()
-    || process.env.OPENPENCIL_SOURCE_ROOT?.trim()
-  const candidates = [
-    ...(configured === undefined || configured.length === 0 ? [] : [expandUserHome(configured)]),
-    resolve(dirname(binary), '..', '..'),
-    join(homedir(), 'workspace', 'openpencil'),
-  ]
-  return candidates.find(root => (
-    isRegularFile(join(root, 'crates', 'op-host-web', 'pkg', 'op_host_web.js'))
-    && isRegularFile(join(root, 'crates', 'op-host-web', 'assets', 'canvaskit', 'canvaskit.wasm'))
-  ))
 }
 
 function requestOrigin(req: IncomingMessage): string {
@@ -493,7 +451,9 @@ async function atomicWriteDocument(path: string, text: string): Promise<string> 
 
 /** Owns opaque launch capabilities and all live managed editor children. */
 export class EditorHostController {
-  readonly binary = findEditorHostBinary()
+  readonly runtime: EditorRuntime | undefined
+  readonly runtimeError: Error | undefined
+  readonly binary: string | undefined
   #routeRefs = 0
   #routeGeneration = 0
   readonly #editorKey: Buffer
@@ -503,12 +463,24 @@ export class EditorHostController {
   #launchQueue: Promise<void> = Promise.resolve()
   #disposePromise: Promise<void> | undefined
 
-  constructor(masterKey: Buffer) {
+  constructor(masterKey: Buffer, runtime?: EditorRuntime) {
     this.#editorKey = deriveEditorKey(masterKey)
     this.#recoveryStore = new EditorRecoveryStore(masterKey)
+    let resolved = runtime
+    let runtimeError: Error | undefined
+    if (resolved === undefined) {
+      try {
+        resolved = resolveEditorRuntime()
+      } catch (error) {
+        runtimeError = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+    this.runtime = resolved
+    this.runtimeError = runtimeError
+    this.binary = resolved?.binary
   }
 
-  get available(): boolean { return this.binary !== undefined }
+  get available(): boolean { return this.runtime !== undefined }
   get routeAvailable(): boolean { return this.#routeRefs > 0 }
 
   attachRoute(): () => void {
@@ -588,7 +560,7 @@ export class EditorHostController {
       if (legacyRefresh && req.method === 'POST') {
         requestOrigin(req)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
-        throw new HttpError(410, `This editor card predates restart-safe editing; rerun ${OPENPENCIL_RENDER_TOOL_NAME} once`)
+        throw new HttpError(410, 'This editor card predates restart-safe editing; open the .op file in a new editable OpenPencil card')
       }
       if (save !== null && req.method === 'POST') {
         requestOrigin(req)
@@ -665,20 +637,20 @@ export class EditorHostController {
    * capability only after the whole batch succeeds.
    */
   async createDocumentBatch(options: CreateDocumentBatchOptions): Promise<CreateDocumentBatchResult> {
-    const binary = this.binary
-    if (binary === undefined) throw new Error('OpenPencil editor host binary is unavailable')
+    const runtime = this.runtime
+    if (runtime === undefined) throw new Error(this.#runtimeUnavailableMessage())
     options.signal.throwIfAborted()
     if (this.#disposePromise !== undefined) throw new Error('OpenPencil editor host is shutting down')
 
     return this.#serializeLaunch(async () => {
       options.signal.throwIfAborted()
       if (this.#disposePromise !== undefined) throw new Error('OpenPencil editor host is shutting down')
-      return this.#createDocumentBatch(binary, options)
+      return this.#createDocumentBatch(runtime, options)
     })
   }
 
   async #createDocumentBatch(
-    binary: string,
+    runtime: EditorRuntime,
     options: CreateDocumentBatchOptions,
   ): Promise<CreateDocumentBatchResult> {
     const tempRoot = await mkdtemp(join(tmpdir(), 'dsh-openpencil-new-'))
@@ -689,13 +661,12 @@ export class EditorHostController {
       options.signal.throwIfAborted()
       if (this.#disposePromise !== undefined) throw new Error('OpenPencil editor host is shutting down')
 
-      const env: NodeJS.ProcessEnv = { ...process.env }
-      const sourceRoot = sourceRootForBinary(binary)
-      if (sourceRoot !== undefined) {
-        env.OPENPENCIL_WEB_BUNDLE_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'pkg')
-        env.OPENPENCIL_CANVASKIT_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'assets', 'canvaskit')
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        OPENPENCIL_WEB_BUNDLE_DIR: runtime.webBundleDir,
+        OPENPENCIL_CANVASKIT_DIR: runtime.canvasKitDir,
       }
-      child = spawn(binary, [
+      child = spawn(runtime.binary, [
         '--serve-web', '--managed', '--port', '0', '--file', sourcePath,
         '--allow-origin', 'http://127.0.0.1',
       ], { stdio: ['pipe', 'pipe', 'pipe'], env })
@@ -710,6 +681,7 @@ export class EditorHostController {
       options.signal.addEventListener('abort', onAbort, { once: true })
       try {
         const handshake = await waitForHandshake(child, () => diagnostics.trim(), options.signal)
+        this.#assertRuntimeVersion(handshake, runtime)
         options.signal.throwIfAborted()
         const baseUrl = `http://127.0.0.1:${handshake.port}`
         await waitForEditorReady(baseUrl, options.signal)
@@ -718,32 +690,61 @@ export class EditorHostController {
           token: handshake.token,
           signal: options.signal,
         })
-        const result = await callOpenPencilMcp({
+        const build = await callOpenPencilMcp({
           baseUrl,
           token: handshake.token,
           tool: 'batch_design',
           arguments: {
-            operations: options.operations,
+            script: options.script,
+            postProcess: true,
             ...(options.canvasWidth === undefined ? {} : { canvasWidth: options.canvasWidth }),
-            ...(options.postProcess === undefined ? {} : { postProcess: options.postProcess }),
           },
           signal: options.signal,
         })
-        const afterVersion = await getOpenPencilMcpVersion({
+        const buildVersion = await getOpenPencilMcpVersion({
           baseUrl,
           token: handshake.token,
           signal: options.signal,
         })
-        if (afterVersion <= beforeVersion) {
+        if (buildVersion <= beforeVersion) {
           throw new Error('OpenPencil MCP batch_design reported success but did not create a document change')
+        }
+        options.signal.throwIfAborted()
+        const finalize = await callOpenPencilMcp({
+          baseUrl,
+          token: handshake.token,
+          tool: 'finalize_design',
+          arguments: {},
+          signal: options.signal,
+        })
+        const finalVersion = await getOpenPencilMcpVersion({
+          baseUrl,
+          token: handshake.token,
+          signal: options.signal,
+        })
+        // Finalization is intentionally idempotent. A clean generated tree can
+        // therefore keep the build version; only version regression is invalid.
+        if (finalVersion < buildVersion) {
+          throw new Error('OpenPencil MCP document version regressed during design finalization')
         }
         options.signal.throwIfAborted()
         const authoritative = await readManagedDaemonDocument(baseUrl, handshake.token, fetch, options.signal)
         options.signal.throwIfAborted()
-        if (authoritative.version < afterVersion) {
-          throw new Error('OpenPencil managed document snapshot is older than the applied design batch')
+        if (authoritative.version < finalVersion) {
+          throw new Error('OpenPencil managed document snapshot is older than the finalized design')
         }
-        return { documentJson: authoritative.documentJson, result: result.value }
+        return {
+          documentJson: authoritative.documentJson,
+          result: {
+            pipeline: {
+              mode: 'script',
+              postProcessed: true,
+              finalized: true,
+            },
+            build: build.value,
+            finalize: finalize.value,
+          },
+        }
       } finally {
         options.signal.removeEventListener('abort', onAbort)
       }
@@ -827,6 +828,22 @@ export class EditorHostController {
     return await run
   }
 
+  #runtimeUnavailableMessage(): string {
+    const detail = this.runtimeError?.message.trim()
+    return detail === undefined || detail.length === 0
+      ? 'OpenPencil editor runtime is unavailable'
+      : `OpenPencil editor runtime is unavailable: ${detail}`
+  }
+
+  #assertRuntimeVersion(handshake: ManagedHandshake, runtime: EditorRuntime): void {
+    const actual = String(handshake.version)
+    if (actual !== runtime.openPencilVersion) {
+      throw new Error(
+        `OpenPencil editor runtime version mismatch: expected ${runtime.openPencilVersion}, received ${actual}`,
+      )
+    }
+  }
+
   #assertLaunchLifecycle(routeGeneration: number): void {
     if (routeGeneration !== this.#routeGeneration || !this.routeAvailable) {
       throw new HttpError(410, 'editor route was unloaded during launch')
@@ -855,14 +872,14 @@ export class EditorHostController {
     try {
       assertConnected()
       const capability = this.#openCapability(token)
-      if (Date.now() > capability.launchExpiresAt) throw new HttpError(410, `editor capability expired; rerun ${OPENPENCIL_RENDER_TOOL_NAME}`)
+      if (Date.now() > capability.launchExpiresAt) throw new HttpError(410, 'editor capability expired; open the .op file in a new editable OpenPencil card')
       const current = await readSourceDocument(capability.sourcePath)
       assertConnected()
       if (sha256(current) !== capability.sourceSha256) {
-        throw new HttpError(409, `source changed since this preview; rerun ${OPENPENCIL_RENDER_TOOL_NAME} before editing`)
+        throw new HttpError(409, 'source changed since this card was created; open the .op file in a new editable OpenPencil card')
       }
-      const binary = this.binary
-      if (binary === undefined) throw new HttpError(503, 'OpenPencil editor host binary is unavailable')
+      const runtime = this.runtime
+      if (runtime === undefined) throw new HttpError(503, this.#runtimeUnavailableMessage())
 
       // The details panel hosts one editor. Retire an earlier daemon before a
       // successor starts so stale transcript cards cannot retain authority.
@@ -871,13 +888,12 @@ export class EditorHostController {
       await Promise.all(old.map(session => this.#captureThenDispose(session, 'plugin-dispose')))
       assertConnected()
 
-      const env: NodeJS.ProcessEnv = { ...process.env }
-      const sourceRoot = sourceRootForBinary(binary)
-      if (sourceRoot !== undefined) {
-        env.OPENPENCIL_WEB_BUNDLE_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'pkg')
-        env.OPENPENCIL_CANVASKIT_DIR ??= join(sourceRoot, 'crates', 'op-host-web', 'assets', 'canvaskit')
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        OPENPENCIL_WEB_BUNDLE_DIR: runtime.webBundleDir,
+        OPENPENCIL_CANVASKIT_DIR: runtime.canvasKitDir,
       }
-      const child = spawn(binary, [
+      const child = spawn(runtime.binary, [
         '--serve-web', '--managed', '--port', '0', '--file', capability.sourcePath,
         '--allow-origin', origin,
       ], { stdio: ['pipe', 'pipe', 'pipe'], env })
@@ -891,6 +907,7 @@ export class EditorHostController {
       })
       try {
         const handshake = await waitForHandshake(child, () => diagnostics.trim())
+        this.#assertRuntimeVersion(handshake, runtime)
         assertConnected()
         const baseUrl = `http://127.0.0.1:${handshake.port}`
         await waitForEditorReady(baseUrl)
@@ -956,10 +973,10 @@ export class EditorHostController {
   async #refresh(token: string, res: ServerResponse): Promise<void> {
     const capability = this.#openCapability(token)
     const now = Date.now()
-    if (now > capability.refreshExpiresAt) throw new HttpError(410, `editor capability expired; rerun ${OPENPENCIL_RENDER_TOOL_NAME}`)
+    if (now > capability.refreshExpiresAt) throw new HttpError(410, 'editor capability expired; open the .op file in a new editable OpenPencil card')
     const current = await readSourceDocument(capability.sourcePath)
     if (sha256(current) !== capability.sourceSha256) {
-      throw new HttpError(409, `source changed since this preview; rerun ${OPENPENCIL_RENDER_TOOL_NAME} before editing`)
+      throw new HttpError(409, 'source changed since this card was created; open the .op file in a new editable OpenPencil card')
     }
     const next = this.#sealCapability({
       ...capability,
@@ -1218,7 +1235,7 @@ export class EditorHostController {
     if (!token.startsWith(EDITOR_CAPABILITY_PREFIX)) {
       // Compatibility boundary for pre-fix transcript cards: their random
       // in-memory token cannot safely be recreated after a plugin reload.
-      throw new HttpError(410, `editor capability expired; rerun ${OPENPENCIL_RENDER_TOOL_NAME}`)
+      throw new HttpError(410, 'editor capability expired; open the .op file in a new editable OpenPencil card')
     }
     if (token.length > EDITOR_CAPABILITY_MAX_LENGTH) throw new HttpError(404, 'editor capability not found')
     try {

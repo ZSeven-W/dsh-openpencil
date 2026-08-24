@@ -60,10 +60,10 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
       const call = JSON.parse(body)
-      fs.appendFileSync(logPath, JSON.stringify({ event: 'mcp-start' }) + '\\n')
+      const tool = call && call.params && call.params.name
+      const args = call && call.params && call.params.arguments
+      fs.appendFileSync(logPath, JSON.stringify({ event: 'mcp-start', tool, args }) + '\\n')
       setTimeout(() => {
-        const tool = call && call.params && call.params.name
-        const args = call && call.params && call.params.arguments
         if (tool === 'update_node' && args && typeof args.id === 'string') {
           const children = Array.isArray(document.children) ? document.children : []
           document = {
@@ -83,14 +83,19 @@ const server = http.createServer((req, res) => {
             ],
           }
         }
-        version += 1
+        // A successful finalize is allowed to be a no-op. The real runtime
+        // does not advance its document version when no cleanup is needed.
+        if (tool !== 'finalize_design') version += 1
+        const value = tool === 'finalize_design'
+          ? { roots: 1, repairs: 0, advisories: [], summary: 'No repairs needed' }
+          : { applied: true }
         res.statusCode = 200
         res.setHeader('content-type', 'application/json')
         res.end(JSON.stringify({
           jsonrpc: '2.0',
           id: 'fake-mcp',
           result: {
-            content: [{ type: 'text', text: JSON.stringify({ applied: true }) }],
+            content: [{ type: 'text', text: JSON.stringify(value) }],
           },
         }))
       }, mcpDelay)
@@ -110,7 +115,13 @@ function close() {
 }
 server.listen(0, '127.0.0.1', () => {
   const port = server.address().port
-  fs.appendFileSync(logPath, JSON.stringify({ pid: process.pid, port, sourcePath }) + '\\n')
+  fs.appendFileSync(logPath, JSON.stringify({
+    pid: process.pid,
+    port,
+    sourcePath,
+    webBundleDir: process.env.OPENPENCIL_WEB_BUNDLE_DIR,
+    canvasKitDir: process.env.OPENPENCIL_CANVASKIT_DIR,
+  }) + '\\n')
   setTimeout(() => {
     process.stdout.write(JSON.stringify({ ok: true, port, token: 'fake-daemon-token-123456789', version: 'test' }) + '\\n')
   }, delay)
@@ -150,6 +161,13 @@ async function waitForLogEvent(path, event) {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
   throw new Error(`fake editor host did not record ${event}`)
+}
+
+async function readMcpCalls(path) {
+  const text = await readFile(path, 'utf8').catch(() => '')
+  return text.trim() === ''
+    ? []
+    : text.trim().split('\n').map(line => JSON.parse(line)).filter(entry => entry.event === 'mcp-start')
 }
 
 class MockResponse extends EventEmitter {
@@ -213,7 +231,7 @@ async function waitForExit(pid) {
   throw new Error(`fake editor host ${pid} did not exit`)
 }
 
-async function createHarness(delayMs) {
+async function createHarness(delayMs, runtimeVersion = 'test') {
   const root = await mkdtemp(join(tmpdir(), 'dsh-openpencil-editor-lifecycle-'))
   const binary = join(root, 'fake-editor-host.cjs')
   const logPath = join(root, 'hosts.jsonl')
@@ -226,13 +244,11 @@ async function createHarness(delayMs) {
   ])
   await chmod(binary, 0o755)
 
-  const previousBinary = process.env.DSH_OPENPENCIL_EDITOR_BINARY
   const previousDshHome = process.env.DSH_HOME
   const previousDelay = process.env.FAKE_EDITOR_HANDSHAKE_DELAY_MS
   const previousMcpDelay = process.env.FAKE_EDITOR_MCP_DELAY_MS
   const previousDocumentDelay = process.env.FAKE_EDITOR_DOCUMENT_DELAY_MS
   const previousLog = process.env.FAKE_EDITOR_LOG
-  process.env.DSH_OPENPENCIL_EDITOR_BINARY = binary
   process.env.DSH_HOME = join(root, 'dsh-home')
   process.env.FAKE_EDITOR_HANDSHAKE_DELAY_MS = String(delayMs)
   process.env.FAKE_EDITOR_MCP_DELAY_MS = '0'
@@ -242,7 +258,14 @@ async function createHarness(delayMs) {
   const masterKey = randomBytes(32)
   const { EditorHostController } = await import(`../lib/editor-host.js?lifecycle=${Date.now()}-${Math.random()}`)
   const { EditorRecoveryStore } = await import(`../lib/editor-recovery.js?lifecycle=${Date.now()}-${Math.random()}`)
-  const controller = new EditorHostController(masterKey)
+  const controller = new EditorHostController(masterKey, {
+    binary,
+    webBundleDir: root,
+    canvasKitDir: root,
+    openPencilVersion: runtimeVersion,
+    revision: '0'.repeat(40),
+    source: 'override',
+  })
   const recoveryStore = new EditorRecoveryStore(masterKey)
   const detach = controller.attachRoute()
   const grant = controller.grantFor(sourcePath, sha256(document))
@@ -276,8 +299,6 @@ async function createHarness(delayMs) {
       detach()
       await controller.dispose()
       await closeServer(server)
-      if (previousBinary === undefined) delete process.env.DSH_OPENPENCIL_EDITOR_BINARY
-      else process.env.DSH_OPENPENCIL_EDITOR_BINARY = previousBinary
       if (previousDshHome === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previousDshHome
       if (previousDelay === undefined) delete process.env.FAKE_EDITOR_HANDSHAKE_DELAY_MS
@@ -315,6 +336,51 @@ test('editor peer classifier accepts only loopback network addresses', async () 
   ]) assert.equal(isLoopbackRemoteAddress(address), false, String(address))
 })
 
+test('managed editor rejects a daemon from a different OpenPencil release and reaps it', async () => {
+  const harness = await createHarness(0, '0.8.5')
+  try {
+    const response = await harness.request(harness.grant.launchUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'version-mismatch' }),
+    })
+    assert.equal(response.status, 500)
+    assert.match(
+      (await response.json()).error,
+      /runtime version mismatch: expected 0\.8\.5, received test/,
+    )
+    const [host] = await waitForHosts(harness.logPath, 1)
+    await waitForExit(host.pid)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('managed editor always injects both asset directories from its verified atomic runtime', async () => {
+  const previousBundle = process.env.OPENPENCIL_WEB_BUNDLE_DIR
+  const previousCanvasKit = process.env.OPENPENCIL_CANVASKIT_DIR
+  process.env.OPENPENCIL_WEB_BUNDLE_DIR = '/tmp/unrelated-openpencil-web-bundle'
+  process.env.OPENPENCIL_CANVASKIT_DIR = '/tmp/unrelated-openpencil-canvaskit'
+  const harness = await createHarness(0)
+  try {
+    const response = await harness.request(harness.grant.launchUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'atomic-runtime-env' }),
+    })
+    assert.equal(response.status, 200, await response.clone().text())
+    const [host] = await waitForHosts(harness.logPath, 1)
+    assert.equal(host.webBundleDir, harness.root)
+    assert.equal(host.canvasKitDir, harness.root)
+  } finally {
+    if (previousBundle === undefined) delete process.env.OPENPENCIL_WEB_BUNDLE_DIR
+    else process.env.OPENPENCIL_WEB_BUNDLE_DIR = previousBundle
+    if (previousCanvasKit === undefined) delete process.env.OPENPENCIL_CANVASKIT_DIR
+    else process.env.OPENPENCIL_CANVASKIT_DIR = previousCanvasKit
+    await harness.cleanup()
+  }
+})
+
 test('createDocumentBatch uses a transient daemon without replacing the active editor', async () => {
   const harness = await createHarness(0)
   try {
@@ -330,9 +396,8 @@ test('createDocumentBatch uses a transient daemon without replacing the active e
     assert.equal(isAlive(visibleHost.pid), true)
 
     const result = await harness.controller.createDocumentBatch({
-      operations: 'root=I(null, {"type":"frame","name":"Fresh design","width":390,"height":844})',
+      script: 'const root = I(null, { type: "frame", name: "Fresh design", width: 390, height: 844 });',
       canvasWidth: 390,
-      postProcess: true,
       signal: new AbortController().signal,
     })
     const hosts = await waitForHosts(harness.logPath, 2)
@@ -345,7 +410,23 @@ test('createDocumentBatch uses a transient daemon without replacing the active e
     assert.deepEqual(JSON.parse(result.documentJson).children, [
       { id: 'node-final-batch', name: 'Mutation from batch_design' },
     ])
-    assert.deepEqual(result.result, { applied: true })
+    assert.deepEqual(await readMcpCalls(harness.logPath), [
+      {
+        event: 'mcp-start',
+        tool: 'batch_design',
+        args: {
+          script: 'const root = I(null, { type: "frame", name: "Fresh design", width: 390, height: 844 });',
+          postProcess: true,
+          canvasWidth: 390,
+        },
+      },
+      { event: 'mcp-start', tool: 'finalize_design', args: {} },
+    ])
+    assert.deepEqual(result.result, {
+      pipeline: { mode: 'script', postProcessed: true, finalized: true },
+      build: { applied: true },
+      finalize: { roots: 1, repairs: 0, advisories: [], summary: 'No repairs needed' },
+    })
 
     const selection = await harness.controller.getActiveSelection({ ownerSessionId })
     assert.equal(selection.sourcePath, harness.sourcePath)
@@ -361,7 +442,7 @@ test('createDocumentBatch aborts startup and removes its transient daemon and st
   try {
     const abort = new AbortController()
     const creating = harness.controller.createDocumentBatch({
-      operations: 'root=I(null, {"type":"frame","name":"Cancelled"})',
+      script: 'I(null, { type: "frame", name: "Cancelled" });',
       signal: abort.signal,
     })
     const [transientHost] = await waitForHosts(harness.logPath, 1)
@@ -379,7 +460,7 @@ test('controller disposal stops and joins an in-flight transient design batch', 
   try {
     process.env.FAKE_EDITOR_MCP_DELAY_MS = '1_000'
     const creating = harness.controller.createDocumentBatch({
-      operations: 'root=I(null, {"type":"frame","name":"Disposed"})',
+      script: 'I(null, { type: "frame", name: "Disposed" });',
       signal: new AbortController().signal,
     })
     const [transientHost] = await waitForHosts(harness.logPath, 1)

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Geçerli eklenti sürümü: <code>0.1.0-rc.2</code> · DSH <code>0.1.1-rc.1</code> ile test edildi</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Geçerli eklenti sürümü: <code>0.1.0-rc.3</code> · DSH <code>0.1.1-rc.2</code> sürümüne kadar test edildi</sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ Araç kartı ve yönetilen düzenleyici, düzenleme oturumunu yeniden yüklemede
 DSH ayrı bir pakettir. Henüz yoksa bir kez kurun:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 Ardından eklentiyi bir profile ekleyin ve web uygulamasını başlatın:
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+Yerel geliştirme için bu checkout'u derleyin, mutlak yolunu Web profiline bağlayın ve ardından DSH'yi tamamen yeniden başlatın:
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+`link:` bağımlılığı sonraki derlemeleri bu checkout'tan görünür kılar. Ancak sağlanan Web profili varsayılan olarak ana bilgisayar paketlerini sıcak yeniden yüklemediğinden, profil bağımlılığı değiştirildikten sonra DSH tamamen yeniden başlatılmalıdır.
+
 DSH'yi global kurmak istemiyor musunuz? Aynı iki adımı `pnpm dlx` ile çalıştırın:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > OpenPencil eklentisi geneldir ve npm belirteci gerektirmez. DSH ön sürümünün kendisi kayıt defteri kimlik doğrulaması gerektiriyorsa, bu kimlik bilgisini çalışma kopyasının dışında kullanıcı düzeyinde veya geçici bir npm yapılandırmasında saklayın. Bu depo bilinçli olarak hiçbir kayıt defteri kimlik bilgisi içermez.
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | Araç | Ne yapar |
 | --- | --- |
-| `openpencil_new` | Tek bir işlemsel `batch_design` programından yepyeni bir `.op` oluşturur, onu DSH'nin kum havuzlu dosya sistemi aracılığıyla atomik olarak kaydeder ve önceden açılmış bir düzenleyici gerektirmez. |
+| `openpencil_new` | Tek bir işlemsel QuickJS `batch_design` betiğinden yepyeni bir `.op` oluşturur, onu DSH'nin kum havuzlu dosya sistemi aracılığıyla atomik olarak kaydeder ve aynı çağrıda DSH'nin yan panel düzenleyicisinde otomatik olarak açtığı imzalı, düzenlenebilir bir sunum döndürür. |
 | `openpencil_create` | Mevcut canlı bir tuvalde düğümler oluşturmak veya yeniden yapılandırmak için işlemsel bir `batch_design` programı uygular. |
 | `openpencil_edit` | Belirli bir düğümü veya kullanıcının seçtiği tek düğümü değiştirir. |
 | `openpencil_render` | Değişmez, içeriğe dayalı bir `.op` anlık görüntüsü oluşturur ve etkin sayfadaki her üst düzey kareyi işler — isteğe bağlı `scale` ve `editable`. |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## Ajan Tasarım İş Akışı
 
-Mevcut bir belge olmayan doğal dildeki bir istek için Ajan, yeni bir çalışma alanına göreli `.op` yolu ve ilk eksiksiz `batch_design` programıyla `openpencil_new` çağrısı yapmalıdır. Araç bu programı özel, yönetilen bir OpenPencil arka plan sürecinde çalıştırır ve otoriter belgeyi yalnızca toplu işlemin tamamı başarılı olduktan sonra yayımlar. Mevcut bir yolu asla üzerine yazmaz ve başarısız bir toplu işlem arkasında boş bir dosya bırakmaz. Ajan daha sonra döndürülen yol, `editable: true` ve `autoOpen: true` ile `openpencil_render` çağrısı yaparak galeriyi sunmalı ve düzenleyiciyi bir kez genişletmelidir. Oynatılan veya başlangıçta sonuçlanan geçmiş kartları asla otomatik açılmaz.
+Mevcut bir belge olmayan doğal dildeki bir istek için Ajan, yeni bir çalışma alanına göreli `.op` yolu ve ilk eksiksiz `batch_design` programıyla `openpencil_new` çağrısı yapmalıdır. Araç bu programı özel, yönetilen bir OpenPencil arka plan sürecinde çalıştırır ve otoriter belgeyi yalnızca toplu işlemin tamamı başarılı olduktan sonra yayımlar. Mevcut bir yolu asla üzerine yazmaz ve başarısız bir toplu işlem arkasında boş bir dosya bırakmaz. Aynı çağrı imzalı, düzenlenebilir bir sunum döndürür ve DSH yan panel düzenleyicisini otoriter belgeyle otomatik olarak açar. Bu akış için ikinci bir `openpencil_render` çağrısı veya PNG önizlemesi gerekmez. Yeniden oynatılan veya hydrate edilen geçmiş kartları asla otomatik açılmaz.
+
+`openpencil_new`, `batch_design` aracının gerçek QuickJS `script` yüzeyini kullanır: Ajan, düşük düzeyli `operations` girdilerini elle yazmak yerine `I`/`K` çağrıları ile normal JavaScript verileri, dizileri ve döngülerini kullanır. DSH her zaman `postProcess` özelliğini etkinleştirir ve oluşturma sonrasında `finalize_design` çağrısını açıkça yapar. Böylece belge yayımlanmadan önce yerleşik OpenPencil ana bilgisayarının bitiş aşamasına eşdeğer temizlik tamamlanır. Yönetilen çalışma zamanı eklentiyle birlikte gelir ve masaüstü ikili dosyasına bağlı değildir. Bu, güncel oluşturma yoludur; ayrı `design_skeleton`, `design_content` veya `design_refine` araçlarından geçtiği iddia edilmez.
 
 `openpencil_create` ve `openpencil_edit`'i yalnızca mevcut canlı bir tuval için kullanın. Düzenlemeleri, düzenleyicinin Kaydet eylemine kadar kaydedilmemiş halde kalır.
 
@@ -172,12 +184,33 @@ Görüntüleyici varlıkları yalnızca kullanıcı tuvale açtıktan sonra temb
 
 Düzenlenebilir oturumlar, `op-vscode` tarafından kullanılan mimariyle aynı olan OpenPencil'in yönetilen web ana bilgisayarını kullanır. Eklenti ana bilgisayarı yalnızca yetkili bir kullanıcı eyleminin ardından başlatır, arka plan süreci belirtecini bellekte tutar, iframe kaynağını ve kaynağını doğrular ve düzenleyici oturumu sona erdiğinde süreci kapatır. Düzenleyici yüzeyi aşamalı olarak seçilir: ana bilgisayar bu arayüzü bildirdiğinde yerel Araç ayrıntıları, aksi takdirde yeniden boyutlandırma ve tam ekran kontrolleriyle eklentinin sağ taraftaki çalışma alanı.
 
+Başlatma, yavaş bağlamalarda güvenli bir listening handshake kullanır: hazır olma denetimleri yalnızca paketlenmiş ana bilgisayar bağlı adresini bildirdikten sonra başlar. Masaüstü OpenPencil kurulumu gerekmez.
+
+Yayımlanan kurulumlar altı yerel hedefi destekler: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` ve `win32-x64`; Linux paketleri glibc gerektirir. Kök paket, işletim sistemi ve CPU'ya göre tam sürümlü `optionalDependencies` aracılığıyla uygun platform paketini seçer (örneğin `@zseven-w/dsh-openpencil-darwin-arm64`). Bu paket, birbiriyle eşleşen `op-host-web-server`, düzenleyici web paketi ve CanvasKit'i tek bir çalışma zamanı olarak sunar. Bu nedenle yönetilen düzenleyici `/Applications/OpenPencil.app` uygulamasına, `PATH` üzerindeki `openpencil-desktop` dosyasına veya bir OpenPencil kaynak checkout'una bağlı değildir. Bu açıklama yönetilen düzenlenebilir oturumlar için geçerlidir; hassas PNG oluşturucu yukarıda açıklanan ayrı ikili dosya keşif sözleşmesini kullanmayı sürdürür.
+
 Tuval kirliyken DSH eklentiyi yeniden yükler veya kaldırırsa, ana bilgisayar en fazla yedi gün boyunca opak bir yerel kurtarma taslağı tutar. Aynı kaynağı yeniden açmak, onu canlı tuvale geri yüklemeden önce sorar; kurtarma, kullanıcı açıkça kaydedene kadar `.op` dosyasını asla üzerine yazmaz.
 
-İkili dosya ve kaynak keşfi şunlarla geçersiz kılınabilir:
+Altı platformun resmi paketleri, korumalı release derlemesi sırasında Çin ve Global iş birliği bootstrap uç noktalarıyla enjekte edilir; enjekte edilen değerler yayımdan önce doğrulanır. Bu enjeksiyon olmadan yerelde oluşturulan bir derleme, DSH başlatılmadan önce bootstrap değerini `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap` ile geçersiz kılabilir. Değer `https` kullanmalı ve yol tam olarak `/api/v1/collaboration/bootstrap` olmalıdır.
+
+Cihazlar arası tuval eşitlemesi için hem PC/DSH yerel çalışma zamanı hem de mobil uygulama, güncel iş birliği kuyruğu düzeltmesini içeren aynı OpenPencil sürüm hattına güncellenmelidir. Eski bir mobil uygulama yeni bir PC çalışma zamanıyla birlikte kullanıldığında uzak imleçler görünse bile tuval commit'leri alınamayabilir.
+
+Bu depodan geliştirme yaparken DSH'yi başlatmadan önce sırasıyla düzenleyici Web bundle'ını ve yerel ana bilgisayarı derleyin, ardından birbiriyle eşleşen çalışma zamanını hazırlayın.
+
+`pnpm run build:editor-web`, OpenPencil'ın resmi olarak desteklediği WASM bundle gate'ini çalıştırır. Bash, `wasm32-unknown-unknown` target'ı bulunan Cargo/Rust, `wasm-bindgen` CLI, Binaryen `wasm-opt`, Node.js ve `gzip` gerekir; CanvasKit için EMSDK gerekmez. Web derlemesi iş birliği bootstrap derleme değişkenlerini kullanmaz. `pnpm run build:editor-runtime` öncesinde hem `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` hem de `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL` ayarlanmalıdır. Bunlar yalnızca yerel Cargo derlemesinde kullanılır ve değişkenlerden biri eksikse derleme fail closed biçiminde durur. Her iki derleme de başarıyla tamamlandıktan sonra son komutla çalışma zamanını hazırlayın.
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+Açık çalışma zamanı geçersiz kılmaları yalnızca eksiksiz ve birbiriyle eşleşen bir küme olarak kabul edilir:
 
 - `op-host-web-server` için `DSH_OPENPENCIL_EDITOR_BINARY`;
-- web paketi ve CanvasKit varlıkları için `DSH_OPENPENCIL_SOURCE_ROOT` (veya `OPENPENCIL_SOURCE_ROOT`).
+- derlenmiş düzenleyici web paketi için `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`;
+- CanvasKit varlıkları için `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR`.
+
+Kümenin yalnızca bir bölümünü sağlamak geçersiz bir yapılandırmadır; eklenti özel yolları paketlenmiş çalışma zamanı varlıklarıyla birleştirmez.
 
 Kaydetmeler iyimser bir kaynak karması, atomik bir değiştirme ve bir ardıl yetenek kullanır. Kaynak düzenleyicinin dışında değişirse eklenti, üzerine yazmak yerine bir çakışma bildirir.
 
@@ -193,14 +226,14 @@ Model tarafından görülebilen sonuç, düz JSON olarak kalır. Yalnızca taray
 
 Sonuç ayrıca `renderer`, `rendererBinary`, `fidelity` ve varsa uyarıları kaydeder. Yalnızca PNG içeren mevcut schema-v1 iletileri işlenebilir kalır.
 
-DSH `0.1.1-rc.1`, PTC/Kod Modu altında iç içe yer alan araçların tarayıcı sunum meta verilerini kalıcı hale getirmez. Eklenti bu yalnızca UI'ya özgü yansımayı aynı kaynaklı, oturuma bağlı bir uç nokta aracılığıyla kurtarır: tarayıcı yalnızca oturum kimliğini, çağrı kimliğini ve değişmez belge SHA-256'sını gönderir; ana bilgisayar ise otoriter sonucu kalıcı DSH oturum günlüğünden çözer ve yalnızca yakın tarihli canlı düzenlemeyi yetkilendirmek için kısa ömürlü, süreç içi bir işaret kullanır. İmzalı önizleme/düzenleyici yetenekleri hiçbir zaman kanonik araç sonucuna veya model bağlamına girmez. Kalıcı geçmiş salt okunur önizlemeleri geri yükleyebilir; düzenleyici yetkileri yalnızca yakın tarihli, güvenilen canlı sonuçlar için verilir.
+DSH `0.1.1-rc.2`, PTC/Kod Modu altında iç içe yer alan araçların tarayıcı sunum meta verilerini kalıcı hale getirmez. Eklenti bu yalnızca UI'ya özgü yansımayı aynı kaynaklı, oturuma bağlı bir uç nokta aracılığıyla kurtarır: tarayıcı yalnızca oturum kimliğini, çağrı kimliğini ve değişmez belge SHA-256'sını gönderir; ana bilgisayar ise otoriter sonucu kalıcı DSH oturum günlüğünden çözer ve yalnızca yakın tarihli canlı düzenlemeyi yetkilendirmek için kısa ömürlü, süreç içi bir işaret kullanır. İmzalı önizleme/düzenleyici yetenekleri hiçbir zaman kanonik araç sonucuna veya model bağlamına girmez. Kalıcı geçmiş salt okunur önizlemeleri geri yükleyebilir; düzenleyici yetkileri yalnızca yakın tarihli, güvenilen canlı sonuçlar için verilir.
 
 Sınırlı oynatım için iç içe meta veri kurtarması en fazla 128 üst düzey kare kabul eder; daha büyük Kod Modu sonuçları, kanonik JSON yedeği aracılığıyla kullanılabilir kalır.
 
 ## Güncel Sınırlamalar
 
 - Mevcut bir tuvale yapılan sonraki düzenlemeler, önceden açılmış bir yönetilen düzenleyici gerektirir. Değişiklikler, kullanıcı Kaydet eylemini çağırana kadar kaydedilmemiş kalır.
-- Hafif Web SDK tuvali salt okunurdur; tam düzenleme ayrı yönetilen düzenleyici yüzeyini kullanır. DSH `0.1.1-rc.1` üzerinde eklenti, tam ekran seçeneğiyle yeniden boyutlandırılabilir sağ çalışma alanını kullanır.
+- Hafif Web SDK tuvali salt okunurdur; tam düzenleme ayrı yönetilen düzenleyici yüzeyini kullanır. DSH `0.1.1-rc.2` üzerinde eklenti, tam ekran seçeneğiyle yeniden boyutlandırılabilir sağ çalışma alanını kullanır.
 - Birebir galeri, etkin sayfadaki üst düzey kareleri kapsar; etkin olmayan sayfaları ve iç içe düğümleri incelemenin yolu etkileşimli tuval olarak kalır.
 - İşleme ve anlık görüntü önbellekleri hâlâ ürün düzeyinde bir saklama ilkesi gerektirir.
 
@@ -241,7 +274,7 @@ Derlemeler Node 24.11 veya daha yenisini ve pnpm gerektirir. DSH ana bilgisayar/
 Özel bir DSH ön sürümü için verilen npm kimlik bilgisini bu deponun dışında tutun (örneğin kullanıcı düzeyinde veya geçici bir `.npmrc` içinde) ve istenen sürümü doğrudan çalıştırın:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 `.npmrc`, `NPM_TOKEN` veya kopyalanmış kayıt defteri kimlik bilgilerini asla işlemeyin. Bu depo varsayılan olarak yerel npm yapılandırmasını yok sayar.

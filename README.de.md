@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.2</code> · Getestet mit DSH <code>0.1.1-rc.1</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.3</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ Die Tool-Karte und der verwaltete Editor übernehmen das Chinesisch-/Englisch-Lo
 DSH ist ein eigenes Paket. Installiere es einmalig, falls noch nicht vorhanden:
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 Füge dann das Plugin einem Profil hinzu und starte die Web-App:
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+Für die lokale Entwicklung bauen Sie diesen Checkout, verlinken seinen absoluten Pfad mit dem Web-Profil und starten DSH anschließend vollständig neu:
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+Die `link:`-Abhängigkeit macht spätere Neubauten direkt aus diesem Checkout sichtbar. Nach dem Ersetzen der Profilabhängigkeit muss DSH jedoch vollständig neu gestartet werden, da das mitgelieferte Web-Profil Host-Bundles standardmäßig nicht per Hot Reload aktualisiert.
+
 Lieber ohne globale DSH-Installation? Führe dieselben zwei Schritte über `pnpm dlx` aus:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > Das OpenPencil-Plugin ist öffentlich und benötigt kein npm-Token. Wenn die DSH-Prerelease selbst eine Registry-Authentifizierung erfordert, bewahren Sie diese Anmeldedaten in einer npm-Konfiguration auf Benutzer- oder temporärer Ebene außerhalb des Checkouts auf. Dieses Repository enthält bewusst keine Registry-Anmeldedaten.
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | Tool | Funktion |
 | --- | --- |
-| `openpencil_new` | Erstellt ein brandneues `.op` aus einem einzigen transaktionalen `batch_design`-Programm, speichert es atomar über das Sandbox-Dateisystem von DSH und benötigt keinen zuvor geöffneten Editor. |
+| `openpencil_new` | Erstellt ein brandneues `.op` aus einem einzigen transaktionalen QuickJS-`batch_design`-Skript, speichert es atomar über das Sandbox-Dateisystem von DSH und gibt im selben Tool-Aufruf eine signierte bearbeitbare Darstellung zurück, die DSH automatisch im Seitenleisten-Editor öffnet. |
 | `openpencil_create` | Wendet ein transaktionales `batch_design`-Programm an, um Knoten auf einer vorhandenen Live-Leinwand zu erzeugen oder umzustrukturieren. |
 | `openpencil_edit` | Modifiziert einen expliziten Knoten oder den einzelnen vom Benutzer ausgewählten Knoten. |
 | `openpencil_render` | Erstellt einen unveränderlichen, inhaltsadressierten `.op`-Snapshot und rendert jeden Frame der obersten Ebene auf der aktiven Seite – optional mit `scale` und `editable`. |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## Agent-Design-Workflow
 
-Für eine Anfrage in natürlicher Sprache ohne vorhandenes Dokument sollte der Agent `openpencil_new` mit einem neuen arbeitsbereichsrelativen `.op`-Pfad und dem ersten vollständigen `batch_design`-Programm aufrufen. Das Tool führt dieses Programm in einem privaten, verwalteten OpenPencil-Daemon aus und veröffentlicht das maßgebliche Dokument erst, nachdem der gesamte Batch erfolgreich war. Es überschreibt niemals einen vorhandenen Pfad, und ein fehlgeschlagener Batch hinterlässt keine leere Datei. Der Agent sollte anschließend `openpencil_render` mit dem zurückgegebenen Pfad, `editable: true` und `autoOpen: true` aufrufen, um die Galerie zu präsentieren und den Editor einmal aufzuklappen. Wiedergegebene oder bereits anfänglich dargestellte Karten aus dem Verlauf öffnen sich nie automatisch.
+Für eine Anfrage in natürlicher Sprache ohne vorhandenes Dokument sollte der Agent `openpencil_new` mit einem neuen arbeitsbereichsrelativen `.op`-Pfad und dem ersten vollständigen `batch_design`-Programm aufrufen. Das Tool führt dieses Programm in einem privaten, verwalteten OpenPencil-Daemon aus und veröffentlicht das maßgebliche Dokument erst, nachdem der gesamte Batch erfolgreich war. Es überschreibt niemals einen vorhandenen Pfad, und ein fehlgeschlagener Batch hinterlässt keine leere Datei. Derselbe Tool-Aufruf gibt eine signierte bearbeitbare Darstellung zurück, und DSH öffnet den Seitenleisten-Editor automatisch mit dem maßgeblichen Dokument. Ein zweiter Aufruf von `openpencil_render` oder eine PNG-Vorschau ist für diesen Ablauf nicht erforderlich. Wiedergegebene oder hydrierte Karten aus dem Verlauf öffnen sich nie automatisch.
+
+`openpencil_new` verwendet die echte QuickJS-`script`-Schnittstelle von `batch_design`: Der Agent baut mit `I`-/`K`-Aufrufen sowie gewöhnlichen JavaScript-Daten, Arrays und Schleifen, statt Low-Level-`operations` von Hand zu schreiben. DSH aktiviert `postProcess` immer und ruft nach der Erstellung ausdrücklich `finalize_design` auf. Dadurch wird vor der Veröffentlichung dieselbe Abschlussbereinigung wie beim integrierten OpenPencil-Host ergänzt. Die verwaltete Laufzeit ist im Plugin enthalten und benötigt keine Desktop-Binärdatei. Dies ist der aktuelle Erstellungspfad; er durchläuft nicht vorgeblich die separaten Tools `design_skeleton`, `design_content` oder `design_refine`.
 
 Verwenden Sie `openpencil_create` und `openpencil_edit` nur für eine vorhandene Live-Leinwand. Ihre Änderungen bleiben bis zur Aktion „Speichern“ im Editor ungespeichert.
 
@@ -172,12 +184,33 @@ Viewer-Assets werden erst nachgeladen, nachdem der Benutzer die Leinwand geöffn
 
 Bearbeitbare Sitzungen nutzen den verwalteten Web-Host von OpenPencil – dieselbe Architektur wie bei `op-vscode`. Das Plugin startet den Host erst nach einer autorisierten Benutzeraktion, hält das Daemon-Token im Arbeitsspeicher, validiert iframe-Quelle und -Origin und beendet den Prozess, wenn die Editor-Sitzung endet. Die Editor-Oberfläche wird schrittweise ausgewählt: native Tool-Details, wenn der Host diese Schnittstelle deklariert, andernfalls der rechtsseitige Arbeitsbereich des Plugins mit Größenänderung und Vollbild-Steuerung.
 
+Der Start verwendet einen für langsame Mounts sicheren listening handshake: Bereitschaftsprüfungen beginnen erst, nachdem der mitgelieferte Host seine gebundene Adresse gemeldet hat. Eine Desktop-Installation von OpenPencil ist nicht erforderlich.
+
+Veröffentlichte Installationen unterstützen sechs native Ziele: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` und `win32-x64`; die Linux-Pakete setzen glibc voraus. Das Root-Paket wählt über exakt versionierte `optionalDependencies` anhand von Betriebssystem und CPU das passende Plattformpaket aus (zum Beispiel `@zseven-w/dsh-openpencil-darwin-arm64`). Dieses Paket stellt `op-host-web-server`, das Web-Bundle des Editors und CanvasKit als eine zusammengehörige Laufzeit bereit. Der verwaltete Editor hängt daher weder von `/Applications/OpenPencil.app` noch von `openpencil-desktop` im `PATH` oder einem OpenPencil-Quell-Checkout ab. Dies gilt für verwaltete bearbeitbare Sitzungen; der exakte PNG-Renderer behält den oben beschriebenen separaten Vertrag zur Binärdateierkennung bei.
+
 Wenn DSH das Plugin neu lädt oder entlädt, während die Leinwand ungespeicherte Änderungen enthält, bewahrt der Host bis zu sieben Tage lang einen undurchsichtigen lokalen Wiederherstellungsentwurf auf. Beim erneuten Öffnen derselben Quelle wird nachgefragt, bevor sie in die Live-Leinwand wiederhergestellt wird; die Wiederherstellung überschreibt die `.op`-Datei nie, bis der Benutzer explizit speichert.
 
-Die Erkennung von Binärdatei und Quelle kann überschrieben werden mit:
+Die offiziellen Pakete für alle sechs Plattformen erhalten ihre Bootstrap-Endpunkte für die Zusammenarbeit in China und weltweit während des geschützten Release-Builds; die injizierten Endpunkte werden vor der Veröffentlichung validiert. Bei einem lokalen Eigenbau ohne diese Injektion kann der Bootstrap vor dem Start von DSH mit `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap` überschrieben werden. Der Wert muss `https` verwenden und exakt den Pfad `/api/v1/collaboration/bootstrap` besitzen.
+
+Für die geräteübergreifende Leinwandsynchronisierung müssen sowohl die native PC/DSH-Laufzeit als auch die mobile App auf dieselbe OpenPencil-Release-Linie aktualisiert werden, die die aktuelle Korrektur der Kollaborationswarteschlange enthält. Wird eine ältere mobile App mit einer neueren PC-Laufzeit kombiniert, können weiterhin entfernte Cursor sichtbar sein, obwohl keine Leinwand-Commits empfangen werden.
+
+Bei der Entwicklung aus diesem Repository müssen vor dem Start von DSH zuerst das Web-Bundle des Editors und dann der native Host gebaut werden; anschließend wird die zusammengehörige Laufzeit bereitgestellt.
+
+`pnpm run build:editor-web` führt das von OpenPencil unterstützte WASM-Bundle-Gate aus. Erforderlich sind Bash, Cargo/Rust mit dem Target `wasm32-unknown-unknown`, die `wasm-bindgen`-CLI, `wasm-opt` aus Binaryen, Node.js und `gzip`; CanvasKit benötigt kein EMSDK. Der Web-Build verwendet die Build-Variablen für den Collaboration-Bootstrap nicht. Vor `pnpm run build:editor-runtime` müssen sowohl `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` als auch `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL` gesetzt sein. Sie werden ausschließlich vom nativen Cargo-Build verwendet, der beim Fehlen einer Variablen nach dem Fail-closed-Prinzip abbricht. Nach beiden erfolgreichen Builds wird die Laufzeit mit dem letzten Befehl bereitgestellt.
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+Explizite Laufzeit-Überschreibungen werden nur als vollständiger, zusammengehöriger Satz akzeptiert:
 
 - `DSH_OPENPENCIL_EDITOR_BINARY` für `op-host-web-server`;
-- `DSH_OPENPENCIL_SOURCE_ROOT` (oder `OPENPENCIL_SOURCE_ROOT`) für das Web-Bundle und die CanvasKit-Assets.
+- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` für das gebaute Editor-Web-Bundle;
+- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` für die CanvasKit-Assets.
+
+Nur einen Teil dieses Satzes anzugeben ist ungültig; das Plugin kombiniert keine benutzerdefinierten Pfade mit den Laufzeit-Assets des Pakets.
 
 Speichervorgänge nutzen einen optimistischen Quell-Hash, ein atomares Ersetzen und eine Nachfolger-Capability. Wenn sich die Quelle außerhalb des Editors ändert, meldet das Plugin einen Konflikt, statt sie zu überschreiben.
 
@@ -193,14 +226,14 @@ Das für das Modell sichtbare Ergebnis bleibt einfaches JSON. Das nur im Browser
 
 Das Ergebnis erfasst außerdem `renderer`, `rendererBinary`, `fidelity` und etwaige Warnungen. Vorhandene reine PNG-Schema-v1-Nachrichten bleiben renderbar.
 
-DSH `0.1.1-rc.1` speichert Browser-Präsentationsmetadaten für Tools, die unter PTC/Code Mode verschachtelt sind, nicht dauerhaft. Das Plugin stellt diese reine UI-Projektion über einen Same-Origin-, sitzungsgebundenen Endpunkt wieder her: Der Browser sendet nur die Sitzungs-ID, die Call-ID und den unveränderlichen Dokument-SHA-256, während der Host das maßgebliche Ergebnis aus dem dauerhaften DSH-Sitzungsprotokoll auflöst und einen kurzlebigen In-Process-Marker ausschließlich zur Autorisierung aktueller Live-Bearbeitungen verwendet. Signierte Vorschau-/Editor-Capabilities gelangen nie in das kanonische Tool-Ergebnis oder den Modellkontext. Der dauerhafte Verlauf kann schreibgeschützte Vorschauen wiederherstellen; Editor-Grants werden nur für aktuelle, vertrauenswürdige Live-Ergebnisse ausgestellt.
+DSH `0.1.1-rc.2` speichert Browser-Präsentationsmetadaten für Tools, die unter PTC/Code Mode verschachtelt sind, nicht dauerhaft. Das Plugin stellt diese reine UI-Projektion über einen Same-Origin-, sitzungsgebundenen Endpunkt wieder her: Der Browser sendet nur die Sitzungs-ID, die Call-ID und den unveränderlichen Dokument-SHA-256, während der Host das maßgebliche Ergebnis aus dem dauerhaften DSH-Sitzungsprotokoll auflöst und einen kurzlebigen In-Process-Marker ausschließlich zur Autorisierung aktueller Live-Bearbeitungen verwendet. Signierte Vorschau-/Editor-Capabilities gelangen nie in das kanonische Tool-Ergebnis oder den Modellkontext. Der dauerhafte Verlauf kann schreibgeschützte Vorschauen wiederherstellen; Editor-Grants werden nur für aktuelle, vertrauenswürdige Live-Ergebnisse ausgestellt.
 
 Für eine begrenzte Wiedergabe akzeptiert die verschachtelte Metadaten-Wiederherstellung bis zu 128 Frames der obersten Ebene; größere Code-Mode-Ergebnisse bleiben über ihren kanonischen JSON-Fallback verfügbar.
 
 ## Aktuelle Einschränkungen
 
 - Folgeänderungen an einer vorhandenen Leinwand setzen einen bereits geöffneten verwalteten Editor voraus. Änderungen bleiben ungespeichert, bis der Benutzer dessen Aktion „Speichern“ ausführt.
-- Die leichtgewichtige Leinwand der Web-SDK ist schreibgeschützt; die vollständige Bearbeitung nutzt die separate Oberfläche des verwalteten Editors. Auf DSH `0.1.1-rc.1` verwendet das Plugin den in der Größe veränderbaren rechten Arbeitsbereich mit Vollbild-Option.
+- Die leichtgewichtige Leinwand der Web-SDK ist schreibgeschützt; die vollständige Bearbeitung nutzt die separate Oberfläche des verwalteten Editors. Auf DSH `0.1.1-rc.2` verwendet das Plugin den in der Größe veränderbaren rechten Arbeitsbereich mit Vollbild-Option.
 - Die exakte Galerie umfasst Frames der obersten Ebene auf der aktiven Seite; die interaktive Leinwand bleibt der Weg, um inaktive Seiten und verschachtelte Knoten zu untersuchen.
 - Render- und Snapshot-Caches benötigen weiterhin eine produktweite Aufbewahrungsrichtlinie.
 
@@ -241,7 +274,7 @@ Builds erfordern Node 24.11 oder neuer und pnpm. DSH-Host-/Client-Pakete sind Pe
 Für eine private DSH-Prerelease bewahren Sie die ausgegebene npm-Anmeldeinformation außerhalb dieses Repositorys auf (zum Beispiel in einer `.npmrc` auf Benutzer- oder temporärer Ebene) und führen Sie die angeforderte Version direkt aus:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 Committen Sie niemals `.npmrc`, `NPM_TOKEN` oder kopierte Registry-Anmeldedaten. Dieses Repository ignoriert die lokale npm-Konfiguration standardmäßig.

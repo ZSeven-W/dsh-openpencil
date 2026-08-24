@@ -1,6 +1,5 @@
-/** Create a brand-new OpenPencil document from one transactional design batch. */
+/** Create a brand-new OpenPencil document from one transactional QuickJS build. */
 
-import { createHash } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute } from 'node:path'
 import type FileSystem from '@deepseek-ai/dsh-fs'
@@ -8,23 +7,45 @@ import type { FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
 import type SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { EditorHostController } from './editor-host.js'
+import {
+  type DocumentSnapshot,
+  RenderAccessController,
+  createDocumentSnapshotFromText,
+  projectDocumentGrant,
+} from './renderer.js'
 import { OPENPENCIL_NEW_TOOL_NAME } from './tool-names.js'
 
-const MAX_OPERATIONS_LENGTH = 256 * 1024
-const ROOT_OPERATION_EXAMPLE = 'root=I(null,{"type":"frame","name":"Home","width":390,"height":844,"layout":"vertical","gap":24,"padding":24,"fill":"#F7F1E7","children":[{"type":"text","name":"Title","content":"Forage","fontSize":32,"fontWeight":700,"fill":"#173C2B"}]})'
-const IMAGE_OPERATION_EXAMPLE = 'slot=I(root,{"type":"frame","name":"Hero photo","width":"fill_container","height":240,"cornerRadius":20,"clipContent":true,"children":[]})\nphoto=G(slot,"search","seasonal food photography")'
+const MAX_SCRIPT_LENGTH = 256 * 1024
+const SCRIPT_EXAMPLE = 'const root = I(null, { type: "frame", name: "Home", width: 390, height: 844, layout: "vertical", gap: 24, padding: 24, fill: [{ type: "solid", color: "#F7F1E7" }] });\nconst card = I(root, { type: "frame", name: "Welcome card", width: "fill_container", height: "fit_content", layout: "vertical", gap: 12, padding: 20, cornerRadius: 16, fill: [{ type: "solid", color: "#FFFFFF" }], stroke: { thickness: 1, fill: [{ type: "solid", color: "#E7DFD2" }] } });\nI(card, { type: "text", name: "Title", content: "Forage", width: "fill_container", height: 44, fontSize: 32, fontWeight: 700, textAlign: "left", fill: [{ type: "solid", color: "#173C2B" }] });'
 
 export interface DesignNewArgs {
   path: string
-  operations: string
+  script: string
   canvasWidth?: number
-  postProcess?: boolean
 }
 
 export interface DesignNewServices {
   fs: FileSystem
   sandboxPolicy: SandboxPolicyService
+  render: RenderAccessController
   observe(target: FsTarget, observation: FsObservation, exec: ToolRunContext): void
+}
+
+export interface DesignNewResult {
+  path: string
+  filename: string
+  bytes: number
+  sha256: string
+  created: true
+  applied: true
+  saved: true
+  sourceTool: typeof OPENPENCIL_NEW_TOOL_NAME
+  previewIntent: 'document'
+  editable: true
+  autoOpenEditor: true
+  document: DocumentSnapshot
+  result?: Record<string, JsonValue>
+  note: string
 }
 
 function renderJson(_args: unknown, value: unknown): [{ type: 'text'; text: string }] {
@@ -35,37 +56,55 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function makePresentationMeta(
+  editorHost: EditorHostController,
+  controller: RenderAccessController,
+) {
+  return (_args: unknown, value: JsonValue): JsonValue => {
+    const result = value as unknown as DesignNewResult
+    const editor = editorHost.grantFor(result.path, result.document?.sha256)
+    return projectDocumentGrant(value, controller, editor)
+  }
+}
+
 /**
- * Build and atomically publish a new `.op` document. The first batch runs in
+ * Build and atomically publish a new `.op` document. The QuickJS build runs in
  * a private managed daemon, so no existing file or browser-owned sidebar is
  * required and a failed design never leaves an empty target behind.
  */
 export function createDesignNewTool(editorHost: EditorHostController, services: DesignNewServices) {
   return defineTool({
     name: OPENPENCIL_NEW_TOOL_NAME,
-    description: 'Create and save a brand-new OpenPencil .op design from one transactional batch_design program. '
+    description: 'Create, polish, save, and open a brand-new OpenPencil .op design from one transactional QuickJS script. '
       + 'Use this for natural-language requests to make a new design when no .op file or live editor exists. '
       + 'Do not inspect or hand-write .op JSON and do not ask the user to open a sidebar. '
       + 'Choose a concise workspace-relative .op filename when the user did not specify one. '
       + 'This is a local OpenPencil-host operation and requires the session Workspace Write permission. '
       + 'The target must not already exist and its parent directory must exist. '
-      + `Start with this valid pattern: ${ROOT_OPERATION_EXAMPLE}. `
-      + 'A complete new design must create at least one renderable root frame. Prefer nested children for a cohesive initial screen and prefer at most 25 top-level operations. '
-      + `For requested photography, add these valid lines in the same batch: ${IMAGE_OPERATION_EXAMPLE}. `
-      + 'Use OpenPencil image search or an editable placeholder without pausing for external image-service setup; do not ask image-provider questions unless the user explicitly requested external generation. '
-      + 'All operations apply together and the resulting document is saved atomically. '
-      + 'After success, immediately call openpencil_render with the returned path, editable=true, and autoOpen=true to show and automatically expand the editor once.',
+      + 'The script runs in sandboxed QuickJS, not Node.js or a browser: use only the global creation primitives I(parent, node) and K(kitId, parent, overrides). '
+      + 'In DSH Code Mode, put the entire program in the script string passed to tools.openpencil_new; I/K do not exist in the outer run_code runtime and must never be executed there. '
+      + 'C/U/D/M/R/G are not available in script mode. Plain JavaScript const/let declarations, data arrays, and for...of loops are supported. '
+      + `Start with this executable pattern: ${SCRIPT_EXAMPLE}. `
+      + 'I() returns the inserted node binding: capture it in a const and pass that value as the parent of later I() calls. Never set your own id and never write I("root", ...), I("card", ...), or another name/id string as a parent. '
+      + 'Create the root first, then use multiple semantic I() calls for sections and content; do not collapse the whole screen into one giant nested object. '
+      + 'Use canonical OpenPencil layout properties: layout, gap, padding, justifyContent, alignItems, cornerRadius, and textAlign; never invent paddingX, paddingY, radius, strokeWidth, align, or CSS-style aliases. '
+      + 'Paints use fill: [{type:"solid",color:"#RRGGBB"}]. Borders use stroke: {thickness:1,fill:[{type:"solid",color:"#RRGGBB"}]}; shadows use effects: [{type:"shadow",offsetX:0,offsetY:8,blur:24,spread:0,color:"#0000001A"}]. '
+      + 'Container enums are layout vertical/horizontal/none, justifyContent start/center/end/space_between/space_around, and alignItems start/center/end. Sizing is numeric, fill_container, or fit_content. '
+      + 'Use native text_input/text_area/select/switch/checkbox controls instead of drawing lookalikes; text_input accepts placeholder, value, leadingIcon, trailingIcon, fill, stroke, and cornerRadius. '
+      + 'A complete design needs at least one fixed-size renderable root frame. Build one clear primary task with strong negative space, a deliberate type hierarchy, consistent radii/padding/shadows, and at most two saturated colors. '
+      + 'For mobile, use one App Content wrapper with 16-20px horizontal padding, 20-24px vertical gaps, and keep the first useful module within 20-32px of the title/header group. Prefer fewer, stronger modules and one distinctive visual idea over a crowded generic template. '
+      + 'The entire script applies transactionally, then OpenPencil runs its built-in post-processing and finalization pipeline before the document is published atomically. '
+      + 'One call completes the workflow: after success DSH automatically opens the generated document in the managed OpenPencil sidebar; do not call openpencil_render just to start editing.',
     parameters: {
       path: {
         type: 'string', required: true,
         description: 'New workspace-relative or absolute .op path. Choose a useful filename without asking when the user omitted one. Existing targets are never overwritten.',
       },
-      operations: {
+      script: {
         type: 'string', required: true,
-        description: `A complete batch_design program, preferably at most 25 top-level newline-separated operations. Begin with ${ROOT_OPERATION_EXAMPLE}. Use returned bindings for later I/U/G operations. For photography use ${IMAGE_OPERATION_EXAMPLE}.`,
+        description: `A complete JavaScript program STRING executed by OpenPencil's sandboxed QuickJS; in Code Mode do not execute I/K in the outer run_code runtime. Build with I(parent, node) or K(kitId, parent, overrides); const/let, arrays, and for...of loops are allowed, while C/U/D/M/R/G, imports, Node.js, browser, network, and filesystem APIs are unavailable. Begin with ${SCRIPT_EXAMPLE}. Every child parent MUST be the binding returned from an earlier I(), never a quoted id/name; do not set node ids yourself. Use multiple semantic I() calls and canonical layout, gap, padding, justifyContent, alignItems, cornerRadius, textAlign, fill-array, stroke-object, and effects-array properties. Prefer native text_input and other first-class controls over frame lookalikes. Limit: 256 KiB source.`,
       },
       canvasWidth: { type: 'number', description: 'Optional canvas-width hint for OpenPencil post-processing.' },
-      postProcess: { type: 'boolean', description: 'Run OpenPencil post-processing after the batch. Default false.' },
     },
     output: {
       schema: {
@@ -78,11 +117,26 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
           created: { type: 'boolean', const: true, required: true },
           applied: { type: 'boolean', const: true, required: true },
           saved: { type: 'boolean', const: true, required: true },
+          sourceTool: { type: 'string', const: OPENPENCIL_NEW_TOOL_NAME, required: true },
+          previewIntent: { type: 'string', const: 'document', required: true },
+          editable: { type: 'boolean', const: true, required: true },
+          autoOpenEditor: { type: 'boolean', const: true, required: true },
+          document: {
+            type: 'object', required: true, additionalProperties: false,
+            properties: {
+              path: { type: 'string', required: true },
+              filename: { type: 'string', required: true },
+              mimeType: { type: 'string', const: 'application/json', required: true },
+              bytes: { type: 'integer', required: true },
+              sha256: { type: 'string', required: true },
+            },
+          },
           result: { type: 'object', additionalProperties: true },
           note: { type: 'string', required: true },
         },
       },
       render: renderJson,
+      presentationMeta: makePresentationMeta(editorHost, services.render),
     },
     async execute(args: DesignNewArgs, exec) {
       const requestedPath = args.path.trim()
@@ -90,8 +144,8 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
       if (extname(requestedPath).toLowerCase() !== '.op') {
         throw new Error(`${OPENPENCIL_NEW_TOOL_NAME}: path must end in .op`)
       }
-      if (args.operations.trim().length === 0) throw new Error(`${OPENPENCIL_NEW_TOOL_NAME}: operations must not be empty`)
-      if (args.operations.length > MAX_OPERATIONS_LENGTH) throw new Error(`${OPENPENCIL_NEW_TOOL_NAME}: operations are too large`)
+      if (args.script.trim().length === 0) throw new Error(`${OPENPENCIL_NEW_TOOL_NAME}: script must not be empty`)
+      if (args.script.length > MAX_SCRIPT_LENGTH) throw new Error(`${OPENPENCIL_NEW_TOOL_NAME}: script is too large`)
       if (args.canvasWidth !== undefined && (!Number.isFinite(args.canvasWidth) || args.canvasWidth <= 0 || args.canvasWidth > 16_384)) {
         throw new Error(`${OPENPENCIL_NEW_TOOL_NAME}: canvasWidth must be greater than 0 and at most 16384`)
       }
@@ -126,9 +180,8 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
       services.observe(target, { kind: 'absent' }, exec)
 
       const batch = await editorHost.createDocumentBatch({
-        operations: args.operations,
+        script: args.script,
         ...(args.canvasWidth === undefined ? {} : { canvasWidth: args.canvasWidth }),
-        ...(args.postProcess === undefined ? {} : { postProcess: args.postProcess }),
         signal: exec.signal,
       })
       const outcome = await services.fs.writeText(
@@ -139,8 +192,9 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
         sandboxPolicy,
       )
       services.observe(target, { kind: 'present', version: outcome.version }, exec)
-      const bytes = Buffer.byteLength(outcome.after)
-      const sha256 = createHash('sha256').update(outcome.after).digest('hex')
+      const document = await createDocumentSnapshotFromText(outcome.after)
+      const bytes = document.bytes
+      const sha256 = document.sha256
       return {
         path: processPath,
         filename: basename(processPath),
@@ -149,8 +203,13 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
         created: true as const,
         applied: true as const,
         saved: true as const,
+        sourceTool: OPENPENCIL_NEW_TOOL_NAME,
+        previewIntent: 'document' as const,
+        editable: true as const,
+        autoOpenEditor: true as const,
+        document,
         ...(isRecord(batch.result) ? { result: batch.result } : {}),
-        note: `Created and saved ${processPath}. Call openpencil_render with this path, editable=true, and autoOpen=true now.`,
+        note: `Created and saved ${processPath}; the managed OpenPencil editor opens in the sidebar automatically.`,
       }
     },
     presentCall: (args: DesignNewArgs) => ({

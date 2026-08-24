@@ -17,6 +17,11 @@ coverage/
 *.log
 *.tgz
 
+# Generated native runtime payloads. Platform metadata and notices stay tracked.
+npm/*/bin/
+npm/*/web/
+npm/*/openpencil-runtime.json
+
 # Local visual acceptance evidence may contain workspace or conversation data.
 artifacts/
 dsh-actual-*.png

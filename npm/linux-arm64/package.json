@@ -1,0 +1,34 @@
+{
+  "name": "@zseven-w/dsh-openpencil-linux-arm64",
+  "version": "0.1.0-rc.3",
+  "description": "Atomic OpenPencil editor runtime for dsh-openpencil on Linux arm64 (glibc).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZSeven-W/dsh-openpencil.git",
+    "directory": "npm/linux-arm64"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "preferUnplugged": true,
+  "files": [
+    "bin",
+    "web",
+    "openpencil-runtime.json",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

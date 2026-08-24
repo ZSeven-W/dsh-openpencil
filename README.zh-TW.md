@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 目前外掛程式發行版：<code>0.1.0-rc.2</code> · 已於 DSH <code>0.1.1-rc.1</code> 測試</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 目前外掛程式發行版：<code>0.1.0-rc.3</code> · 已通過 DSH <code>0.1.1-rc.2</code> 測試</sub>
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ DSH OpenPencil 將 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 與 [O
 DSH 是獨立的套件。若尚未安裝，先裝一次：
 
 ```sh
-npm install -g @deepseek-ai/dsh@0.1.1-rc.1
+npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 ```
 
 接著把外掛裝進某個 profile 並啟動 Web 應用：
@@ -118,11 +118,21 @@ dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
+本機開發時，先建置目前的 checkout，再將其絕對路徑連結至 Web profile，然後完整重新啟動 DSH：
+
+```sh
+pnpm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-openpencil
+dsh web
+```
+
+`link:` 相依項目會讓後續重新建置的產物直接從此 checkout 生效；但替換 profile 相依項目後必須完整重新啟動 DSH，因為隨附的 Web profile 預設不會熱重載宿主套件。
+
 不想全域安裝 DSH？用 `pnpm dlx` 執行同樣的兩步：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 > OpenPencil 外掛程式是公開的，不需要 npm token。如果 DSH 預發行版本身需要 registry 驗證，請將該憑證存放在 checkout 目錄以外的使用者層級或暫時性 npm 設定中。本儲存庫刻意不包含任何 registry 憑證。
@@ -131,7 +141,7 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 | 工具 | 功能說明 |
 | --- | --- |
-| `openpencil_new` | 從單一交易性的 `batch_design` 程式建立全新的 `.op` 檔案，透過 DSH 的沙盒檔案系統以原子方式儲存，且不需要事先開啟編輯器。 |
+| `openpencil_new` | 從單一交易性的 QuickJS `batch_design` 指令碼建立全新的 `.op` 檔案，透過 DSH 的沙盒檔案系統以原子方式儲存，並在同一次工具呼叫中回傳已簽署的可編輯呈現，由 DSH 自動開啟編輯側邊欄；不需要事先開啟編輯器、PNG 預覽或後續渲染。 |
 | `openpencil_create` | 套用交易性的 `batch_design` 程式，在既有的即時畫布上產生或重構節點。 |
 | `openpencil_edit` | 修改明確指定的節點，或使用者選取的單一節點。 |
 | `openpencil_render` | 建立不可變、以內容定址的 `.op` 快照，並渲染作用中頁面上的所有頂層影格——可選的 `scale` 與 `editable`。 |
@@ -139,7 +149,9 @@ pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
 
 ## 代理設計工作流程
 
-針對沒有既有文件的自然語言請求，代理應以新的、相對於工作區的 `.op` 路徑與第一份完整的 `batch_design` 程式呼叫 `openpencil_new`。該工具會在私有的受管 OpenPencil 守護程序中執行此程式，並且只有在整個批次成功後才會發布權威文件。它絕不會覆寫既有的路徑，失敗的批次也不會留下空檔案。接著，代理應以回傳的路徑、`editable: true` 與 `autoOpen: true` 呼叫 `openpencil_render`，以呈現畫廊並展開編輯器一次。重播或初始即定案的歷史卡片絕不會自動開啟。
+針對沒有既有文件的自然語言請求，代理應以新的、相對於工作區的 `.op` 路徑與第一份完整的 `batch_design` 程式呼叫 `openpencil_new`。該工具會在私有的受管 OpenPencil 守護程序中執行此程式，並且只有在整個批次成功後才會發布權威文件。它絕不會覆寫既有的路徑，失敗的批次也不會留下空檔案。同一次成功的工具呼叫會回傳已簽署且限定於該文件的可編輯呈現，DSH 隨即使用權威文件 JSON 自動開啟編輯側邊欄；不需要第二次呼叫 `openpencil_render`，也不會經過 PNG 預覽。重播、水合或初始即定案的歷史卡片可以復原文件呈現，但絕不會取得編輯器授權或自動開啟。
+
+`openpencil_new` 使用 `batch_design` 真正的 QuickJS `script` 模式：代理透過 `I`/`K` 呼叫以及一般 JavaScript 資料、陣列與迴圈完成建構，不必手寫底層 `operations`。DSH 會強制啟用 `postProcess`，並在建立後明確呼叫 `finalize_design`，在發布文件前補齊與 OpenPencil 內建宿主結束階段等價的清理流程。受管執行期隨外掛程式打包，不依賴桌面版二進位檔。這是目前的新建主路徑；本文不宣稱它會經過獨立的 `design_skeleton`、`design_content` 或 `design_refine` 工具。
 
 只有在處理既有的即時畫布時，才使用 `openpencil_create` 與 `openpencil_edit`。它們的編輯內容在執行編輯器的儲存動作之前都會維持未儲存狀態。
 
@@ -172,12 +184,33 @@ pnpm run sync:viewer-assets
 
 可編輯的階段使用 OpenPencil 的受管 Web 宿主——與 `op-vscode` 所使用的架構相同。外掛程式只在經過授權的使用者動作之後才會啟動宿主，將守護程式的 token 保存在記憶體中，驗證 iframe 的來源與 origin，並在編輯階段結束時關閉程序。編輯器介面會逐步選定：當宿主宣告該接縫時使用原生的 Tool 詳細資訊，否則使用外掛程式具備調整大小與全螢幕控制項的右側工作台。
 
+啟動流程採用可安全因應慢速掛載的 listening handshake：只有在隨套件宿主回報已綁定位址後才開始就緒探測。無須安裝桌面版 OpenPencil。
+
+發行版提供六個原生平台套件目標：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64` 與 `win32-x64`；兩個 Linux 套件皆以 glibc 為目標。根套件將所有平台套件宣告為精確版本的 `optionalDependencies`，由 npm 依 OS 與 CPU 選用相符的套件。每個平台套件都會將 `op-host-web-server`、編輯器 Web 套件與 CanvasKit 作為一組彼此相符的原子執行期一併提供。因此，受管編輯器預設不依賴 `/Applications/OpenPencil.app`、`PATH` 中的 `openpencil-desktop`，也不依賴 OpenPencil 原始碼 checkout。此說明僅適用於受管的可編輯階段；精確 PNG 渲染器仍遵循上文所述的獨立二進位檔搜尋契約。
+
 如果在畫布仍有未儲存變更時，DSH 重新載入或卸載外掛程式，宿主會保留一份不透明的本機復原草稿，最長七天。重新開啟相同來源時，會先詢問再將草稿還原到即時畫布；在使用者明確儲存之前，復原絕不會覆寫 `.op` 檔案。
 
-二進位檔與來源的搜尋可透過以下方式覆寫：
+正式六平台套件會在受保護的 release 建置中注入並驗證中國區／全球區協作 bootstrap 端點，通過驗證後才發佈。未注入該設定的本機自建版本，可在啟動 DSH 前以 `OPENPENCIL_COLLAB_BOOTSTRAP_URL=https://<your-host>/api/v1/collaboration/bootstrap` 覆寫；該值必須使用 `https`，且路徑必須嚴格為 `/api/v1/collaboration/bootstrap`。
+
+跨裝置畫布同步要求 PC/DSH 原生執行期與行動端 App 都更新至包含目前協作佇列修正的同一 OpenPencil 發行線。舊版行動端與新版 PC 執行期混用時，仍可能只看得到遠端游標，卻收不到畫布提交。
+
+在此儲存庫中開發時，啟動 DSH 前必須依序建置編輯器 Web bundle、建置原生宿主，再暫存這套彼此相符的執行期。
+
+`pnpm run build:editor-web` 會執行 OpenPencil 正式支援的 WASM bundle gate。它需要 Bash、具備 `wasm32-unknown-unknown` target 的 Cargo/Rust、`wasm-bindgen` CLI、Binaryen 的 `wasm-opt`、Node.js 與 `gzip`；CanvasKit 不需要 EMSDK。Web 建置不使用協作 bootstrap 建置變數。執行 `pnpm run build:editor-runtime` 前必須同時設定 `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN` 與 `OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL`；它們只供原生 Cargo 建置使用，缺少任一變數都會 fail closed。兩項建置都成功後，再執行最後一個命令暫存執行期。
+
+```sh
+pnpm run build:editor-web
+pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+若要明確覆寫執行期，下列三項必須作為完整且彼此相符的一組同時提供：
 
 - `DSH_OPENPENCIL_EDITOR_BINARY`：用於 `op-host-web-server`；
-- `DSH_OPENPENCIL_SOURCE_ROOT`（或 `OPENPENCIL_SOURCE_ROOT`）：用於 Web 套件與 CanvasKit 資源。
+- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`：用於已建置的編輯器 Web 套件；
+- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR`：用於 CanvasKit 資源。
+
+只提供其中一部分屬於無效設定；外掛程式不會將自訂路徑與隨套件提供的執行期資源混合使用。
 
 儲存採用樂觀的來源雜湊、原子替換與後繼（successor）能力。如果來源在編輯器之外發生變更，外掛程式會回報衝突，而不是覆寫它。
 
@@ -193,14 +226,14 @@ pnpm run sync:viewer-assets
 
 結果也會記錄 `renderer`、`rendererBinary`、`fidelity` 與任何警告。既有、僅含 PNG 的 schema-v1 訊息仍可正常渲染。
 
-DSH `0.1.1-rc.1` 不會為巢狀於 PTC/Code Mode 之下的工具持久化瀏覽器呈現後設資料。外掛程式會透過同源、綁定 session 的端點復原該 UI-only 投影：瀏覽器只會傳送 session id、call id 與不可變的文件 SHA-256，而宿主則從持久的 DSH session 記錄中解析權威結果，並僅使用短暫的處理程序內標記來授權近期的即時編輯。簽署過的預覽／編輯器能力絕不會進入標準工具結果或模型上下文。持久的歷史記錄可還原唯讀預覽；編輯器授權僅針對近期、可信的即時結果核發。
+DSH `0.1.1-rc.2` 不會為巢狀於 PTC/Code Mode 之下的工具持久化瀏覽器呈現後設資料。外掛程式會透過同源、綁定 session 的端點復原該 UI-only 投影：瀏覽器只會傳送 session id、call id 與不可變的文件 SHA-256，而宿主則從持久的 DSH session 記錄中解析權威結果，並僅使用短暫的處理程序內標記來授權近期的即時編輯。簽署過的預覽／編輯器能力絕不會進入標準工具結果或模型上下文。持久的歷史記錄可還原唯讀預覽；編輯器授權僅針對近期、可信的即時結果核發。
 
 為控制重播範圍，巢狀後設資料的復原最多接受 128 個頂層影格；更大的 Code Mode 結果仍可透過其標準 JSON 備援取得。
 
 ## 目前的限制
 
 - 對既有畫布進行後續編輯，需要一個已開啟的受管編輯器。在使用者執行其儲存動作之前，變更都會維持未儲存狀態。
-- 輕量的 Web SDK 畫布為唯讀；完整的編輯功能使用獨立的受管編輯器介面。在 DSH `0.1.1-rc.1` 上，外掛程式使用具全螢幕選項的可調整大小右側工作台。
+- 輕量的 Web SDK 畫布為唯讀；完整的編輯功能使用獨立的受管編輯器介面。在 DSH `0.1.1-rc.2` 上，外掛程式使用具全螢幕選項的可調整大小右側工作台。
 - 精確畫廊涵蓋作用中頁面上的頂層影格；互動式畫布仍是檢視未啟用頁面與巢狀節點的方式。
 - 渲染與快照快取仍需要產品層級的保留策略。
 
@@ -241,7 +274,7 @@ pnpm run test:host -- /absolute/path/to/design.op 375 1091
 若為私有的 DSH 預發行版，請將核發的 npm 憑證存放在本儲存庫之外（例如使用者層級或暫時性的 `.npmrc`），並直接執行要求的版本：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.1 dsh web
+pnpm dlx --package=@deepseek-ai/dsh@0.1.1-rc.2 dsh web
 ```
 
 絕對不要提交 `.npmrc`、`NPM_TOKEN` 或複製的 registry 憑證。本儲存庫預設會忽略本機的 npm 設定。
