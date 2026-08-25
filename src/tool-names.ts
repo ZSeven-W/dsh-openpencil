@@ -4,6 +4,22 @@ export const OPENPENCIL_SELECTION_TOOL_NAME = 'openpencil_selection' as const
 export const OPENPENCIL_NEW_TOOL_NAME = 'openpencil_new' as const
 export const OPENPENCIL_CREATE_TOOL_NAME = 'openpencil_create' as const
 export const OPENPENCIL_EDIT_TOOL_NAME = 'openpencil_edit' as const
+export const OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME = 'openpencil_pipeline_begin' as const
+export const OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME = 'openpencil_pipeline_context' as const
+export const OPENPENCIL_PIPELINE_BATCH_TOOL_NAME = 'openpencil_pipeline_batch' as const
+export const OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME = 'openpencil_pipeline_inspect' as const
+export const OPENPENCIL_PIPELINE_FINISH_TOOL_NAME = 'openpencil_pipeline_finish' as const
+export const OPENPENCIL_PIPELINE_ABORT_TOOL_NAME = 'openpencil_pipeline_abort' as const
+
+/** The ordered model-facing workflow for a private, unpublished design draft. */
+export const OPENPENCIL_PIPELINE_TOOL_NAMES = [
+  OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
+  OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
+  OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_ABORT_TOOL_NAME,
+] as const
 
 /**
  * Historical render name retained only by the browser presentation layer so
@@ -18,4 +34,5 @@ export const OPENPENCIL_TOOL_NAMES = [
   OPENPENCIL_NEW_TOOL_NAME,
   OPENPENCIL_CREATE_TOOL_NAME,
   OPENPENCIL_EDIT_TOOL_NAME,
+  ...OPENPENCIL_PIPELINE_TOOL_NAMES,
 ] as const

@@ -24,13 +24,15 @@ import {
 if (isMain(import.meta.url)) await main()
 
 async function main() {
-  const id = argumentValue('--platform') ?? `${process.platform}-${process.arch}`
+  const requestedPlatform = argumentValue('--platform')
+  const id = requestedPlatform ?? `${process.platform}-${process.arch}`
   const platform = platformById(id)
   const vendorRoot = join(projectRoot, 'vendor', 'openpencil')
-  const binarySource = await sourcePath('--binary', [
-    join(vendorRoot, 'target', platform.rustTarget, 'release', platform.binaryName),
-    join(vendorRoot, 'target', 'release', platform.binaryName),
-  ], 'binary')
+  const binarySource = await sourcePath(
+    '--binary',
+    editorBinarySourceCandidates(vendorRoot, platform, requestedPlatform === undefined),
+    'binary',
+  )
   const pkgSource = await resolveWebBundleSource(vendorRoot, argumentValue('--pkg'))
   const canvasKitSource = await sourcePath('--canvaskit', [
     join(vendorRoot, 'crates', 'op-host-web', 'assets', 'canvaskit'),
@@ -79,6 +81,18 @@ async function main() {
   }
   await writeFile(join(packageRoot, runtimeManifestName), JSON.stringify(manifest, null, 2) + '\n')
   process.stdout.write(`staged ${platform.packageName} from OpenPencil ${openPencil.version} (${openPencil.revision})\n`)
+}
+
+/**
+ * Match the default build command: a host build without `--target` lands in
+ * target/release, while an explicitly selected platform normally lands in
+ * target/<rustTarget>/release. This prevents an old cross-target artifact
+ * from silently shadowing a freshly built local daemon.
+ */
+export function editorBinarySourceCandidates(vendorRoot, platform, preferHostBuild) {
+  const host = join(vendorRoot, 'target', 'release', platform.binaryName)
+  const targeted = join(vendorRoot, 'target', platform.rustTarget, 'release', platform.binaryName)
+  return preferHostBuild ? [host, targeted] : [targeted, host]
 }
 
 export async function resolveWebBundleSource(vendorRoot, explicitPkg) {

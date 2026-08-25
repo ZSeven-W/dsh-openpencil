@@ -115,6 +115,8 @@ export interface DocumentGrant extends DocumentSnapshot {
 export interface DocumentPresentationResult {
   path: string
   document: DocumentSnapshot
+  /** Optional exact final preview paired with this published document. */
+  preview?: RenderFrame
   autoOpenEditor?: boolean
 }
 
@@ -830,8 +832,32 @@ export function projectDocumentGrant(
     || typeof result.document.sha256 !== 'string'
   ) return value
   const document = projectDocumentCapability(result.document, result.path, controller)
+  const preview = result.preview
+  const image = preview === undefined
+    ? undefined
+    : {
+        path: preview.path,
+        previewUrl: `${RENDER_ROUTE_PREFIX}/${controller.signArtifact({
+          kind: 'image',
+          filename: preview.filename,
+          bytes: preview.bytes,
+          sha256: preview.sha256,
+        })}`,
+        downloadUrl: `${RENDER_ROUTE_PREFIX}/${controller.signArtifact({
+          kind: 'image',
+          filename: preview.filename,
+          bytes: preview.bytes,
+          sha256: preview.sha256,
+        })}?download=1`,
+        width: preview.width,
+        height: preview.height,
+        ...(preview.id === undefined ? {} : { id: preview.id }),
+        ...(preview.name === undefined ? {} : { name: preview.name }),
+        index: preview.index ?? 0,
+      }
   const envelope = {
     schemaVersion: 2,
+    ...(image === undefined ? {} : { image, frames: [image] }),
     document,
     sourcePath: result.path,
     ...(editor === undefined ? {} : { editor }),

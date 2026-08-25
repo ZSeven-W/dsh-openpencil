@@ -195,11 +195,20 @@ test('accepts an openpencil_new document-only auto-open grant', () => {
   assert.equal(grant.editor.launchUrl, '/editor/launch-token')
   assert.equal(grant.autoOpenEditor, true)
   assert.equal(client.openPencilPresentationTitle('openpencil_new', 'en'), 'OpenPencil design')
+  assert.equal(client.openPencilPresentationTitle('openpencil_pipeline_finish', 'en'), 'OpenPencil design')
   assert.equal(client.openPencilPresentationTitle('openpencil_render', 'en'), 'OpenPencil render')
   assert.equal(client.openPencilPresentationTitle('openpencil_new', 'zh'), 'OpenPencil 设计')
   assert.equal(client.shouldArmLiveAutoOpen(false, 101, 100), true, 'a fast settled live result must still auto-open')
   assert.equal(client.shouldArmLiveAutoOpen(true, 101, 100), false)
   assert.equal(client.shouldArmLiveAutoOpen(false, 99, 100), false, 'historical replay must not auto-open')
+})
+
+test('a consumed live auto-open call stays consumed across card remounts', () => {
+  const key = `session-remount:${Date.now()}`
+  client.rememberLiveAutoOpenCall(key)
+  assert.equal(client.takeLiveAutoOpenCall(key), true)
+  client.rememberLiveAutoOpenCall(key)
+  assert.equal(client.takeLiveAutoOpenCall(key), false)
 })
 
 test('extracts only a valid document fingerprint from one canonical text result', () => {
@@ -399,6 +408,17 @@ test('only canonical OpenPencil presentation tools can request hydration', () =>
   }), {
     sessionId: 'session-new',
     callId: 'call-new',
+    documentSha256: DOCUMENT_SHA256,
+  })
+  assert.deepEqual(client.presentationHydrationRequestOf({
+    block,
+    toolName: 'openpencil_pipeline_finish',
+    sessionId: 'session-pipeline',
+    callId: 'call-pipeline',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-pipeline',
+    callId: 'call-pipeline',
     documentSha256: DOCUMENT_SHA256,
   })
   assert.equal(client.presentationHydrationRequestOf({
@@ -921,7 +941,7 @@ test('a duplicate listening message resends init but never restarts the budget a
   assert.deepEqual(sent, ['init', 'init', 'init'], 'the original budget is inert after the restart')
 })
 
-test('registers canonical OpenPencil new/render views and client-only legacy replay aliases', () => {
+test('registers canonical OpenPencil publication/render views and client-only legacy replay aliases', () => {
   const registrations = []
   client.apply({
     on() { return () => {} },
@@ -938,18 +958,23 @@ test('registers canonical OpenPencil new/render views and client-only legacy rep
 
   assert.equal(client.OPENPENCIL_RENDER_TOOL_NAME, 'openpencil_render')
   assert.equal(client.OPENPENCIL_NEW_TOOL_NAME, 'openpencil_new')
+  assert.equal(client.OPENPENCIL_PIPELINE_FINISH_TOOL_NAME, 'openpencil_pipeline_finish')
   assert.equal(client.LEGACY_DESIGN_RENDER_TOOL_NAME, 'design_render')
   assert.deepEqual(registrations.map(({ definition }) => definition), [
     { name: 'tool.call.toolview', key: 'openpencil_render' },
     { name: 'tool.details.toolview', key: 'openpencil_render' },
     { name: 'tool.call.toolview', key: 'openpencil_new' },
     { name: 'tool.details.toolview', key: 'openpencil_new' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_finish' },
+    { name: 'tool.details.toolview', key: 'openpencil_pipeline_finish' },
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'tool.details.toolview', key: 'design_render' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
   assert.equal(registrations[2].component, registrations[0].component, 'new uses the existing auto-open call view')
   assert.equal(registrations[3].component, registrations[1].component, 'new uses the existing editor workbench details view')
+  assert.equal(registrations[4].component, registrations[0].component, 'pipeline finish uses the auto-open call view')
+  assert.equal(registrations[5].component, registrations[1].component, 'pipeline finish uses the editor details view')
 })
 
 test('stock rc.2 can leave the optional details slot undeclared', () => {
@@ -974,10 +999,11 @@ test('stock rc.2 can leave the optional details slot undeclared', () => {
     },
   })
 
-  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview'])
+  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview'])
   assert.deepEqual(registrations, [
     { name: 'tool.call.toolview', key: 'openpencil_render' },
     { name: 'tool.call.toolview', key: 'openpencil_new' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_finish' },
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])

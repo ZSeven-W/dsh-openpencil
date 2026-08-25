@@ -1,5 +1,5 @@
 /**
- * Browser presentation for `openpencil_new`, `openpencil_render`, and
+ * Browser presentation for `openpencil_new`, `openpencil_pipeline_finish`, `openpencil_render`, and
  * historical `design_render` conversation cards.
  *
  * PNG remains the replay-safe default. When the host also grants access to
@@ -40,12 +40,14 @@ import {
 import {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
 export {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
@@ -162,15 +164,20 @@ export const PRESENTATION_META_KEY = '$dshOpenPencil'
 const LIVE_AUTO_OPEN_TTL_MS = 15 * 60 * 1000
 const LIVE_AUTO_OPEN_MAX = 256
 const liveAutoOpenActivatedAt = Date.now()
-const liveAutoOpenCalls = new Map<string, number>()
+interface LiveAutoOpenRecord {
+  state: 'armed' | 'consumed'
+  expiresAt: number
+}
+
+const liveAutoOpenCalls = new Map<string, LiveAutoOpenRecord>()
 
 function liveAutoOpenKey(sessionId: string, callId: string): string {
   return `${sessionId.length}:${sessionId}${callId}`
 }
 
 function pruneLiveAutoOpenCalls(now = Date.now()): void {
-  for (const [key, expiresAt] of liveAutoOpenCalls) {
-    if (expiresAt <= now) liveAutoOpenCalls.delete(key)
+  for (const [key, record] of liveAutoOpenCalls) {
+    if (record.expiresAt <= now) liveAutoOpenCalls.delete(key)
   }
   while (liveAutoOpenCalls.size > LIVE_AUTO_OPEN_MAX) {
     const oldest = liveAutoOpenCalls.keys().next().value as string | undefined
@@ -179,16 +186,21 @@ function pruneLiveAutoOpenCalls(now = Date.now()): void {
   }
 }
 
-function rememberLiveAutoOpenCall(key: string): void {
+export function rememberLiveAutoOpenCall(key: string): void {
+  pruneLiveAutoOpenCalls()
+  const existing = liveAutoOpenCalls.get(key)
+  if (existing?.state === 'consumed') return
   liveAutoOpenCalls.delete(key)
-  liveAutoOpenCalls.set(key, Date.now() + LIVE_AUTO_OPEN_TTL_MS)
+  liveAutoOpenCalls.set(key, { state: 'armed', expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS })
   pruneLiveAutoOpenCalls()
 }
 
-function takeLiveAutoOpenCall(key: string): boolean {
+export function takeLiveAutoOpenCall(key: string): boolean {
   pruneLiveAutoOpenCalls()
-  if (!liveAutoOpenCalls.has(key)) return false
+  const record = liveAutoOpenCalls.get(key)
+  if (record?.state !== 'armed') return false
   liveAutoOpenCalls.delete(key)
+  liveAutoOpenCalls.set(key, { state: 'consumed', expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS })
   return true
 }
 
@@ -276,7 +288,9 @@ export function designRenderCopy(locale: PresentationLocale) {
 /** Keep canonical create cards visually distinct while reusing one workbench. */
 export function openPencilPresentationTitle(toolName: string, locale: PresentationLocale): string {
   const copy = designRenderCopy(locale)
-  return toolName === OPENPENCIL_NEW_TOOL_NAME ? copy.designNew : copy.designRender
+  return toolName === OPENPENCIL_NEW_TOOL_NAME || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+    ? copy.designNew
+    : copy.designRender
 }
 
 /**
@@ -806,7 +820,7 @@ export function DesignRenderView({
     ?? (hydrated !== undefined && hydrated.key === hydrationKey ? hydrated.grant : undefined)
   const hydrationPending = hydrationKey !== undefined && hydrationFailedKey !== hydrationKey
   const copy = designRenderCopy(locale)
-  const creating = toolName === OPENPENCIL_NEW_TOOL_NAME
+  const creating = toolName === OPENPENCIL_NEW_TOOL_NAME || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
   const text = resultText(block)
   const frames = grant?.frames ?? []
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
@@ -995,7 +1009,12 @@ export function apply(ctx: ClientContext): void {
     const locale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     return <OpenPencilSelectionDock {...props} locale={locale} />
   }
-  for (const toolName of [OPENPENCIL_RENDER_TOOL_NAME, OPENPENCIL_NEW_TOOL_NAME, LEGACY_DESIGN_RENDER_TOOL_NAME]) {
+  for (const toolName of [
+    OPENPENCIL_RENDER_TOOL_NAME,
+    OPENPENCIL_NEW_TOOL_NAME,
+    OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+    LEGACY_DESIGN_RENDER_TOOL_NAME,
+  ]) {
     ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(
       { name: 'tool.call.toolview', key: toolName },
       HostSyncedDesignRenderView,

@@ -11,6 +11,51 @@ test('parses successful OpenPencil MCP text JSON', () => {
     },
   })
   assert.deepEqual(result.value, { selectedIds: ['n1'], activePageId: 'p1', nodes: [] })
+  assert.deepEqual(result.images, [])
+})
+
+test('parses bounded MCP ImageContent and strips duplicate embedded base64 metadata', () => {
+  const png = Buffer.from('89504e470d0a1a0a00000000', 'hex')
+  const base64 = png.toString('base64')
+  const result = mcp.parseOpenPencilMcpResponse('get_screenshot', {
+    jsonrpc: '2.0', id: 1,
+    result: {
+      content: [
+        { type: 'image', data: base64, mimeType: 'image/png' },
+        { type: 'text', text: JSON.stringify({ nodeId: 'root', image_base64: base64 }) },
+      ],
+    },
+  })
+  assert.equal(result.images.length, 1)
+  assert.equal(result.images[0].mimeType, 'image/png')
+  assert.deepEqual(result.images[0].bytes, png)
+  assert.deepEqual(result.value, { nodeId: 'root' })
+  assert.equal(result.text.includes(base64), false)
+})
+
+test('call client redacts daemon credentials from successful values and errors', async () => {
+  const token = 'sensitive-daemon-token-123456789'
+  const success = await mcp.callOpenPencilMcp({
+    baseUrl: 'http://127.0.0.1:43123',
+    token,
+    tool: 'get_design_prompt',
+    fetcher: async () => Response.json({
+      jsonrpc: '2.0', id: 1,
+      result: { content: [{ type: 'text', text: JSON.stringify({ token, message: `echo ${token}` }) }] },
+    }),
+  })
+  assert.deepEqual(success.value, { token: '[redacted]', message: 'echo [redacted]' })
+  assert.equal(JSON.stringify(success).includes(token), false)
+
+  await assert.rejects(mcp.callOpenPencilMcp({
+    baseUrl: 'http://127.0.0.1:43123',
+    token,
+    tool: 'get_design_prompt',
+    fetcher: async () => Response.json({
+      jsonrpc: '2.0', id: 1,
+      result: { isError: true, content: [{ type: 'text', text: `denied ${token}` }] },
+    }),
+  }), error => error instanceof Error && !error.message.includes(token) && error.message.includes('[redacted]'))
 })
 
 test('surfaces JSON-RPC, MCP isError, and transactional applied=false failures', () => {

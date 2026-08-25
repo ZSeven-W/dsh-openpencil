@@ -51,20 +51,46 @@ import {
   OPENPENCIL_SELECTION_TOOL_NAME,
   OPENPENCIL_TOOL_NAMES,
 } from './tool-names.js'
+import { createDesignDraftToolController } from './design-draft-tools.js'
 import {
   PRESENTATION_HYDRATION_ROUTE,
   PresentationHydrationController,
 } from './presentation-hydration.js'
+import {
+  registerOpenPencilDesignGuidance,
+  registerOpenPencilDesignSkill,
+} from './design-skill.js'
 
 export {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_CREATE_TOOL_NAME,
   OPENPENCIL_EDIT_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_ABORT_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
+  OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME,
+  OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
+  OPENPENCIL_PIPELINE_TOOL_NAMES,
   OPENPENCIL_RENDER_TOOL_NAME,
   OPENPENCIL_SELECTION_TOOL_NAME,
   OPENPENCIL_TOOL_NAMES,
 } from './tool-names.js'
+export {
+  OPENPENCIL_DESIGN_GUIDANCE_SECTION,
+  OPENPENCIL_DESIGN_SKILL_CONTENT,
+  OPENPENCIL_DESIGN_SKILL_DESCRIPTION,
+  OPENPENCIL_DESIGN_SKILL_NAME,
+  OPENPENCIL_DESIGN_SKILL_WHEN_TO_USE,
+  registerOpenPencilDesignGuidance,
+  registerOpenPencilDesignSkill,
+} from './design-skill.js'
+export {
+  DesignDraftToolController,
+  createDesignDraftToolController,
+  type DesignDraftToolServices,
+} from './design-draft-tools.js'
 
 /** Stable plugin name (the loader entry id in cordis.patch.yml). */
 export const name = '@zseven-w/dsh-openpencil'
@@ -111,6 +137,12 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const controller = new RenderAccessController(accessKey)
   const viewerAssets = await prepareViewerAssets()
   const editorHost = new EditorHostController(accessKey)
+  const designDraftTools = createDesignDraftToolController(editorHost, {
+    fs: hostCtx.fs,
+    sandboxPolicy: hostCtx.sandboxPolicy,
+    render: controller,
+    observe: (target, observation, exec) => eventCtx.emit('fs/observed', target, observation, exec),
+  })
   const presentationHydration = new PresentationHydrationController({
     sessions: hostCtx.sessions,
     render: controller,
@@ -122,10 +154,20 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     trustedHosts: () => webRuntimeTrustedHosts(ctx),
   })
   let editorHostDisposePromise: Promise<void> | undefined
+  let designDraftToolsDisposePromise: Promise<void> | undefined
   const disposeEditorHost = (): Promise<void> => {
     editorHostDisposePromise ??= editorHost.dispose()
     return editorHostDisposePromise
   }
+  const disposeDesignDraftTools = (): Promise<void> => {
+    designDraftToolsDisposePromise ??= designDraftTools.dispose()
+    return designDraftToolsDisposePromise
+  }
+
+  // Optional model guidance: detailed design knowledge lives in an on-demand
+  // bundled skill, with only a short load-before-generation prompt reminder.
+  disposers.push(registerOpenPencilDesignSkill(ctx))
+  disposers.push(registerOpenPencilDesignGuidance(ctx))
 
   // Tool registration: global (every agent sees it). The tool's
   // presentationMeta consults `controller.routeAvailable`, so a profile
@@ -155,6 +197,12 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     () => hostCtx.tools.register(createDesignEditTool(editorHost)),
     `dsh-openpencil: ${OPENPENCIL_EDIT_TOOL_NAME} tool`,
   ))
+  for (const tool of designDraftTools.createTools()) {
+    disposers.push(ctx.effect(
+      () => hostCtx.tools.register(tool),
+      `dsh-openpencil: ${tool.name} tool`,
+    ))
+  }
   disposers.push(ctx.effect(
     () => eventCtx.on('tools/result', (exec, result) => presentationHydration.observeToolResult(exec, result)),
     'dsh-openpencil: nested presentation result observer',
@@ -162,6 +210,14 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   disposers.push(ctx.effect(
     () => eventCtx.on('session/disposed', session => presentationHydration.forgetSession(String(session.id))),
     'dsh-openpencil: nested presentation session cleanup',
+  ))
+  disposers.push(ctx.effect(
+    () => eventCtx.on('session/disposed', session => {
+      void designDraftTools.abortOwner(String(session.id)).catch(error => {
+        ctx.logger.warn(`dsh-openpencil draft cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }),
+    'dsh-openpencil: design draft session cleanup',
   ))
 
   // Optional Web routes: only mounted when a webServer service exists
@@ -215,6 +271,6 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   ctx.logger.info(`dsh-openpencil mounted (${OPENPENCIL_TOOL_NAMES.join(' + ')}; viewer assets: ${viewerAssets.available ? 'ready' : 'unavailable'}; editor: ${editorHost.available ? 'ready' : 'unavailable'})`)
   return async () => {
     for (const dispose of disposers.reverse()) await dispose()
-    await disposeEditorHost()
+    await Promise.all([disposeDesignDraftTools(), disposeEditorHost()])
   }
 }

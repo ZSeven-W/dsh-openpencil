@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 目前外掛程式發行版：<code>0.1.0-rc.4</code> · 已通過 DSH <code>0.1.1-rc.2</code> 測試</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 目前外掛程式發行版：<code>0.1.0-rc.5</code> · 已通過 DSH <code>0.1.1-rc.2</code> 測試</sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ DSH OpenPencil 將 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 與 [O
 
 ### 🤖 代理原生設計工具
 
-五個工具——`openpencil_new`、`openpencil_create`、`openpencil_edit`、`openpencil_render`、`openpencil_selection`——讓代理能透過交易性的 `batch_design` 程式建立、修改並讀取真實畫布。
+五個直接操作畫布的工具，加上六個 `openpencil_pipeline_*` 工具，讓代理能透過受管的 OpenPencil 執行期建立、檢查、細化、發布、修改並讀取真實畫布。
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ DSH OpenPencil 將 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 與 [O
 
 ### ⚡ 交易性安全
 
-新的文件只有在整個 `batch_design` 程式成功後才會發布。工具絕不會覆寫既有的路徑，失敗的批次不會留下空檔案，儲存時則採用樂觀雜湊搭配原子替換。
+完整管線中的文件會留在私有、未發布的草稿內，直到通過全部原生與 DSH 品質門檻。發布絕不會覆寫既有路徑，中止或批次失敗也不會留下空的目標檔案。
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ DSH OpenPencil 將 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 與 [O
 
 ### 🎯 一套完整的工作流程
 
-「對話中的需求 → 代理編輯真實畫布 → 即時預覽與互動驗證 → 持續疊代」——單一迴圈，無需來回截圖。
+「需求 → 私有草稿 → 語意化批次 → 精確 PNG 視覺檢查與修復 → 通過品質門檻後原子發布」——全程在 DSH 內完成閉環。
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | 工具 | 功能說明 |
 | --- | --- |
-| `openpencil_new` | 從單一交易性的 QuickJS `batch_design` 指令碼建立全新的 `.op` 檔案，透過 DSH 的沙盒檔案系統以原子方式儲存，並在同一次工具呼叫中回傳已簽署的可編輯呈現，由 DSH 自動開啟編輯側邊欄；不需要事先開啟編輯器、PNG 預覽或後續渲染。 |
+| `openpencil_new` | 適合簡單工作的相容快速路徑：執行一份交易性 QuickJS `batch_design` 指令碼，以「僅在不存在時建立」語意發布並回傳可編輯呈現。正式設計應優先使用下方完整管線。 |
+| `openpencil_pipeline_begin` | 為新的工作區相對 `.op` 路徑啟動僅屬於目前工作階段的私有草稿；目標檔案維持未發布且不會被改動。 |
+| `openpencil_pipeline_context` | 載入原生動態 design-agent prompt，以及相關 guidelines、style guides、變數／主題與 UI kit 中繼資料或指令碼參照。 |
+| `openpencil_pipeline_batch` | 將語意化 QuickJS 批次依序套用到草稿；先建立結構骨架，再按區塊補充與細化。 |
+| `openpencil_pipeline_inspect` | 執行原生品質或解析後版面檢查，或產生精確 PNG，讓模型用影像讀取能力開啟並進行視覺檢查。 |
+| `openpencil_pipeline_finish` | 執行原生最終化、lint、版面、截圖時效與 DSH 品質門檻，再透過 `createIfAbsent` 原子發布並回傳可編輯呈現。 |
+| `openpencil_pipeline_abort` | 捨棄未發布草稿，不建立目標檔案。 |
 | `openpencil_create` | 套用交易性的 `batch_design` 程式，在既有的即時畫布上產生或重構節點。 |
 | `openpencil_edit` | 修改明確指定的節點，或使用者選取的單一節點。 |
 | `openpencil_render` | 建立不可變、以內容定址的 `.op` 快照，並渲染作用中頁面上的所有頂層影格——可選的 `scale` 與 `editable`。 |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## 代理設計工作流程
 
-針對沒有既有文件的自然語言請求，代理應以新的、相對於工作區的 `.op` 路徑與第一份完整的 `batch_design` 程式呼叫 `openpencil_new`。該工具會在私有的受管 OpenPencil 守護程序中執行此程式，並且只有在整個批次成功後才會發布權威文件。它絕不會覆寫既有的路徑，失敗的批次也不會留下空檔案。同一次成功的工具呼叫會回傳已簽署且限定於該文件的可編輯呈現，DSH 隨即使用權威文件 JSON 自動開啟編輯側邊欄；不需要第二次呼叫 `openpencil_render`，也不會經過 PNG 預覽。重播、水合或初始即定案的歷史卡片可以復原文件呈現，但絕不會取得編輯器授權或自動開啟。
+正式設計應依序使用 `openpencil_pipeline_begin` → `openpencil_pipeline_context` → 多輪 `openpencil_pipeline_batch` 與 `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`。草稿守護程序僅對其所屬的 DSH 工作階段可見；發布成功前，要求的工作區路徑並不存在。中間私有草稿截圖絕不暴露可編輯側邊欄，以免使用者編輯與代理批次發生競爭；只有發布成功後才授予編輯能力。
 
-`openpencil_new` 使用 `batch_design` 真正的 QuickJS `script` 模式：代理透過 `I`/`K` 呼叫以及一般 JavaScript 資料、陣列與迴圈完成建構，不必手寫底層 `operations`。DSH 會強制啟用 `postProcess`，並在建立後明確呼叫 `finalize_design`，在發布文件前補齊與 OpenPencil 內建宿主結束階段等價的清理流程。受管執行期隨外掛程式打包，不依賴桌面版二進位檔。這是目前的新建主路徑；本文不宣稱它會經過獨立的 `design_skeleton`、`design_content` 或 `design_refine` 工具。
+上下文不是靜態範本，而是動態組合 OpenPencil 原生 design-agent prompt 與相關 guidelines、style guides、變數／主題和 UI kits。先建立結構骨架，再按語意區塊補充內容並細化。為兼顧速度，成功的 batch 呼叫只回傳精簡版面診斷；需要完整解析後版面時再呼叫 `openpencil_pipeline_inspect`。至少要設定兩個中間視覺里程碑：完成 signature/heading 後一次，完成主要任務或 form 加 CTA 後再一次；每次都以 `kind: "screenshot"` 呼叫 `openpencil_pipeline_inspect`，讓模型用影像讀取能力開啟精確 PNG，修復可見的裁切、溢出、層級、間距、控制項比例、對比與文字可讀性，並視需要重複。視覺檢查不會自動發生。
+
+完成階段會執行 OpenPencil 原生最終化、lint 與版面檢查，以及 DSH 品質門檻。這些確定性檢查不會創造品味或視覺精緻度。最終化之後必須另拍一張新的精確截圖，並讓模型進行視覺檢查；任何中間里程碑截圖都絕不能滿足最終化後的截圖時效門檻。只有如此，最後一次 finish 呼叫才會透過 `createIfAbsent` 原子建立目標檔案。門檻失敗或呼叫 `openpencil_pipeline_abort` 時，目標仍不存在。每個已發布的生成結果都是同一個 presentation，其中同時包含精確最終 PNG 預覽與限定於該文件的可編輯授權；它只在側邊欄閒置時自動開啟，絕不取代另一工作階段的編輯器，並始終保留 **編輯畫布** 供明確切換。即使 `openpencil_pipeline_finish` 巢狀用於 PTC/Code Mode，回傳結果也必須保留同一 presentation，絕不能退化成一般 JSON 或唯讀卡片。歷史或水合卡片不會自動開啟。
+
+在同一個持續執行的 DSH 服務內，切換瀏覽器或重新載入後，經過嚴格解析的 `openpencil_new` 或 `openpencil_pipeline_finish` 持久化 publication 可以還原為精確 PNG 與明確的 **編輯畫布** 動作。歷史卡片絕不會自動開啟側邊欄，必須由使用者點擊該動作。一般歷史 `openpencil_render` 一律維持唯讀，非 loopback 連線也絕不會取得編輯器授權。
+
+隨套件提供的 `openpencil-design` skill 仍負責指令碼與品質指引，受管執行期也不依賴桌面版二進位檔。`openpencil_new` 繼續作為相容的單批次快速路徑，但正式設計生成應優先使用完整管線。
 
 只有在處理既有的即時畫布時，才使用 `openpencil_create` 與 `openpencil_edit`。它們的編輯內容在執行編輯器的儲存動作之前都會維持未儲存狀態。
-
-## 渲染契約
-
-`openpencil_render` 接受一個 `.op` 路徑、可選的 `scale`（`0 < scale <= 8`，預設為 `1`）與可選的 `editable`（預設為 `false`）。在精確的 OpenPencil 路徑下，請讓 `width` 與 `height` 保持未設定：它們描述的是執行期的視埠，而非設計匯出尺寸，且只有保真度較低的 Jian 備援才會接受。
-
-OpenPencil 二進位檔的搜尋依下列順序進行：
-
-1. `DSH_OPENPENCIL_BINARY` 或 `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `PATH` 上的 `openpencil-desktop`
-
-Jian 備援的搜尋會依序使用 `DSH_OPENPENCIL_JIAN`、已知的本機發行建置，然後是 `PATH`。如果精確的 OpenPencil 二進位檔確實無法取得，Jian 可能會產生一個清楚標示的 `runtime-preview` 備援。精確渲染器的失敗、逾時與無效的 PNG 不會被靜默地降級為備援。
 
 ## Web 檢視器資源
 
@@ -186,7 +185,7 @@ pnpm run sync:viewer-assets
 
 啟動流程採用可安全因應慢速掛載的 listening handshake：只有在隨套件宿主回報已綁定位址後才開始就緒探測。無須安裝桌面版 OpenPencil。
 
-發行版提供六個原生平台套件目標：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64` 與 `win32-x64`；兩個 Linux 套件皆以 glibc 為目標。根套件將所有平台套件宣告為精確版本的 `optionalDependencies`，由 npm 依 OS 與 CPU 選用相符的套件。每個平台套件都會將 `op-host-web-server`、編輯器 Web 套件與 CanvasKit 作為一組彼此相符的原子執行期一併提供。因此，受管編輯器預設不依賴 `/Applications/OpenPencil.app`、`PATH` 中的 `openpencil-desktop`，也不依賴 OpenPencil 原始碼 checkout。此說明僅適用於受管的可編輯階段；精確 PNG 渲染器仍遵循上文所述的獨立二進位檔搜尋契約。
+發行版提供六個原生平台套件目標：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64` 與 `win32-x64`；兩個 Linux 套件皆以 glibc 為目標。根套件將所有平台套件宣告為精確版本的 `optionalDependencies`，由 npm 依 OS 與 CPU 選用相符的套件。每個平台套件都會將 `op-host-web-server`、編輯器 Web 套件與 CanvasKit 作為一組彼此相符的原子執行期一併提供。因此，受管編輯器預設不依賴 `/Applications/OpenPencil.app`、`PATH` 中的 `openpencil-desktop`，也不依賴 OpenPencil 原始碼 checkout。
 
 如果在畫布仍有未儲存變更時，DSH 重新載入或卸載外掛程式，宿主會保留一份不透明的本機復原草稿，最長七天。重新開啟相同來源時，會先詢問再將草稿還原到即時畫布；在使用者明確儲存之前，復原絕不會覆寫 `.op` 檔案。
 
@@ -226,7 +225,7 @@ pnpm run stage:editor-runtime
 
 結果也會記錄 `renderer`、`rendererBinary`、`fidelity` 與任何警告。既有、僅含 PNG 的 schema-v1 訊息仍可正常渲染。
 
-DSH `0.1.1-rc.2` 不會為巢狀於 PTC/Code Mode 之下的工具持久化瀏覽器呈現後設資料。外掛程式會透過同源、綁定 session 的端點復原該 UI-only 投影：瀏覽器只會傳送 session id、call id 與不可變的文件 SHA-256，而宿主則從持久的 DSH session 記錄中解析權威結果，並僅使用短暫的處理程序內標記來授權近期的即時編輯。簽署過的預覽／編輯器能力絕不會進入標準工具結果或模型上下文。持久的歷史記錄可還原唯讀預覽；編輯器授權僅針對近期、可信的即時結果核發。
+DSH `0.1.1-rc.2` 不會為巢狀於 PTC/Code Mode 之下的工具持久化瀏覽器呈現後設資料。外掛程式會透過同源、綁定 session 的端點復原該 UI-only 投影：瀏覽器只會傳送 session id、call id 與不可變的文件 SHA-256，而宿主則從持久的 DSH session 記錄中解析權威結果，並僅使用短暫的處理程序內標記來授權近期的即時編輯。簽署過的預覽／編輯器能力絕不會進入標準工具結果或模型上下文。一般 `openpencil_render` 的持久歷史一律唯讀。經過嚴格解析的 `openpencil_new` 或 `openpencil_pipeline_finish` 持久化 publication，只有在 loopback 連線且使用者明確點擊後才可能取得編輯器授權；自動開啟側邊欄僅保留給近期、可信的即時結果。
 
 為控制重播範圍，巢狀後設資料的復原最多接受 128 個頂層影格；更大的 Code Mode 結果仍可透過其標準 JSON 備援取得。
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 建置需要 Node 24.11 或更新版本，以及 pnpm。DSH 的 host／client 套件是由目標 DSH profile 提供的對等相依（peer dependency）。建置工具會從本機開發相依、目前連結的 DSH checkout 或已安裝的 DSH 來源套件中解析；`DSH_SOURCE_ROOT` 可明確指定來源 checkout。當該環境為另行佈建時，lockfile 會固定獨立的公開建置工具。

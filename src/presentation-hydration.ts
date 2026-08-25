@@ -2,13 +2,14 @@
  * Safe recovery of browser-only presentation metadata for nested Code Mode
  * tool calls.
  *
- * DSH persists nested `openpencil_render` / `openpencil_new` outcomes as a
+ * DSH persists nested `openpencil_render` / document-publication outcomes as a
  * `tool/code-dispatch` event, but published DSH through 0.1.0-rc.6 omits the native
  * `tool/result` presentation metadata from that event. The browser can ask
  * this same-origin endpoint to re-project that metadata without submitting
  * any path or tool result of its own. Live results are remembered briefly so
- * an explicitly requested editor grant can be restored; replayed durable
- * events are preview-only.
+ * an explicitly requested editor grant can be restored. Durable ordinary
+ * renders remain preview-only; strictly parsed new/pipeline publications may
+ * recover a loopback-only explicit Edit action, but never historical auto-open.
  *
  * @module dsh-openpencil/presentation-hydration
  */
@@ -20,6 +21,7 @@ import { SessionId, type SessionStore } from '@deepseek-ai/dsh-session'
 import type { JsonValue, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { isLoopbackRemoteAddress, type EditorHostController } from './editor-host.js'
 import type { DesignNewResult } from './new-tool.js'
+import type { PublishedDraft } from './design-draft-tools.js'
 import {
   MAX_DOCUMENT_BYTES,
   MAX_RENDER_BYTES,
@@ -32,7 +34,11 @@ import {
   type RenderFrame,
   type RenderResult,
 } from './renderer.js'
-import { OPENPENCIL_NEW_TOOL_NAME, OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
+import {
+  OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_RENDER_TOOL_NAME,
+} from './tool-names.js'
 import type { ViewerAssetController } from './viewer-assets.js'
 
 /** Exact same-origin endpoint used by the client to recover nested metadata. */
@@ -49,7 +55,7 @@ const DEFAULT_MAX_RECORD_BYTES = 32 * 1024
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 const MAX_HYDRATION_FRAMES = 128
 
-type HydratableResult = RenderResult | DesignNewResult
+type HydratableResult = RenderResult | DesignNewResult | PublishedDraft
 
 interface HydrationRequest {
   sessionId: string
@@ -273,9 +279,41 @@ export function parseHydratableNewResult(value: unknown): DesignNewResult | unde
   return value as unknown as DesignNewResult
 }
 
+const PIPELINE_RESULT_KEYS = new Set([...NEW_RESULT_KEYS, 'published', 'preview'])
+
+/** Accept only the canonical document-only result emitted by pipeline_finish. */
+export function parseHydratablePipelineResult(value: unknown): PublishedDraft | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, PIPELINE_RESULT_KEYS)) return undefined
+  if (
+    !isSafeString(value.path)
+    || !isAbsolute(value.path)
+    || !value.path.toLowerCase().endsWith('.op')
+    || typeof value.filename !== 'string'
+    || basename(value.path) !== value.filename
+    || !isSafeInteger(value.bytes, 1, MAX_DOCUMENT_BYTES)
+    || !isSha256(value.sha256)
+    || value.created !== true
+    || value.applied !== true
+    || value.saved !== true
+    || value.published !== true
+    || value.sourceTool !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+    || value.previewIntent !== 'document'
+    || value.editable !== true
+    || value.autoOpenEditor !== true
+    || parseFrame(value.preview, 0) === undefined
+    || !isDocumentSnapshot(value.document)
+    || value.document.bytes !== value.bytes
+    || value.document.sha256 !== value.sha256
+    || value.result !== undefined
+    || !isSafeString(value.note)
+  ) return undefined
+  return value as unknown as PublishedDraft
+}
+
 function parseHydratableResult(toolName: unknown, value: unknown): HydratableResult | undefined {
   if (toolName === OPENPENCIL_RENDER_TOOL_NAME) return parseHydratableRenderResult(value)
   if (toolName === OPENPENCIL_NEW_TOOL_NAME) return parseHydratableNewResult(value)
+  if (toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME) return parseHydratablePipelineResult(value)
   return undefined
 }
 
@@ -284,7 +322,7 @@ function resultDocument(result: HydratableResult): NonNullable<RenderResult['doc
 }
 
 function resultSourcePath(result: HydratableResult): string | undefined {
-  return result.sourceTool === OPENPENCIL_NEW_TOOL_NAME ? result.path : result.sourcePath
+  return result.sourceTool === OPENPENCIL_RENDER_TOOL_NAME ? result.sourcePath : result.path
 }
 
 function resultEditable(result: HydratableResult): boolean {
@@ -556,16 +594,26 @@ export class PresentationHydrationController {
     const authorization = this.#liveAuthorization(request, result)
     if (authorization === null) return undefined
     const sourcePath = resultSourcePath(result)
-    const editor = authorization !== undefined
-      && editorAllowed
-      && authorization.editable
+    const durablePublication = result.sourceTool === OPENPENCIL_NEW_TOOL_NAME
+      || result.sourceTool === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+    const editor = editorAllowed
       && sourcePath !== undefined
-      ? this.dependencies.editor?.grantFor(sourcePath, authorization.documentSha256)
+      && (
+        (authorization !== undefined && authorization.editable)
+        || (authorization === undefined && durablePublication && resultEditable(result))
+      )
+      ? this.dependencies.editor?.grantFor(sourcePath, resultDocument(result).sha256)
       : undefined
-    const projected = result.sourceTool === OPENPENCIL_NEW_TOOL_NAME
-      ? projectDocumentGrant(result as unknown as JsonValue, this.dependencies.render, editor)
+    // A different browser may explicitly reopen a strictly parsed durable
+    // publication, but only the original live settlement may request
+    // automatic UI mutation. Historical cards always require an Edit click.
+    const projectionResult = authorization === undefined && durablePublication
+      ? { ...result, autoOpenEditor: undefined }
+      : result
+    const projected = result.sourceTool !== OPENPENCIL_RENDER_TOOL_NAME
+      ? projectDocumentGrant(projectionResult as unknown as JsonValue, this.dependencies.render, editor)
       : projectRenderGrant(
-          result as unknown as JsonValue,
+          projectionResult as unknown as JsonValue,
           this.dependencies.render,
           this.dependencies.viewer?.viewerGrant,
           editor,
@@ -634,7 +682,11 @@ export class PresentationHydrationController {
       const event = events[eventIndex]
       if (
         event?.type !== 'tool/code-dispatch'
-        || (event.data.name !== OPENPENCIL_RENDER_TOOL_NAME && event.data.name !== OPENPENCIL_NEW_TOOL_NAME)
+        || (
+          event.data.name !== OPENPENCIL_RENDER_TOOL_NAME
+          && event.data.name !== OPENPENCIL_NEW_TOOL_NAME
+          && event.data.name !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+        )
       ) continue
       const callId = String(event.data.subCallId)
       if (!isSafeString(callId, 512)) continue

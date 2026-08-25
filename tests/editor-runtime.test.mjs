@@ -15,6 +15,7 @@ import {
 } from '../lib/editor-runtime.js'
 import {
   collectRuntimePayloadPaths,
+  editorBinarySourceCandidates,
   resolveWebBundleSource,
 } from '../scripts/stage-editor-runtime.mjs'
 
@@ -89,6 +90,14 @@ function resolutionOptions(projectRoot, overrides = {}) {
     ...overrides,
   }
 }
+
+test('local staging prefers the fresh host build over a stale cross-target artifact', () => {
+  const vendorRoot = join('/workspace', 'vendor', 'openpencil')
+  const host = join(vendorRoot, 'target', 'release', PLATFORM.binaryName)
+  const targeted = join(vendorRoot, 'target', PLATFORM.rustTarget, 'release', PLATFORM.binaryName)
+  assert.deepEqual(editorBinarySourceCandidates(vendorRoot, PLATFORM, true), [host, targeted])
+  assert.deepEqual(editorBinarySourceCandidates(vendorRoot, PLATFORM, false), [targeted, host])
+})
 
 test('fresh clone staging fails closed instead of relabeling the legacy pkg-ck bundle', async () => {
   const root = await tempRoot('runtime-fresh-clone')

@@ -482,6 +482,27 @@ test('controller disposal stops and joins an in-flight transient design batch', 
   }
 })
 
+test('editor host disposal also retires private persistent design drafts', async () => {
+  const harness = await createHarness(0)
+  try {
+    const begun = await harness.controller.designDrafts.begin({
+      ownerSessionId: 'owner-private-draft',
+      target: { id: 'private-target' },
+      signal: new AbortController().signal,
+    })
+    const [draftHost] = await waitForHosts(harness.logPath, 1)
+    assert.equal(isAlive(draftHost.pid), true)
+    await harness.controller.dispose()
+    await waitForExit(draftHost.pid)
+    await assert.rejects(
+      harness.controller.designDrafts.snapshot(begun.draftId, 'owner-private-draft'),
+      /has ended/,
+    )
+  } finally {
+    await harness.cleanup()
+  }
+})
+
 test('editor launch capability rejects a non-loopback socket despite spoofed loopback Host and Origin', async () => {
   const harness = await createHarness(0)
   try {

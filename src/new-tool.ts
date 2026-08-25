@@ -7,6 +7,7 @@ import type { FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
 import type SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { EditorHostController } from './editor-host.js'
+import { assertGeneratedDesignQuality } from './design-quality.js'
 import {
   type DocumentSnapshot,
   RenderAccessController,
@@ -78,6 +79,7 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
     description: 'Create, polish, save, and open a brand-new OpenPencil .op design from one transactional QuickJS script. '
       + 'Use this for natural-language requests to make a new design when no .op file or live editor exists. '
       + 'Do not inspect or hand-write .op JSON and do not ask the user to open a sidebar. '
+      + 'Before drafting the script, load the bundled openpencil-design skill when it is available; it carries the DSH-specific schema, native-control, style, and anti-slop contract. '
       + 'Choose a concise workspace-relative .op filename when the user did not specify one. '
       + 'This is a local OpenPencil-host operation and requires the session Workspace Write permission. '
       + 'The target must not already exist and its parent directory must exist. '
@@ -91,10 +93,16 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
       + 'Paints use fill: [{type:"solid",color:"#RRGGBB"}]. Borders use stroke: {thickness:1,fill:[{type:"solid",color:"#RRGGBB"}]}; shadows use effects: [{type:"shadow",offsetX:0,offsetY:8,blur:24,spread:0,color:"#0000001A"}]. '
       + 'Container enums are layout vertical/horizontal/none, justifyContent start/center/end/space_between/space_around, and alignItems start/center/end. Sizing is numeric, fill_container, or fit_content. '
       + 'Use native text_input/text_area/select/switch/checkbox controls instead of drawing lookalikes; text_input accepts placeholder, value, leadingIcon, trailingIcon, fill, stroke, and cornerRadius. '
+      + 'Every text_input and select stacked in a form must declare width:"fill_container" and an explicit 44-52px control height (normally 48); a stacked text_area must also be full width with an intentional multi-line height such as 96-160px. Password text_input nodes must explicitly set secure:true. Never rely on renderer defaults. '
+      + 'Never use emoji or a text character as an interface icon. Use an icon_font node with a real glyph name, or instantiate a matching kit component with K(). '
+      + 'Provider brand icons use both fields: iconFontFamily:"simple-icons" with iconFontName:"wechat" or "apple"; never put the collection prefix inside iconFontName and never use Lucide\'s fruit apple for Apple sign-in. '
+      + 'Before writing nodes, choose one explicit style fingerprint: named visual concept, font pairing, neutral/accent palette, radius scale, elevation treatment, and one signature visual moment. Avoid the generic initial-letter logo + white form card + saturated button template unless the user requests it. '
+      + 'Give visible text an intentional fontFamily and lineHeight; for portable Chinese interfaces default to system-ui, lineHeight at least 1.3, and zero letter spacing. Use a named Noto/PingFang/YaHei family only when the editor context or user confirms it is installed. '
       + 'A complete design needs at least one fixed-size renderable root frame. Build one clear primary task with strong negative space, a deliberate type hierarchy, consistent radii/padding/shadows, and at most two saturated colors. '
       + 'For mobile, use one App Content wrapper with 16-20px horizontal padding, 20-24px vertical gaps, and keep the first useful module within 20-32px of the title/header group. Prefer fewer, stronger modules and one distinctive visual idea over a crowded generic template. '
-      + 'The entire script applies transactionally, then OpenPencil runs its built-in post-processing and finalization pipeline before the document is published atomically. '
-      + 'One call completes the workflow: after success DSH automatically opens the generated document in the managed OpenPencil sidebar; do not call openpencil_render just to start editing.',
+      + 'The entire script applies transactionally, then OpenPencil runs its built-in post-processing and finalization pipeline before the document is published atomically. That pipeline repairs deterministic structure and layout defects; it does not invent the visual concept, typography, component sizing, brand treatment, or iconography for a weak script. '
+      + 'Before publication, DSH rejects high-confidence form sizing and emoji-icon defects. If that quality check fails, correct the reported structural paths and retry the same target path; no file was created. '
+      + 'One call creates the file and requests editor auto-open: after success DSH opens the generated document in the managed OpenPencil sidebar when that surface is idle. It never replaces an editor already owned by another session; in that case the user-facing Edit canvas action remains available. Do not call openpencil_render just to start editing. When exact rendering and vision are available, a final openpencil_render check is encouraged for visual QA, and visible clipping, overflow, hierarchy, spacing, or legibility defects must be corrected before declaring completion.',
     parameters: {
       path: {
         type: 'string', required: true,
@@ -102,7 +110,7 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
       },
       script: {
         type: 'string', required: true,
-        description: `A complete JavaScript program STRING executed by OpenPencil's sandboxed QuickJS; in Code Mode do not execute I/K in the outer run_code runtime. Build with I(parent, node) or K(kitId, parent, overrides); const/let, arrays, and for...of loops are allowed, while C/U/D/M/R/G, imports, Node.js, browser, network, and filesystem APIs are unavailable. Begin with ${SCRIPT_EXAMPLE}. Every child parent MUST be the binding returned from an earlier I(), never a quoted id/name; do not set node ids yourself. Use multiple semantic I() calls and canonical layout, gap, padding, justifyContent, alignItems, cornerRadius, textAlign, fill-array, stroke-object, and effects-array properties. Prefer native text_input and other first-class controls over frame lookalikes. Limit: 256 KiB source.`,
+        description: `A complete JavaScript program STRING executed by OpenPencil's sandboxed QuickJS; in Code Mode do not execute I/K in the outer run_code runtime. Build with I(parent, node) or K(kitId, parent, overrides); const/let, arrays, and for...of loops are allowed, while C/U/D/M/R/G, imports, Node.js, browser, network, and filesystem APIs are unavailable. Begin with ${SCRIPT_EXAMPLE}. Every child parent MUST be the binding returned from an earlier I(), never a quoted id/name; do not set node ids yourself. Use multiple semantic I() calls and canonical layout, gap, padding, justifyContent, alignItems, cornerRadius, textAlign, fill-array, stroke-object, and effects-array properties. Prefer native controls over frame lookalikes; stacked text_input/select controls must use width:"fill_container" plus an explicit 44-52px height, text_area uses a deliberate multi-line height such as 96-160px, and password text_input nodes set secure:true. Use icon_font or K() components instead of emoji icons, and define an intentional font/palette/radius/elevation style fingerprint in the script. Limit: 256 KiB source.`,
       },
       canvasWidth: { type: 'number', description: 'Optional canvas-width hint for OpenPencil post-processing.' },
     },
@@ -184,6 +192,12 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
         ...(args.canvasWidth === undefined ? {} : { canvasWidth: args.canvasWidth }),
         signal: exec.signal,
       })
+      // The managed daemon has already applied post-processing and finalization,
+      // but those passes intentionally do not make aesthetic decisions. Refuse
+      // a deliberately small set of unambiguous regressions while the document
+      // is still transient, so a model can correct its script without publishing
+      // a narrow form control or an emoji masquerading as an interface icon.
+      assertGeneratedDesignQuality(batch.documentJson)
       const outcome = await services.fs.writeText(
         target,
         batch.documentJson,
@@ -209,7 +223,7 @@ export function createDesignNewTool(editorHost: EditorHostController, services: 
         autoOpenEditor: true as const,
         document,
         ...(isRecord(batch.result) ? { result: batch.result } : {}),
-        note: `Created and saved ${processPath}; the managed OpenPencil editor opens in the sidebar automatically.`,
+        note: `Created and saved ${processPath}; DSH requests the managed OpenPencil editor to open automatically when the editor surface is idle.`,
       }
     },
     presentCall: (args: DesignNewArgs) => ({

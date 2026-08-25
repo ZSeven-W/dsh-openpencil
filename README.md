@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.4</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.5</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ With `editable: true`, the edit action opens the managed OpenPencil editor — s
 
 ### 🤖 Agent-Native Design Tools
 
-Five tools — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — let the Agent create, modify, and read a real canvas through transactional `batch_design` programs.
+Five direct-canvas tools plus six `openpencil_pipeline_*` tools let the Agent create, inspect, refine, publish, modify, and read a real canvas through managed OpenPencil runtimes.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ Image and document grants are signed, hash-bound capabilities. Browser metadata 
 
 ### ⚡ Transactional Safety
 
-A new document is published only after the whole `batch_design` program succeeds. The tool never overwrites an existing path, a failed batch leaves no empty file behind, and saves use an optimistic hash with atomic replace.
+A full-pipeline document stays in a private unpublished draft until every native and DSH quality gate passes. Publication never overwrites an existing path, and aborts or failed batches leave no empty target behind.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ The tool card and managed editor follow DSH's Chinese/English locale and light/d
 
 ### 🎯 One Complete Workflow
 
-"Requirement in conversation → Agent edits the real canvas → live preview and interaction validation → keep iterating" — one loop, no screenshot round-trips.
+"Requirement → private draft → semantic batches → exact PNG review and repairs → quality-gated atomic publish" — one complete loop inside DSH.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | Tool | What it does |
 | --- | --- |
-| `openpencil_new` | Creates a brand-new `.op` from one transactional QuickJS `batch_design` script, saves it atomically through DSH's sandboxed filesystem, and returns a signed editable presentation that DSH opens in the sidebar in the same tool call. No pre-opened editor, PNG preview, or follow-up render is required. |
+| `openpencil_new` | Compatible fast path for simple jobs: runs one transactional QuickJS `batch_design` script, publishes with create-if-absent semantics, and returns an editable presentation. Prefer the full pipeline below for production design. |
+| `openpencil_pipeline_begin` | Starts an owner-scoped private draft for a new workspace-relative `.op` path; the target file remains unpublished and untouched. |
+| `openpencil_pipeline_context` | Loads the native dynamic design-agent prompt together with relevant guidelines, style guides, variables/themes, and UI-kit metadata or script references. |
+| `openpencil_pipeline_batch` | Applies serialized semantic QuickJS batches to the draft; build the skeleton first, then add and refine sections. |
+| `openpencil_pipeline_inspect` | Runs native quality or resolved-layout inspection, or creates an exact PNG that the model can open with image reading and review visually. |
+| `openpencil_pipeline_finish` | Runs native finalization, lint, layout, screenshot freshness, and DSH quality gates, then atomically publishes with `createIfAbsent` and returns an editable presentation. |
+| `openpencil_pipeline_abort` | Discards the unpublished draft without creating the target file. |
 | `openpencil_create` | Applies a transactional `batch_design` program to generate or restructure nodes on an existing live canvas. |
 | `openpencil_edit` | Modifies an explicit node or the single node selected by the user. |
 | `openpencil_render` | Creates an immutable, content-addressed `.op` snapshot and renders every top-level frame on the active page — optional `scale` and `editable`. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Agent Design Workflow
 
-For a natural-language request with no existing document, the Agent should call `openpencil_new` with a new workspace-relative `.op` path and the first complete `batch_design` program. The tool runs that program in a private managed OpenPencil daemon and publishes the authoritative document only after the whole batch succeeds. It never overwrites an existing path and a failed batch leaves no empty file behind. The same successful tool call returns a signed, document-scoped editable presentation, and DSH automatically opens the editor sidebar with the authoritative document JSON. No second `openpencil_render` call or PNG preview is involved. Replayed, hydrated, or initially-settled historical cards can recover the document presentation but never receive an editor grant or auto-open.
+For production design, use `openpencil_pipeline_begin` → `openpencil_pipeline_context` → repeated `openpencil_pipeline_batch` and `openpencil_pipeline_inspect` calls → `openpencil_pipeline_finish`. The draft daemon is private to the owning DSH session, and the requested workspace path does not exist until publication succeeds. Intermediate draft screenshots never expose an editable sidebar, preventing user edits from racing the Agent's batches; editability is granted only after publication.
 
-`openpencil_new` uses the real QuickJS `script` surface of `batch_design`: the Agent builds with `I`/`K` calls and ordinary JavaScript data, arrays, and loops instead of hand-writing low-level `operations`. DSH always enables `postProcess`, then explicitly calls `finalize_design` after creation. This supplies the same end-of-run cleanup as the built-in OpenPencil host before the document is published. The managed runtime is bundled with the plugin and does not require the desktop binary. This is the current creation path; it does not claim to route creation through the separate `design_skeleton`, `design_content`, or `design_refine` tools.
+Context is dynamic rather than a static template: it combines OpenPencil's native design-agent prompt with the relevant guidelines, style guides, variables/themes, and UI kits. Build a structural skeleton first, then add content and refinement in semantic section batches. Successful batch calls return only compact layout diagnostics for speed; request the full resolved layout through `openpencil_pipeline_inspect` when needed. At minimum, call `openpencil_pipeline_inspect` with `kind: "screenshot"` after the signature/heading is established and again after the primary task or form plus CTA is in place. At each milestone the model opens the exact PNG with image reading, fixes visible clipping, overflow, hierarchy, spacing, control proportions, contrast, and text legibility, and repeats as needed; visual review does not happen automatically.
+
+Finishing runs OpenPencil's native finalization, lint, and layout checks plus DSH's quality gate. These deterministic checks do not create taste or visual polish. After finalization, take a separate new exact screenshot and have the model review it visually; intermediate milestone screenshots can never satisfy this post-final freshness gate. Only then does the final finish call atomically create the target with `createIfAbsent`. A failed gate or `openpencil_pipeline_abort` leaves the target absent. Every published generation result is one presentation containing the exact final PNG preview and a document-scoped editable grant; it auto-opens the sidebar only when idle, never replaces another session's editor, and always keeps **Edit canvas** for an explicit switch. A nested `openpencil_pipeline_finish` result returned through PTC/Code Mode preserves that same presentation and never degrades into ordinary JSON or a read-only card. Historical or hydrated cards never auto-open.
+
+Within the same running DSH service, switching browsers or reloading can recover a strictly parsed durable publication from `openpencil_new` or `openpencil_pipeline_finish` as the exact PNG plus an explicit **Edit canvas** action. A historical card never auto-opens the sidebar; the user must click that action. An ordinary historical `openpencil_render` remains read-only, and non-loopback connections never receive an editor grant.
+
+The bundled `openpencil-design` skill remains the scripting and quality guide, and the managed runtime does not depend on the desktop binary. `openpencil_new` remains a compatible single-batch fast path for simple work, but production-quality generation should prefer the full pipeline.
 
 Use `openpencil_create` and `openpencil_edit` only for an existing live canvas. Their edits remain unsaved until the editor Save action.
-
-## Rendering Contract
-
-`openpencil_render` accepts a `.op` path, an optional `scale` (`0 < scale <= 8`, default `1`), and optional `editable` (`false` by default). Leave `width` and `height` unset for the exact OpenPencil path: they describe a runtime viewport, not design export dimensions, and are accepted only by the lower-fidelity Jian fallback.
-
-OpenPencil binary discovery checks, in order:
-
-1. `DSH_OPENPENCIL_BINARY` or `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `openpencil-desktop` on `PATH`
-
-Jian fallback discovery uses `DSH_OPENPENCIL_JIAN`, a known local release build, then `PATH`. If the exact OpenPencil binary is genuinely unavailable, Jian may produce a clearly labelled `runtime-preview` fallback. Exact renderer failures, timeouts, and invalid PNGs do not silently fall back.
 
 ## Web Viewer Assets
 
@@ -186,7 +185,7 @@ Editable sessions use OpenPencil's managed web host — the same architecture us
 
 Startup uses a slow-mount-safe listening handshake: readiness probes begin only after the bundled host announces its bound address. No desktop OpenPencil installation is required.
 
-Published installations provide six native package targets: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, and `win32-x64`; both Linux packages target glibc. The root package declares every platform package under exact-version `optionalDependencies`, allowing npm to select the matching package by OS and CPU. Each platform package stages `op-host-web-server`, the editor web bundle, and CanvasKit as one matching atomic runtime. The managed editor therefore does not depend on `/Applications/OpenPencil.app`, `openpencil-desktop` on `PATH`, or an OpenPencil source checkout. This applies to managed editable sessions; the exact PNG renderer retains the separate binary discovery contract described above.
+Published installations provide six native package targets: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, and `win32-x64`; both Linux packages target glibc. The root package declares every platform package under exact-version `optionalDependencies`, allowing npm to select the matching package by OS and CPU. Each platform package stages `op-host-web-server`, the editor web bundle, and CanvasKit as one matching atomic runtime. The managed editor therefore does not depend on `/Applications/OpenPencil.app`, `openpencil-desktop` on `PATH`, or an OpenPencil source checkout.
 
 If DSH reloads or unloads the plugin while the canvas is dirty, the host keeps an opaque local recovery draft for up to seven days. Reopening the same source asks before restoring it into the live canvas; recovery never overwrites the `.op` file until the user explicitly saves.
 
@@ -201,6 +200,13 @@ When developing from this repository, build the editor Web bundle, build the nat
 ```sh
 pnpm run build:editor-web
 pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+For a local, non-production smoke without the protected release bootstrap URLs, build the native host directly and stage it after the Web bundle. This validates the exact preview, MCP, and managed-editor paths; collaboration still requires an explicit runtime bootstrap override or an official release package.
+
+```sh
+cargo build --manifest-path vendor/openpencil/Cargo.toml --locked --release -p op-host-web-server
 pnpm run stage:editor-runtime
 ```
 
@@ -226,7 +232,7 @@ The model-visible result stays plain JSON. Browser-only `presentationMeta.$dshOp
 
 The result also records `renderer`, `rendererBinary`, `fidelity`, and any warnings. Existing PNG-only schema-v1 messages remain renderable.
 
-DSH `0.1.1-rc.2` does not persist browser presentation metadata for tools nested under PTC/Code Mode. The plugin recovers that UI-only projection through a same-origin, session-bound endpoint: the browser sends only the session id, call id, and immutable document SHA-256, while the host resolves the authoritative result from the durable DSH session log and uses a short-lived in-process marker only to authorize recent live editing. Signed preview/editor capabilities never enter the canonical tool result or model context. Durable history can restore read-only previews; editor grants are issued only for recent, trusted live results.
+DSH `0.1.1-rc.2` does not persist browser presentation metadata for tools nested under PTC/Code Mode. The plugin recovers that UI-only projection through a same-origin, session-bound endpoint: the browser sends only the session id, call id, and immutable document SHA-256, while the host resolves the authoritative result from the durable DSH session log and uses a short-lived in-process marker only to authorize recent live editing. Signed preview/editor capabilities never enter the canonical tool result or model context. Durable ordinary `openpencil_render` history remains read-only. A strictly parsed durable publication from `openpencil_new` or `openpencil_pipeline_finish` may receive a loopback-only editor grant only after an explicit user click; automatic sidebar opening is reserved for recent, trusted live results.
 
 For bounded replay, nested metadata recovery accepts up to 128 top-level frames; larger Code Mode results remain available through their canonical JSON fallback.
 
@@ -266,7 +272,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 Builds require Node 24.11 or newer and pnpm. DSH host/client packages are peer dependencies supplied by the target DSH profile. Build tools are resolved from local dev dependencies, the active linked DSH checkout, or an installed DSH source bundle; `DSH_SOURCE_ROOT` can select a source checkout explicitly. The lockfile pins standalone public build tooling when that environment is provisioned separately.
@@ -279,7 +285,7 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 Never commit `.npmrc`, `NPM_TOKEN`, or copied registry credentials. This repository ignores local npm configuration by default.
 
-`test:host` performs a real exact render, validates PNG IHDR geometry and SHA-256, exercises immutable image/document capabilities over HTTP, and checks that viewer assets are grantable. The expected dimensions are fixture-specific.
+`test:host` performs a real exact render, validates PNG IHDR geometry and SHA-256, exercises immutable image/document capabilities over HTTP, starts the staged managed editor, pushes a live selection, applies an MCP mutation, saves, and proves that the latest bytes reopen. The expected dimensions are fixture-specific.
 
 ## Ecosystem
 

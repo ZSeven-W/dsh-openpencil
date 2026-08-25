@@ -61,11 +61,34 @@ test('managed handshake parse failures never disclose the temporary token', () =
     assert.throws(
       () => parseManagedHandshake(line, 'darwin-arm64'),
       error => {
-        assert.doesNotMatch(error.message, new RegExp(marker))
+        const diagnostics = [error.message, error.stack, error.cause]
+          .filter(value => value !== undefined)
+          .join('\n')
+        assert.doesNotMatch(diagnostics, new RegExp(marker))
         return true
       },
     )
   }
+})
+
+test('every non-Cargo release child scrubs build-only URLs and handshake parsing stays opaque', async () => {
+  const bootstrapConfig = await readFile(`${projectRoot}/scripts/collab-bootstrap-config.mjs`, 'utf8')
+  const packageVerifier = await readFile(`${projectRoot}/scripts/verify-platform-packages.mjs`, 'utf8')
+
+  for (const [label, source, expectedChildren] of [
+    ['bootstrap validator', bootstrapConfig, 1],
+    ['package verifier', packageVerifier, 2],
+  ]) {
+    const childCount = [...source.matchAll(/\bspawn(?:Sync)?\(/gu)].length
+    const scrubbedEnvCount = [...source.matchAll(
+      /env:\s*(?:\{\s*\.\.\.)?withoutCollabBootstrapBuildEnv\(process\.env\)/gu,
+    )].length
+    assert.equal(childCount, expectedChildren, `${label}: unexpected child-process surface`)
+    assert.equal(scrubbedEnvCount, childCount, `${label}: every child must receive a scrubbed environment`)
+  }
+
+  assert.match(packageVerifier, /parseManagedHandshake\(line, platform\.id\)/u)
+  assert.doesNotMatch(packageVerifier, /JSON\.parse\(line\)|JSON\.stringify\(line\)|\$\{line\}/u)
 })
 
 test('the six-platform release builds and verifies collaboration-enabled native daemons', async () => {

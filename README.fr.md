@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Version actuelle du plugin : <code>0.1.0-rc.4</code> · Testé jusqu'à DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Version actuelle du plugin : <code>0.1.0-rc.5</code> · Testé jusqu'à DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ Avec `editable: true`, l'action d'édition ouvre l'éditeur géré d'OpenPencil 
 
 ### 🤖 Outils de conception natifs pour agents
 
-Cinq outils — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — permettent à l'agent de créer, modifier et lire un véritable canevas via des programmes transactionnels `batch_design`.
+Cinq outils directs de canevas et six outils `openpencil_pipeline_*` permettent à l'agent de créer, inspecter, affiner, publier, modifier et lire un véritable canevas via les runtimes OpenPencil gérés.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ Les autorisations d'image et de document sont des capacités signées, liées à
 
 ### ⚡ Sécurité transactionnelle
 
-Un nouveau document n'est publié qu'après la réussite complète du programme `batch_design`. L'outil n'écrase jamais un chemin existant, un lot échoué ne laisse aucun fichier vide derrière lui, et les enregistrements utilisent un hachage optimiste avec remplacement atomique.
+Un document du pipeline complet reste un brouillon privé non publié jusqu'à la réussite de tous les contrôles qualité natifs et DSH. La publication n'écrase aucun chemin existant, et un abandon ou un lot échoué ne laisse aucune cible vide.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ La carte de l'outil et l'éditeur géré suivent la locale chinois/anglais et le
 
 ### 🎯 Un flux de travail complet
 
-« Exigence dans la conversation → l'agent modifie le véritable canevas → aperçu en direct et validation de l'interaction → itérez » — une seule boucle, sans allers-retours de captures d'écran.
+« Exigence → brouillon privé → lots sémantiques → examen et correction de PNG exacts → publication atomique après contrôles qualité » — un flux complet dans DSH.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | Outil | Rôle |
 | --- | --- |
-| `openpencil_new` | Crée un tout nouveau `.op` à partir d'un script QuickJS transactionnel `batch_design`, l'enregistre de manière atomique via le système de fichiers isolé de DSH et renvoie dans le même appel une présentation modifiable signée que DSH ouvre automatiquement dans l'éditeur latéral. |
+| `openpencil_new` | Voie rapide compatible pour les tâches simples : exécute un script QuickJS transactionnel `batch_design`, ne publie que si la cible n'existe pas et renvoie une présentation modifiable. Préférez le pipeline complet pour un design de production. |
+| `openpencil_pipeline_begin` | Démarre un brouillon privé appartenant à la session pour un nouveau chemin `.op` relatif à l'espace de travail ; le fichier cible reste non publié et intact. |
+| `openpencil_pipeline_context` | Charge le prompt dynamique natif de l'agent de design avec les consignes, guides de style, variables/thèmes et métadonnées ou références de script des UI kits pertinents. |
+| `openpencil_pipeline_batch` | Applique en série des lots QuickJS sémantiques au brouillon : d'abord le squelette, puis les sections et leur affinage. |
+| `openpencil_pipeline_inspect` | Exécute les contrôles natifs de qualité ou de mise en page résolue, ou crée un PNG exact que le modèle peut ouvrir par lecture d'image et examiner visuellement. |
+| `openpencil_pipeline_finish` | Exécute la finalisation native, le lint, la mise en page, la fraîcheur de la capture et les contrôles qualité DSH, puis publie atomiquement avec `createIfAbsent` et renvoie une présentation modifiable. |
+| `openpencil_pipeline_abort` | Supprime le brouillon non publié sans créer le fichier cible. |
 | `openpencil_create` | Applique un programme transactionnel `batch_design` pour générer ou restructurer des nœuds sur un canevas existant. |
 | `openpencil_edit` | Modifie un nœud explicite ou le nœud unique sélectionné par l'utilisateur. |
 | `openpencil_render` | Crée un instantané `.op` immuable, adressé par contenu, et rend chaque image de premier niveau de la page active — `scale` et `editable` en option. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Flux de conception piloté par l'agent
 
-Pour une demande en langage naturel sans document existant, l'agent doit appeler `openpencil_new` avec un nouveau chemin `.op` relatif à l'espace de travail et le premier programme `batch_design` complet. L'outil exécute ce programme dans un démon OpenPencil géré privé et ne publie le document de référence qu'après la réussite complète du lot. Il n'écrase jamais un chemin existant et un lot échoué ne laisse aucun fichier vide derrière lui. Le même appel renvoie une présentation modifiable signée, puis DSH ouvre automatiquement l'éditeur latéral avec le document de référence. Ce flux ne requiert ni second appel à `openpencil_render`, ni aperçu PNG. Les cartes historiques relues ou hydratées ne s'ouvrent jamais automatiquement.
+Pour un design de production, utilisez `openpencil_pipeline_begin` → `openpencil_pipeline_context` → des appels répétés à `openpencil_pipeline_batch` et `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`. Le démon de brouillon est privé à la session DSH propriétaire, et le chemin demandé dans l'espace de travail n'existe pas avant la réussite de la publication. Les captures intermédiaires du brouillon privé n'exposent jamais de barre latérale modifiable, afin d'éviter une concurrence entre les modifications utilisateur et les lots de l'agent ; l'édition n'est accordée qu'après publication.
 
-`openpencil_new` utilise la véritable interface QuickJS `script` de `batch_design` : l'agent construit avec des appels `I`/`K` et des données, tableaux et boucles JavaScript ordinaires, sans écrire manuellement des `operations` de bas niveau. DSH active toujours `postProcess`, puis appelle explicitement `finalize_design` après la création. Cela complète, avant publication, un nettoyage de fin d'exécution équivalent à celui de l'hôte OpenPencil intégré. Le runtime géré est fourni avec le plugin et ne dépend pas du binaire de bureau. Il s'agit du chemin de création actuel ; il n'est pas présenté comme passant par les outils distincts `design_skeleton`, `design_content` ou `design_refine`.
+Le contexte n'est pas un modèle statique : il combine le prompt dynamique natif de l'agent de design OpenPencil avec les consignes, guides de style, variables/thèmes et UI kits pertinents. Construisez d'abord un squelette structurel, puis ajoutez le contenu et les affinements par lots de sections sémantiques. Pour préserver la vitesse, chaque lot réussi ne renvoie que des diagnostics de mise en page compacts ; demandez la mise en page résolue complète via `openpencil_pipeline_inspect` selon les besoins. Au minimum, appelez `openpencil_pipeline_inspect` avec `kind: "screenshot"` après la mise en place de la signature/du titre, puis après celle de la tâche principale ou du formulaire avec son CTA. À chaque jalon, le modèle ouvre le PNG exact par lecture d'image, corrige rognage, débordement, hiérarchie, espacements, proportions, contraste et lisibilité visibles, puis répète si nécessaire ; l'examen visuel n'est pas automatique.
+
+La finition exécute la finalisation, le lint et les contrôles de mise en page natifs d'OpenPencil, ainsi que le garde-fou qualité DSH. Ces contrôles déterministes ne créent ni goût ni finition visuelle. Après la finalisation, il faut prendre une nouvelle capture exacte distincte et la faire examiner visuellement par le modèle ; les captures des jalons intermédiaires ne peuvent jamais satisfaire ce contrôle de fraîcheur post-finalisation. Alors seulement le dernier appel finish crée atomiquement la cible avec `createIfAbsent`. Si un contrôle échoue ou si `openpencil_pipeline_abort` est appelé, la cible reste absente. Chaque résultat généré et publié est une présentation unique contenant à la fois l'aperçu PNG final exact et une autorisation de modification limitée au document ; elle n'ouvre automatiquement la barre latérale que si elle est libre, ne remplace jamais l'éditeur d'une autre session et conserve toujours **Modifier le canevas** pour un changement explicite. Un résultat `openpencil_pipeline_finish` imbriqué via PTC/Code Mode préserve cette même présentation et ne se dégrade jamais en JSON ordinaire ni en carte en lecture seule. Les cartes historiques ou hydratées ne s'ouvrent jamais automatiquement.
+
+Au sein du même service DSH en cours d'exécution, un changement de navigateur ou un rechargement permet de restaurer une publication durable et strictement analysée de `openpencil_new` ou `openpencil_pipeline_finish` sous forme de PNG exact avec l'action explicite **Modifier le canevas**. Une carte historique n'ouvre jamais automatiquement la barre latérale : l'utilisateur doit cliquer sur cette action. Un `openpencil_render` historique ordinaire reste en lecture seule, et les connexions non-loopback ne reçoivent jamais d'autorisation d'éditeur.
+
+La skill `openpencil-design` incluse reste le guide de script et de qualité, et le runtime géré ne dépend pas du binaire de bureau. `openpencil_new` demeure une voie rapide compatible à lot unique, mais la génération de qualité production doit privilégier le pipeline complet.
 
 Utilisez `openpencil_create` et `openpencil_edit` uniquement pour un canevas existant. Leurs modifications restent non enregistrées tant que l'action Enregistrer de l'éditeur n'a pas été déclenchée.
-
-## Contrat de rendu
-
-`openpencil_render` accepte un chemin `.op`, une `scale` optionnelle (`0 < scale <= 8`, valeur par défaut `1`) et un `editable` optionnel (`false` par défaut). Laissez `width` et `height` non définis pour le chemin exact d'OpenPencil : ils décrivent une fenêtre d'affichage au runtime, et non des dimensions d'export de conception, et ne sont acceptés que par le moteur de secours Jian, de fidélité inférieure.
-
-La découverte du binaire OpenPencil vérifie, dans l'ordre :
-
-1. `DSH_OPENPENCIL_BINARY` ou `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `openpencil-desktop` sur `PATH`
-
-La découverte du moteur de secours Jian utilise `DSH_OPENPENCIL_JIAN`, une version de release locale connue, puis `PATH`. Si le binaire OpenPencil exact est réellement indisponible, Jian peut produire un rendu de secours `runtime-preview` clairement étiqueté. Les échecs du moteur de rendu exact, les délais d'attente et les PNG invalides ne basculent pas silencieusement en mode de secours.
 
 ## Ressources de la visionneuse web
 
@@ -186,7 +185,7 @@ Les sessions modifiables utilisent l'hôte web géré d'OpenPencil — la même 
 
 Le démarrage utilise un listening handshake sûr avec les montages lents : les sondes de disponibilité ne commencent qu'après que l'hôte intégré a annoncé son adresse d'écoute. Aucune installation de bureau d'OpenPencil n'est requise.
 
-Les installations publiées prennent en charge six cibles natives : `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` et `win32-x64` ; les paquets Linux requièrent glibc. Le paquet racine sélectionne le paquet de plateforme adapté au système d'exploitation et au processeur au moyen d'`optionalDependencies` aux versions exactes (par exemple `@zseven-w/dsh-openpencil-darwin-arm64`). Ce paquet fournit `op-host-web-server`, le bundle web de l'éditeur et CanvasKit sous la forme d'un même runtime cohérent. L'éditeur géré ne dépend donc ni de `/Applications/OpenPencil.app`, ni d'`openpencil-desktop` dans le `PATH`, ni d'un checkout des sources d'OpenPencil. Cette règle concerne les sessions modifiables gérées ; le moteur de rendu PNG exact conserve le contrat distinct de découverte du binaire décrit plus haut.
+Les installations publiées prennent en charge six cibles natives : `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` et `win32-x64` ; les paquets Linux requièrent glibc. Le paquet racine sélectionne le paquet de plateforme adapté au système d'exploitation et au processeur au moyen d'`optionalDependencies` aux versions exactes (par exemple `@zseven-w/dsh-openpencil-darwin-arm64`). Ce paquet fournit `op-host-web-server`, le bundle web de l'éditeur et CanvasKit sous la forme d'un même runtime cohérent. L'éditeur géré ne dépend donc ni de `/Applications/OpenPencil.app`, ni d'`openpencil-desktop` dans le `PATH`, ni d'un checkout des sources d'OpenPencil.
 
 Si DSH recharge ou décharge le plugin alors que le canevas contient des modifications non enregistrées, l'hôte conserve un brouillon de récupération local opaque pendant sept jours au maximum. Rouvrir la même source demande confirmation avant de la restaurer dans le canevas actif ; la récupération n'écrase jamais le fichier `.op` tant que l'utilisateur n'a pas explicitement enregistré.
 
@@ -226,7 +225,7 @@ Le résultat visible par le modèle reste un simple JSON. `presentationMeta.$dsh
 
 Le résultat enregistre également `renderer`, `rendererBinary`, `fidelity` et d'éventuels avertissements. Les messages existants de schéma v1, uniquement PNG, restent rendables.
 
-DSH `0.1.1-rc.2` ne persiste pas les métadonnées de présentation du navigateur pour les outils imbriqués sous PTC/Code Mode. Le plugin récupère cette projection UI-only via un point de terminaison de même origine, lié à la session : le navigateur n'envoie que le session id, le call id et le SHA-256 immuable du document, tandis que l'hôte résout le résultat de référence à partir du journal de session DSH durable et utilise un marqueur éphémère en mémoire uniquement pour autoriser l'édition en direct récente. Les capacités signées d'aperçu/éditeur n'entrent jamais dans le résultat canonique de l'outil ni dans le contexte du modèle. L'historique durable peut restaurer des aperçus en lecture seule ; les autorisations d'éditeur ne sont délivrées que pour des résultats en direct récents et fiables.
+DSH `0.1.1-rc.2` ne persiste pas les métadonnées de présentation du navigateur pour les outils imbriqués sous PTC/Code Mode. Le plugin récupère cette projection UI-only via un point de terminaison de même origine, lié à la session : le navigateur n'envoie que le session id, le call id et le SHA-256 immuable du document, tandis que l'hôte résout le résultat de référence à partir du journal de session DSH durable et utilise un marqueur éphémère en mémoire uniquement pour autoriser l'édition en direct récente. Les capacités signées d'aperçu/éditeur n'entrent jamais dans le résultat canonique de l'outil ni dans le contexte du modèle. L'historique durable d'un `openpencil_render` ordinaire reste en lecture seule. Une publication durable et strictement analysée de `openpencil_new` ou `openpencil_pipeline_finish` ne peut recevoir une autorisation d'éditeur que via loopback et après un clic explicite de l'utilisateur ; l'ouverture automatique de la barre latérale est réservée aux résultats en direct récents et fiables.
 
 Pour une relecture bornée, la récupération des métadonnées imbriquées accepte jusqu'à 128 images de premier niveau ; les résultats Code Mode plus volumineux restent disponibles via leur repli JSON canonique.
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 Les compilations nécessitent Node 24.11 ou plus récent et pnpm. Les paquets hôte/client de DSH sont des dépendances de pairs fournies par le profil DSH cible. Les outils de compilation sont résolus à partir des dépendances de développement locales, du dépôt DSH lié actif ou d'un bundle source DSH installé ; `DSH_SOURCE_ROOT` permet de sélectionner explicitement un dépôt source. Le lockfile épingle les outils de compilation publics autonomes lorsque cet environnement est provisionné séparément.

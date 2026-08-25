@@ -115,6 +115,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes pkg-config libfreetype-dev libfontconfig1-dev fonts-noto-cjk
 
+      - name: Test native design planning and MCP tools
+        run: >-
+          cargo test
+          --manifest-path vendor/openpencil/Cargo.toml
+          --locked
+          -p op-mcp
+          -p op-chat-agent
+          --lib
+
+      - name: Test native MCP host surface
+        run: >-
+          cargo test
+          --manifest-path vendor/openpencil/Cargo.toml
+          --locked
+          -p op-host-services
+          mcp_serve
+          --lib
+
       - name: Test collaboration document and transport queues
         run: >-
           cargo test

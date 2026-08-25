@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 현재 플러그인 릴리스: <code>0.1.0-rc.4</code> · DSH <code>0.1.1-rc.2</code>까지 테스트됨</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 현재 플러그인 릴리스: <code>0.1.0-rc.5</code> · DSH <code>0.1.1-rc.2</code>까지 테스트됨</sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ DSH OpenPencil은 [DeepSeek Harness](https://github.com/deepseek-ai/DSH)와 [Ope
 
 ### 🤖 에이전트 네이티브 디자인 도구
 
-다섯 가지 도구 — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — 는 트랜잭션 `batch_design` 프로그램을 통해 에이전트가 실제 캔버스를 생성, 수정, 읽을 수 있게 합니다.
+직접 캔버스를 다루는 다섯 가지 도구와 여섯 가지 `openpencil_pipeline_*` 도구를 통해 에이전트는 관리형 OpenPencil 런타임에서 실제 캔버스를 생성, 검사, 개선, 게시, 수정, 읽을 수 있습니다.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ DSH OpenPencil은 [DeepSeek Harness](https://github.com/deepseek-ai/DSH)와 [Ope
 
 ### ⚡ 트랜잭션 안전성
 
-새 문서는 전체 `batch_design` 프로그램이 성공한 후에만 게시됩니다. 도구는 기존 경로를 절대 덮어쓰지 않으며, 실패한 배치는 빈 파일을 남기지 않고, 저장은 원자적 교체와 함께 낙관적 해시를 사용합니다.
+전체 파이프라인 문서는 모든 네이티브 및 DSH 품질 게이트를 통과할 때까지 비공개 미게시 초안에 머뭅니다. 게시 시 기존 경로를 덮어쓰지 않으며, 중단되거나 실패한 배치는 빈 대상 파일을 남기지 않습니다.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ DSH OpenPencil은 [DeepSeek Harness](https://github.com/deepseek-ai/DSH)와 [Ope
 
 ### 🎯 하나의 완결된 워크플로
 
-"대화 속 요구사항 → 에이전트가 실제 캔버스를 편집 → 실시간 미리보기 및 상호작용 검증 → 계속 반복" — 하나의 루프로, 스크린샷 왕복이 필요 없습니다.
+"요구사항 → 비공개 초안 → 의미 단위 배치 → 정확한 PNG 시각 검토와 수정 → 품질 게이트를 거친 원자적 게시" — DSH 안에서 완결되는 하나의 루프입니다.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | 도구 | 역할 |
 | --- | --- |
-| `openpencil_new` | 하나의 트랜잭션 QuickJS `batch_design` 스크립트에서 새로운 `.op`를 만들고 DSH의 샌드박스 파일시스템을 통해 원자적으로 저장한 뒤, 같은 도구 호출에서 서명된 편집 가능 프레젠테이션을 반환하여 DSH가 편집기 사이드바를 자동으로 엽니다. |
+| `openpencil_new` | 단순 작업을 위한 호환 빠른 경로입니다. 하나의 트랜잭션 QuickJS `batch_design` 스크립트를 실행하고 대상이 없을 때만 게시한 뒤 편집 가능 프레젠테이션을 반환합니다. 프로덕션 디자인에는 아래 전체 파이프라인을 우선 사용하세요. |
+| `openpencil_pipeline_begin` | 새 워크스페이스 상대 `.op` 경로에 대해 소유 세션 전용 비공개 초안을 시작합니다. 대상 파일은 게시되지 않고 변경되지 않습니다. |
+| `openpencil_pipeline_context` | 네이티브 동적 design-agent prompt와 관련 guidelines, style guides, 변수/테마, UI kit 메타데이터 또는 스크립트 참조를 불러옵니다. |
+| `openpencil_pipeline_batch` | 의미 단위 QuickJS 배치를 초안에 직렬 적용합니다. 먼저 골격을 만들고 이후 섹션을 추가하고 개선합니다. |
+| `openpencil_pipeline_inspect` | 네이티브 품질 또는 계산된 레이아웃을 검사하거나, 모델이 이미지 읽기로 열어 시각 검토할 수 있는 정확한 PNG를 생성합니다. |
+| `openpencil_pipeline_finish` | 네이티브 최종화, lint, 레이아웃, 스크린샷 최신성, DSH 품질 게이트를 실행한 뒤 `createIfAbsent`로 원자 게시하고 편집 가능 프레젠테이션을 반환합니다. |
+| `openpencil_pipeline_abort` | 대상 파일을 만들지 않고 미게시 초안을 버립니다. |
 | `openpencil_create` | 트랜잭션 `batch_design` 프로그램을 적용하여 기존 라이브 캔버스에서 노드를 생성하거나 재구성합니다. |
 | `openpencil_edit` | 명시된 노드 또는 사용자가 선택한 단일 노드를 수정합니다. |
 | `openpencil_render` | 변경 불가능하고 콘텐츠 주소 지정 방식의 `.op` 스냅샷을 만들고 활성 페이지의 모든 최상위 프레임을 렌더링합니다 — 선택적 `scale` 및 `editable`. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## 에이전트 디자인 워크플로
 
-기존 문서가 없는 자연어 요청의 경우, 에이전트는 새 워크스페이스 상대 `.op` 경로와 첫 번째 완전한 `batch_design` 프로그램으로 `openpencil_new`를 호출해야 합니다. 도구는 비공개 관리형 OpenPencil 데몬에서 해당 프로그램을 실행하고, 전체 배치가 성공한 후에만 권위 있는 문서를 게시합니다. 기존 경로를 절대 덮어쓰지 않으며, 실패한 배치는 빈 파일을 남기지 않습니다. 같은 성공한 도구 호출이 반환하는 서명된 편집 가능 프레젠테이션으로 DSH가 편집기 사이드바를 자동으로 엽니다. 두 번째 `openpencil_render` 호출이나 PNG 미리보기는 필요하지 않습니다. 재생된 카드, 과거 카드 또는 하이드레이션된 카드는 자동으로 열리지 않습니다.
+프로덕션 디자인에서는 `openpencil_pipeline_begin` → `openpencil_pipeline_context` → 반복되는 `openpencil_pipeline_batch` 및 `openpencil_pipeline_inspect` → `openpencil_pipeline_finish` 순서로 사용합니다. 초안 데몬은 소유 DSH 세션에만 공개되며, 게시가 성공하기 전에는 요청한 워크스페이스 경로가 존재하지 않습니다. 중간 비공개 초안 스크린샷은 편집 가능한 사이드바를 노출하지 않아 사용자 편집과 에이전트 배치의 충돌을 막습니다. 편집 권한은 게시 후에만 부여됩니다.
 
-`openpencil_new`는 `batch_design`의 실제 QuickJS `script` 모드를 사용합니다. 에이전트는 저수준 `operations`를 직접 작성하는 대신 `I`/`K` 호출과 일반 JavaScript 데이터, 배열, 반복문으로 디자인을 만듭니다. DSH는 `postProcess`를 항상 활성화하고 생성 후 `finalize_design`을 명시적으로 호출하여 문서 게시 전에 OpenPencil 내장 호스트의 종료 단계와 동등한 정리 작업을 보완합니다. 관리형 런타임은 플러그인에 포함되므로 데스크톱 바이너리에 의존하지 않습니다. 이것이 현재의 새 문서 생성 경로이며, 별도의 `design_skeleton`, `design_content`, `design_refine` 도구를 거친다고 주장하는 것은 아닙니다.
+컨텍스트는 정적 템플릿이 아닙니다. OpenPencil 네이티브 design-agent prompt와 관련 guidelines, style guides, 변수/테마, UI kits를 동적으로 결합합니다. 구조적 골격을 먼저 만든 다음 의미 있는 섹션 단위로 콘텐츠와 개선 사항을 추가합니다. 속도를 위해 성공한 배치는 간결한 레이아웃 진단만 반환하며, 전체 계산된 레이아웃은 필요할 때 `openpencil_pipeline_inspect`로 요청합니다. 최소한 signature/heading을 확정한 뒤와 주요 작업 또는 form 및 CTA를 완성한 뒤를 중간 시각 마일스톤으로 삼아 각각 `kind: "screenshot"`으로 `openpencil_pipeline_inspect`를 호출합니다. 모델은 각 정확한 PNG를 이미지 읽기로 열고, 눈에 보이는 잘림, 오버플로, 계층, 간격, 컨트롤 비율, 대비, 텍스트 가독성을 수정하며 필요에 따라 반복합니다. 시각 검토는 자동으로 일어나지 않습니다.
+
+완료 단계는 OpenPencil 네이티브 최종화, lint, 레이아웃 검사와 DSH 품질 게이트를 실행합니다. 이러한 결정론적 검사가 취향이나 시각적 완성도를 만들어 주지는 않습니다. 최종화 뒤에는 별도의 새 정확한 스크린샷을 촬영해 모델이 시각적으로 검토해야 합니다. 중간 마일스톤 스크린샷은 최종화 이후의 최신성 게이트를 절대 충족할 수 없습니다. 그 이후의 finish 호출만 `createIfAbsent`로 대상을 원자적으로 생성합니다. 게이트 실패나 `openpencil_pipeline_abort` 시 대상은 계속 존재하지 않습니다. 게시된 모든 생성 결과는 정확한 최종 PNG 미리보기와 문서 범위 편집 권한을 함께 담은 하나의 presentation입니다. 사이드바가 비어 있을 때만 자동으로 열고, 다른 세션의 편집기를 교체하지 않으며, 명시적 전환을 위한 **캔버스 편집**을 항상 유지합니다. PTC/Code Mode 안에서 중첩 호출된 `openpencil_pipeline_finish` 결과도 같은 presentation을 보존하며 일반 JSON이나 읽기 전용 카드로 축소되지 않습니다. 과거 또는 하이드레이션된 카드는 자동으로 열리지 않습니다.
+
+동일하게 실행 중인 DSH 서비스 안에서는 브라우저를 바꾸거나 다시 로드한 뒤에도 엄격히 파싱된 `openpencil_new` 또는 `openpencil_pipeline_finish`의 영속 publication을 정확한 PNG와 명시적인 **캔버스 편집** 작업으로 복원할 수 있습니다. 과거 카드는 사이드바를 자동으로 열지 않으므로 사용자가 해당 작업을 클릭해야 합니다. 일반 과거 `openpencil_render`는 읽기 전용으로 유지되며, 비 loopback 연결에는 편집기 권한이 발급되지 않습니다.
+
+번들된 `openpencil-design` skill은 계속 스크립팅 및 품질 가이드를 제공하며, 관리형 런타임은 데스크톱 바이너리에 의존하지 않습니다. `openpencil_new`는 호환 가능한 단일 배치 빠른 경로로 유지되지만 프로덕션 품질 생성에는 전체 파이프라인을 우선 사용해야 합니다.
 
 `openpencil_create`와 `openpencil_edit`은 기존 라이브 캔버스에만 사용하세요. 이들의 편집 내용은 편집기의 저장(Save) 작업 전까지 저장되지 않은 상태로 유지됩니다.
-
-## 렌더링 계약
-
-`openpencil_render`는 `.op` 경로, 선택적 `scale`(`0 < scale <= 8`, 기본값 `1`), 선택적 `editable`(기본값 `false`)을 받습니다. 정확한 OpenPencil 경로에서는 `width`와 `height`를 설정하지 않은 채로 두세요. 이 값들은 디자인 내보내기 크기가 아닌 런타임 뷰포트를 나타내며, 낮은 충실도의 Jian 폴백에서만 허용됩니다.
-
-OpenPencil 바이너리 검색은 다음 순서로 확인합니다:
-
-1. `DSH_OPENPENCIL_BINARY` or `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `PATH`에 있는 `openpencil-desktop`
-
-Jian 폴백 검색은 `DSH_OPENPENCIL_JIAN`, 알려진 로컬 릴리스 빌드, 그다음 `PATH`를 사용합니다. 정확한 OpenPencil 바이너리를 실제로 사용할 수 없는 경우 Jian은 명확하게 표시된 `runtime-preview` 폴백을 생성할 수 있습니다. 정확한 렌더러 실패, 시간 초과, 잘못된 PNG는 조용히 폴백되지 않습니다.
 
 ## 웹 뷰어 에셋
 
@@ -186,7 +185,7 @@ pnpm run sync:viewer-assets
 
 시작 시 느린 마운트에도 안전한 listening handshake를 사용하며, 번들 호스트가 바인딩 주소를 알린 뒤에만 readiness probe를 시작합니다. 데스크톱 OpenPencil 설치는 필요하지 않습니다.
 
-게시된 설치 패키지는 `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`의 여섯 개 네이티브 플랫폼 패키지 중 현재 OS/CPU에 맞는 패키지를 선택하며, 두 Linux 패키지는 glibc를 대상으로 합니다. 루트 패키지는 이를 정확한 버전의 `optionalDependencies`로 선언하여 패키지 관리자가 올바른 변형(예: `@zseven-w/dsh-openpencil-darwin-arm64`)을 선택하도록 합니다. 이 패키지는 서로 호환되는 `op-host-web-server`, 편집기 웹 번들, CanvasKit을 하나의 런타임으로 함께 제공합니다. 따라서 관리형 편집기는 `/Applications/OpenPencil.app`, `PATH`의 `openpencil-desktop` 또는 OpenPencil 소스 체크아웃에 의존하지 않습니다. 이는 관리형 편집 세션에 대한 설명이며, 정확한 PNG 렌더러는 위에서 설명한 별도의 바이너리 검색 계약을 계속 따릅니다.
+게시된 설치 패키지는 `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`의 여섯 개 네이티브 플랫폼 패키지 중 현재 OS/CPU에 맞는 패키지를 선택하며, 두 Linux 패키지는 glibc를 대상으로 합니다. 루트 패키지는 이를 정확한 버전의 `optionalDependencies`로 선언하여 패키지 관리자가 올바른 변형(예: `@zseven-w/dsh-openpencil-darwin-arm64`)을 선택하도록 합니다. 이 패키지는 서로 호환되는 `op-host-web-server`, 편집기 웹 번들, CanvasKit을 하나의 런타임으로 함께 제공합니다. 따라서 관리형 편집기는 `/Applications/OpenPencil.app`, `PATH`의 `openpencil-desktop` 또는 OpenPencil 소스 체크아웃에 의존하지 않습니다.
 
 캔버스가 더티 상태인 동안 DSH가 플러그인을 다시 로드하거나 언로드하면, 호스트는 최대 7일 동안 불투명한 로컬 복구 초안을 보관합니다. 동일한 소스를 다시 열면 라이브 캔버스에 복원하기 전에 확인을 요청하며, 복구는 사용자가 명시적으로 저장하기 전까지 `.op` 파일을 절대 덮어쓰지 않습니다.
 
@@ -226,7 +225,7 @@ pnpm run stage:editor-runtime
 
 결과에는 `renderer`, `rendererBinary`, `fidelity` 및 모든 경고도 기록됩니다. 기존의 PNG 전용 schema-v1 메시지는 계속 렌더링할 수 있습니다.
 
-DSH `0.1.1-rc.2`은 PTC/Code Mode 아래에 중첩된 도구에 대한 브라우저 프레젠테이션 메타데이터를 유지하지 않습니다. 플러그인은 동일 출처의 세션 바인딩 엔드포인트를 통해 해당 UI-only 투영(projection)을 복구합니다: 브라우저는 세션 id, 호출 id 및 변경 불가능한 문서 SHA-256만 전송하고, 호스트는 영속적인 DSH 세션 로그에서 권위 있는 결과를 확인하며, 최근 라이브 편집을 승인하는 용도로만 수명이 짧은 인프로세스 마커를 사용합니다. 서명된 미리보기/편집기 권한은 정식 도구 결과나 모델 컨텍스트에 절대 들어가지 않습니다. 영속 기록은 읽기 전용 미리보기를 복원할 수 있으며, 편집기 권한은 최근의 신뢰할 수 있는 라이브 결과에 대해서만 발급됩니다.
+DSH `0.1.1-rc.2`은 PTC/Code Mode 아래에 중첩된 도구에 대한 브라우저 프레젠테이션 메타데이터를 유지하지 않습니다. 플러그인은 동일 출처의 세션 바인딩 엔드포인트를 통해 해당 UI-only 투영(projection)을 복구합니다: 브라우저는 세션 id, 호출 id 및 변경 불가능한 문서 SHA-256만 전송하고, 호스트는 영속적인 DSH 세션 로그에서 권위 있는 결과를 확인하며, 최근 라이브 편집을 승인하는 용도로만 수명이 짧은 인프로세스 마커를 사용합니다. 서명된 미리보기/편집기 권한은 정식 도구 결과나 모델 컨텍스트에 절대 들어가지 않습니다. 일반 `openpencil_render`의 영속 기록은 읽기 전용으로 유지됩니다. 엄격히 파싱된 `openpencil_new` 또는 `openpencil_pipeline_finish`의 영속 publication은 loopback 연결에서 사용자가 명시적으로 클릭한 뒤에만 편집기 권한을 받을 수 있습니다. 사이드바 자동 열기는 최근의 신뢰할 수 있는 라이브 결과에만 허용됩니다.
 
 제한된 재생을 위해 중첩 메타데이터 복구는 최대 128개의 최상위 프레임을 허용하며, 더 큰 Code Mode 결과는 정식 JSON 폴백을 통해 계속 사용할 수 있습니다.
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 빌드에는 Node 24.11 이상과 pnpm이 필요합니다. DSH 호스트/클라이언트 패키지는 대상 DSH 프로필이 제공하는 피어 종속성입니다. 빌드 도구는 로컬 개발 종속성, 활성 연결된 DSH 체크아웃 또는 설치된 DSH 소스 번들에서 확인되며, `DSH_SOURCE_ROOT`로 소스 체크아웃을 명시적으로 선택할 수 있습니다. 잠금 파일(lockfile)은 해당 환경이 별도로 프로비저닝되는 경우 독립형 공개 빌드 도구를 고정합니다.

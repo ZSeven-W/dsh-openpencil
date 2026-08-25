@@ -117,6 +117,11 @@ jobs:
           workspaces: vendor/openpencil -> target
           shared-key: dsh-openpencil-web-release
 
+      - name: Install native design test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes pkg-config libfreetype-dev libfontconfig1-dev fonts-noto-cjk
+
       - name: Install wasm-bindgen-cli matching the pinned OpenPencil lockfile
         working-directory: vendor/openpencil
         shell: bash
@@ -146,6 +151,24 @@ jobs:
       - name: Build and gate the read-only viewer web bundle
         working-directory: vendor/openpencil
         run: bash crates/op-web-sdk/tools/build-wasm.sh
+
+      - name: Test native design planning and MCP tools
+        run: >-
+          cargo test
+          --manifest-path vendor/openpencil/Cargo.toml
+          --locked
+          -p op-mcp
+          -p op-chat-agent
+          --lib
+
+      - name: Test native MCP host surface
+        run: >-
+          cargo test
+          --manifest-path vendor/openpencil/Cargo.toml
+          --locked
+          -p op-host-services
+          mcp_serve
+          --lib
 
       - name: Test collaboration document and transport queues
         run: >-

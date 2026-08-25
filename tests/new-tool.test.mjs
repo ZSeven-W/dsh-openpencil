@@ -169,7 +169,7 @@ test('openpencil_new publishes one completed QuickJS build through guarded DSH f
       sha256: createHash('sha256').update(expectedText).digest('hex'),
     },
     result: { applied: true, inserted: 1 },
-    note: `Created and saved ${harness.processPath}; the managed OpenPencil editor opens in the sidebar automatically.`,
+    note: `Created and saved ${harness.processPath}; DSH requests the managed OpenPencil editor to open automatically when the editor surface is idle.`,
   })
 })
 
@@ -186,6 +186,44 @@ test('openpencil_new hashes the filesystem-authoritative written text', async ()
   assert.equal(result.sha256, createHash('sha256').update(normalized).digest('hex'))
   assert.equal(await readFile(result.document.path, 'utf8'), normalized)
   assert.notEqual(normalized, harness.documentJson, 'the authoritative filesystem result differs from the daemon proposal')
+})
+
+test('openpencil_new rejects high-confidence design defects before publishing the document', async () => {
+  const unsafeDesign = JSON.stringify({
+    version: '1.0.0',
+    children: [{
+      type: 'frame',
+      name: 'Login',
+      children: [{
+        type: 'frame',
+        name: 'Form card',
+        children: [{
+          type: 'text_input',
+          name: 'Password',
+          height: 48,
+          trailingIcon: '👁',
+        }],
+      }],
+    }],
+  })
+  const harness = createHarness({ documentJson: unsafeDesign })
+
+  await assert.rejects(
+    harness.tool.execute({ path: harness.requestedPath, script: SIMPLE_SCRIPT }, harness.exec),
+    error => error instanceof Error
+      && /failed quality checks \(3 issues\)/.test(error.message)
+      && /width to "fill_container"/.test(error.message)
+      && /password text input must explicitly set secure to true/.test(error.message)
+      && /use icon_font or a component icon/.test(error.message)
+      && !error.message.includes('Password')
+      && !error.message.includes('👁'),
+  )
+
+  assert.equal(harness.calls.batch.length, 1, 'quality inspection runs on the finalized transient document')
+  assert.equal(harness.calls.write.length, 0, 'a rejected design is never published through DSH fs')
+  assert.deepEqual(harness.calls.observe, [
+    { target: harness.target, observation: { kind: 'absent' }, actor: harness.exec },
+  ])
 })
 
 test('openpencil_new projects a signed document-only grant and auto-opens the editor', async () => {
@@ -364,6 +402,7 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
   assert.doesNotMatch(decisionContract, /\{\.\.\.\}/, 'model-facing examples must be executable rather than schematic')
   assert.match(decisionContract, /no \.op file or live editor/i)
   assert.match(decisionContract, /do not ask the user to open a sidebar/i)
+  assert.match(decisionContract, /load the bundled openpencil-design skill/i)
   assert.match(decisionContract, /sandboxed QuickJS/i)
   assert.match(decisionContract, /script (?:program )?string.*outer run_code runtime/i)
   assert.match(decisionContract, /I\/K do not exist in the outer run_code runtime/i)
@@ -381,12 +420,27 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
   assert.match(decisionContract, /stroke: \{thickness:1,fill:/i)
   assert.match(decisionContract, /justifyContent start\/center\/end\/space_between\/space_around/i)
   assert.match(decisionContract, /native text_input/i)
+  assert.match(decisionContract, /text_input and select.*width:"fill_container".*44-52px/i)
+  assert.match(decisionContract, /text_area.*multi-line height.*96-160px/i)
+  assert.match(decisionContract, /never use emoji.*interface icon/i)
+  assert.match(decisionContract, /icon_font.*real glyph name/i)
+  assert.match(decisionContract, /style fingerprint/i)
+  assert.match(decisionContract, /generic initial-letter logo.*white form card.*saturated button/i)
+  assert.match(decisionContract, /Chinese interfaces default to system-ui.*lineHeight at least 1\.3/i)
+  assert.match(decisionContract, /Noto\/PingFang\/YaHei.*confirms it is installed/i)
   assert.match(decisionContract, /never invent paddingX, paddingY, radius, strokeWidth, align/i)
   assert.match(decisionContract, /negative space/i)
   assert.match(decisionContract, /at most two saturated colors/i)
   assert.match(decisionContract, /16-20px horizontal padding/i)
   assert.match(decisionContract, /post-processing and finalization pipeline/i)
-  assert.match(decisionContract, /one call completes the workflow/i)
-  assert.match(decisionContract, /automatically opens.*sidebar/i)
+  assert.match(decisionContract, /repairs deterministic structure and layout defects/i)
+  assert.match(decisionContract, /does not invent the visual concept, typography, component sizing/i)
+  assert.match(decisionContract, /rejects high-confidence form sizing and emoji-icon defects/i)
+  assert.match(decisionContract, /retry the same target path.*no file was created/i)
+  assert.match(decisionContract, /one call creates the file and requests editor auto-open/i)
+  assert.match(decisionContract, /opens.*sidebar when that surface is idle/i)
+  assert.match(decisionContract, /never replaces an editor already owned by another session/i)
+  assert.match(decisionContract, /final openpencil_render check is encouraged for visual QA/i)
+  assert.match(decisionContract, /clipping, overflow, hierarchy, spacing, or legibility defects.*corrected/i)
   assert.doesNotMatch(decisionContract, /call openpencil_render.*editable=true/i)
 })

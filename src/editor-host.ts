@@ -31,6 +31,13 @@ import {
   resolveEditorRuntime,
   type EditorRuntime,
 } from './editor-runtime.js'
+import { DesignDraftController } from './design-draft-controller.js'
+import {
+  readManagedEditorDaemon,
+  startManagedEditorDaemon,
+  stopManagedEditorDaemon,
+  type ManagedEditorDaemon,
+} from './managed-editor-daemon.js'
 
 export const EDITOR_ROUTE_PREFIX = '/_dsh/dsh-openpencil/editor'
 
@@ -454,6 +461,7 @@ export class EditorHostController {
   readonly runtime: EditorRuntime | undefined
   readonly runtimeError: Error | undefined
   readonly binary: string | undefined
+  readonly designDrafts: DesignDraftController
   #routeRefs = 0
   #routeGeneration = 0
   readonly #editorKey: Buffer
@@ -478,6 +486,12 @@ export class EditorHostController {
     this.runtime = resolved
     this.runtimeError = runtimeError
     this.binary = resolved?.binary
+    const detail = runtimeError?.message.trim()
+    this.designDrafts = new DesignDraftController(resolved, {
+      runtimeUnavailableMessage: detail === undefined || detail.length === 0
+        ? 'OpenPencil editor runtime is unavailable'
+        : `OpenPencil editor runtime is unavailable: ${detail}`,
+    })
   }
 
   get available(): boolean { return this.runtime !== undefined }
@@ -618,6 +632,7 @@ export class EditorHostController {
       this.#sessions.clear()
       const pending = [...this.#pendingChildren]
       await Promise.all([
+        this.designDrafts.dispose(),
         ...sessions.map(session => this.#captureThenDispose(session, 'plugin-dispose')),
         ...pending.map(child => stopChild(child)),
       ])
@@ -655,44 +670,35 @@ export class EditorHostController {
   ): Promise<CreateDocumentBatchResult> {
     const tempRoot = await mkdtemp(join(tmpdir(), 'dsh-openpencil-new-'))
     const sourcePath = join(tempRoot, 'starter.op')
-    let child: ChildProcessWithoutNullStreams | undefined
+    let daemon: ManagedEditorDaemon | undefined
+    let spawnedChild: ChildProcessWithoutNullStreams | undefined
     try {
       await writeFile(sourcePath, EMPTY_DOCUMENT_JSON, { flag: 'wx', mode: 0o600 })
       options.signal.throwIfAborted()
       if (this.#disposePromise !== undefined) throw new Error('OpenPencil editor host is shutting down')
 
-      const env: NodeJS.ProcessEnv = {
-        ...process.env,
-        OPENPENCIL_WEB_BUNDLE_DIR: runtime.webBundleDir,
-        OPENPENCIL_CANVASKIT_DIR: runtime.canvasKitDir,
-      }
-      child = spawn(runtime.binary, [
-        '--serve-web', '--managed', '--port', '0', '--file', sourcePath,
-        '--allow-origin', 'http://127.0.0.1',
-      ], { stdio: ['pipe', 'pipe', 'pipe'], env })
-      this.#pendingChildren.add(child)
-      let diagnostics = ''
-      child.stderr.on('data', (chunk: Buffer) => {
-        if (diagnostics.length < MAX_DIAGNOSTIC_BYTES) {
-          diagnostics += chunk.toString('utf8').slice(0, MAX_DIAGNOSTIC_BYTES - diagnostics.length)
-        }
+      daemon = await startManagedEditorDaemon(runtime, {
+        sourcePath,
+        allowOrigin: 'http://127.0.0.1',
+        signal: options.signal,
+        onSpawn: child => {
+          spawnedChild = child
+          this.#pendingChildren.add(child)
+        },
       })
-      const onAbort = (): void => { if (child !== undefined) void stopChild(child) }
+      const onAbort = (): void => { if (daemon !== undefined) void stopManagedEditorDaemon(daemon) }
       options.signal.addEventListener('abort', onAbort, { once: true })
       try {
-        const handshake = await waitForHandshake(child, () => diagnostics.trim(), options.signal)
-        this.#assertRuntimeVersion(handshake, runtime)
         options.signal.throwIfAborted()
-        const baseUrl = `http://127.0.0.1:${handshake.port}`
-        await waitForEditorReady(baseUrl, options.signal)
+        const baseUrl = daemon.baseUrl
         const beforeVersion = await getOpenPencilMcpVersion({
           baseUrl,
-          token: handshake.token,
+          token: daemon.token,
           signal: options.signal,
         })
         const build = await callOpenPencilMcp({
           baseUrl,
-          token: handshake.token,
+          token: daemon.token,
           tool: 'batch_design',
           arguments: {
             script: options.script,
@@ -703,7 +709,7 @@ export class EditorHostController {
         })
         const buildVersion = await getOpenPencilMcpVersion({
           baseUrl,
-          token: handshake.token,
+          token: daemon.token,
           signal: options.signal,
         })
         if (buildVersion <= beforeVersion) {
@@ -712,14 +718,14 @@ export class EditorHostController {
         options.signal.throwIfAborted()
         const finalize = await callOpenPencilMcp({
           baseUrl,
-          token: handshake.token,
+          token: daemon.token,
           tool: 'finalize_design',
           arguments: {},
           signal: options.signal,
         })
         const finalVersion = await getOpenPencilMcpVersion({
           baseUrl,
-          token: handshake.token,
+          token: daemon.token,
           signal: options.signal,
         })
         // Finalization is intentionally idempotent. A clean generated tree can
@@ -728,7 +734,7 @@ export class EditorHostController {
           throw new Error('OpenPencil MCP document version regressed during design finalization')
         }
         options.signal.throwIfAborted()
-        const authoritative = await readManagedDaemonDocument(baseUrl, handshake.token, fetch, options.signal)
+        const authoritative = await readManagedEditorDaemon(daemon, options.signal)
         options.signal.throwIfAborted()
         if (authoritative.version < finalVersion) {
           throw new Error('OpenPencil managed document snapshot is older than the finalized design')
@@ -749,10 +755,8 @@ export class EditorHostController {
         options.signal.removeEventListener('abort', onAbort)
       }
     } finally {
-      if (child !== undefined) {
-        this.#pendingChildren.delete(child)
-        await stopChild(child)
-      }
+      if (spawnedChild !== undefined) this.#pendingChildren.delete(spawnedChild)
+      if (daemon !== undefined) await stopManagedEditorDaemon(daemon)
       await rm(tempRoot, { recursive: true, force: true }).catch(() => {})
     }
   }

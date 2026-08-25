@@ -10,6 +10,7 @@ import {
   PRESENTATION_HYDRATION_ROUTE,
   PresentationHydrationController,
   parseHydratableNewResult,
+  parseHydratablePipelineResult,
   parseHydratableRenderResult,
 } from '../lib/presentation-hydration.js'
 import {
@@ -93,7 +94,29 @@ function newResult(overrides = {}) {
       sha256: DOCUMENT_SHA,
     },
     result: { applied: true, inserted: 1 },
-    note: 'Created and saved /tmp/generated.op; the managed OpenPencil editor opens in the sidebar automatically.',
+    note: 'Created and saved /tmp/generated.op; DSH requests the managed OpenPencil editor to open automatically when the editor surface is idle.',
+    ...overrides,
+  }
+}
+
+function pipelineResult(overrides = {}) {
+  const { result: _result, ...base } = newResult()
+  const previewFilename = 'render-00000000-0000-4000-8000-000000000099.png'
+  return {
+    ...base,
+    sourceTool: 'openpencil_pipeline_finish',
+    published: true,
+    preview: {
+      path: join(renderDir(), previewFilename),
+      filename: previewFilename,
+      mimeType: 'image/png',
+      bytes: 1234,
+      width: 390,
+      height: 844,
+      sha256: IMAGE_SHA,
+      index: 0,
+    },
+    note: 'Published /tmp/generated.op atomically and requested idle-only editor auto-open.',
     ...overrides,
   }
 }
@@ -227,7 +250,7 @@ function observe(hydration, sessionId, callId, result) {
   }, { isError: false, value: result, content: [] })
 }
 
-test('nested openpencil_new restores a document-only live editor grant but history stays preview-only', async () => {
+test('nested openpencil_new keeps explicit historical editing but reserves auto-open for the live settlement', async () => {
   const sessions = new Map()
   const harness = await createHarness({ sessions })
   try {
@@ -262,9 +285,50 @@ test('nested openpencil_new restores a document-only live editor grant but histo
     const historicalEnvelope = (await historical.json()).$dshOpenPencil
     assert.equal('image' in historicalEnvelope, false)
     assert.equal(historicalEnvelope.document.path, '/tmp/generated.op')
-    assert.equal('editor' in historicalEnvelope, false)
+    assert.equal(historicalEnvelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
     assert.equal('autoOpenEditor' in historicalEnvelope, false)
-    assert.equal(harness.editorCalls.length, 1)
+    assert.equal(harness.editorCalls.length, 2)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('nested pipeline_finish restores the same live document grant and idle auto-open capability', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = pipelineResult()
+    const callId = 'outer:code:pipeline-finish'
+    observe(harness.hydration, 'session-pipeline-live', callId, result)
+    sessions.set('session-pipeline-live', { events: [historicalEvent(callId, result)] })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-live',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.match(envelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
+    assert.equal(envelope.frames.length, 1)
+    assert.equal(envelope.document.path, '/tmp/generated.op')
+    assert.equal(envelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
+    assert.equal(envelope.autoOpenEditor, true)
+    assert.deepEqual(harness.editorCalls, [{
+      sourcePath: '/tmp/generated.op',
+      sourceSha256: DOCUMENT_SHA,
+    }])
+
+    sessions.set('session-pipeline-history', { events: [historicalEvent(callId, result)] })
+    const historical = await harness.request({
+      sessionId: 'session-pipeline-history',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(historical.status, 200)
+    const historicalEnvelope = (await historical.json()).$dshOpenPencil
+    assert.match(historicalEnvelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
+    assert.equal(historicalEnvelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
+    assert.equal('autoOpenEditor' in historicalEnvelope, false)
   } finally {
     await harness.cleanup()
   }
@@ -646,4 +710,13 @@ test('strict new-result parser binds the source and immutable document fingerpri
   assert.equal(parseHydratableNewResult({ ...result, sha256: 'c'.repeat(64) }), undefined)
   assert.equal(parseHydratableNewResult({ ...result, autoOpenEditor: false }), undefined)
   assert.equal(parseHydratableNewResult({ ...result, image: {} }), undefined)
+})
+
+test('strict pipeline-result parser requires the published document-only contract', () => {
+  const result = pipelineResult()
+  assert.ok(parseHydratablePipelineResult(result))
+  assert.equal(parseHydratablePipelineResult({ ...result, sourceTool: 'openpencil_new' }), undefined)
+  assert.equal(parseHydratablePipelineResult({ ...result, published: false }), undefined)
+  assert.equal(parseHydratablePipelineResult({ ...result, result: { applied: true } }), undefined)
+  assert.equal(parseHydratablePipelineResult({ ...result, autoOpenEditor: false }), undefined)
 })

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Rilis plugin saat ini: <code>0.1.0-rc.4</code> · Diuji hingga DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Rilis plugin saat ini: <code>0.1.0-rc.5</code> · Diuji hingga DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ Dengan `editable: true`, aksi edit membuka editor OpenPencil terkelola — selek
 
 ### 🤖 Alat Desain Asli-Agen
 
-Lima alat — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — memungkinkan Agen membuat, mengubah, dan membaca kanvas nyata melalui program `batch_design` transaksional.
+Lima alat kanvas langsung dan enam alat `openpencil_pipeline_*` memungkinkan Agen membuat, memeriksa, menyempurnakan, menerbitkan, mengubah, dan membaca kanvas nyata melalui runtime OpenPencil terkelola.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ Izin gambar dan dokumen adalah kapabilitas bertanda tangan yang terikat hash. Me
 
 ### ⚡ Keamanan Transaksional
 
-Dokumen baru diterbitkan hanya setelah seluruh program `batch_design` berhasil. Alat ini tidak pernah menimpa jalur yang sudah ada, batch yang gagal tidak meninggalkan file kosong, dan penyimpanan menggunakan hash optimistis dengan penggantian atomik.
+Dokumen pipeline penuh tetap menjadi draf privat yang belum diterbitkan sampai semua gerbang kualitas native dan DSH lolos. Penerbitan tidak menimpa jalur yang sudah ada, dan pembatalan atau batch gagal tidak meninggalkan target kosong.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ Kartu alat dan editor terkelola mengikuti lokale Tionghoa/Inggris serta tema ter
 
 ### 🎯 Satu Alur Kerja Lengkap
 
-"Kebutuhan dalam percakapan → Agen mengedit kanvas nyata → pratinjau langsung dan validasi interaksi → terus beriterasi" — satu putaran, tanpa bolak-balik tangkapan layar.
+"Kebutuhan → draf privat → batch semantik → peninjauan dan perbaikan PNG presisi → penerbitan atomik setelah gerbang kualitas" — satu alur lengkap di dalam DSH.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | Alat | Fungsinya |
 | --- | --- |
-| `openpencil_new` | Membuat `.op` baru dari satu skrip QuickJS `batch_design` transaksional, menyimpannya secara atomik melalui sistem file sandbox DSH, lalu dalam pemanggilan alat yang sama mengembalikan presentasi dapat diedit yang bertanda tangan sehingga DSH otomatis membuka bilah samping editor. |
+| `openpencil_new` | Jalur cepat kompatibel untuk pekerjaan sederhana: menjalankan satu skrip QuickJS `batch_design` transaksional, menerbitkan hanya jika target belum ada, dan mengembalikan presentasi yang dapat diedit. Utamakan pipeline penuh untuk desain produksi. |
+| `openpencil_pipeline_begin` | Memulai draf privat milik sesi untuk jalur `.op` baru yang relatif terhadap workspace; file target tetap belum diterbitkan dan tidak disentuh. |
+| `openpencil_pipeline_context` | Memuat prompt design-agent native yang dinamis beserta panduan, panduan gaya, variabel/tema, serta metadata atau referensi skrip UI kit yang relevan. |
+| `openpencil_pipeline_batch` | Menerapkan batch QuickJS semantik secara serial ke draf: bangun kerangka lebih dahulu, lalu tambahkan dan sempurnakan bagian. |
+| `openpencil_pipeline_inspect` | Menjalankan pemeriksaan kualitas native atau layout terurai, atau membuat PNG presisi yang dapat dibuka model dengan pembacaan gambar dan ditinjau secara visual. |
+| `openpencil_pipeline_finish` | Menjalankan finalisasi native, lint, layout, kebaruan screenshot, dan gerbang kualitas DSH, lalu menerbitkan secara atomik dengan `createIfAbsent` dan mengembalikan presentasi yang dapat diedit. |
+| `openpencil_pipeline_abort` | Membuang draf yang belum diterbitkan tanpa membuat file target. |
 | `openpencil_create` | Menerapkan program `batch_design` transaksional untuk menghasilkan atau menyusun ulang simpul pada kanvas langsung yang sudah ada. |
 | `openpencil_edit` | Mengubah simpul eksplisit atau simpul tunggal yang dipilih pengguna. |
 | `openpencil_render` | Membuat snapshot `.op` yang tidak dapat diubah dan diarahkan-oleh-konten, lalu merender setiap frame tingkat-teratas pada halaman aktif — `scale` dan `editable` opsional. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Alur Kerja Desain Agen
 
-Untuk permintaan berbahasa alami tanpa dokumen yang sudah ada, Agen sebaiknya memanggil `openpencil_new` dengan jalur `.op` baru yang relatif terhadap workspace dan program `batch_design` lengkap pertama. Alat ini menjalankan program tersebut di daemon OpenPencil terkelola yang privat dan menerbitkan dokumen otoritatif hanya setelah seluruh batch berhasil. Alat ini tidak pernah menimpa jalur yang sudah ada, dan batch yang gagal tidak meninggalkan file kosong. Presentasi dapat diedit yang bertanda tangan dari pemanggilan sukses yang sama membuat DSH otomatis membuka bilah samping editor; tidak diperlukan pemanggilan `openpencil_render` kedua ataupun pratinjau PNG. Kartu yang diputar ulang, historis, atau dihidrasi tidak pernah terbuka otomatis.
+Untuk desain produksi, gunakan `openpencil_pipeline_begin` → `openpencil_pipeline_context` → panggilan berulang `openpencil_pipeline_batch` dan `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`. Daemon draf bersifat privat bagi sesi DSH pemiliknya, dan jalur workspace yang diminta belum ada sampai penerbitan berhasil. Screenshot draf privat antara tidak pernah mengekspos bilah samping yang dapat diedit, sehingga pengeditan pengguna tidak berlomba dengan batch Agen; kemampuan edit baru diberikan setelah penerbitan.
 
-`openpencil_new` memakai antarmuka QuickJS `script` yang sebenarnya dari `batch_design`: Agen membangun dengan panggilan `I`/`K` serta data, array, dan loop JavaScript biasa tanpa menulis `operations` tingkat rendah secara manual. DSH selalu mengaktifkan `postProcess`, lalu secara eksplisit memanggil `finalize_design` setelah pembuatan. Langkah ini melengkapi pembersihan akhir yang setara dengan tahap penutup host bawaan OpenPencil sebelum dokumen diterbitkan. Runtime terkelola dibundel bersama plugin dan tidak bergantung pada biner desktop. Inilah jalur pembuatan saat ini; dokumentasi ini tidak menyatakan bahwa jalur tersebut melewati alat terpisah `design_skeleton`, `design_content`, atau `design_refine`.
+Konteks bukan template statis: konteks menggabungkan prompt design-agent native OpenPencil yang dinamis dengan panduan, panduan gaya, variabel/tema, dan UI kit yang relevan. Bangun kerangka struktural terlebih dahulu, lalu tambahkan konten dan penyempurnaan dalam batch bagian semantik. Demi kecepatan, batch yang berhasil hanya mengembalikan diagnostik layout ringkas; minta layout terurai lengkap melalui `openpencil_pipeline_inspect` saat dibutuhkan. Setidaknya panggil `openpencil_pipeline_inspect` dengan `kind: "screenshot"` setelah identitas/judul terbentuk, lalu sekali lagi setelah tugas utama atau formulir beserta CTA selesai. Pada setiap tonggak, model membuka PNG presisi dengan pembacaan gambar, memperbaiki pemotongan, overflow, hierarki, jarak, proporsi, kontras, dan keterbacaan yang terlihat, lalu mengulanginya sesuai kebutuhan; peninjauan visual tidak terjadi otomatis.
+
+Penyelesaian menjalankan finalisasi, lint, dan pemeriksaan layout native OpenPencil serta gerbang kualitas DSH. Pemeriksaan deterministik ini tidak menciptakan selera atau polesan visual. Setelah finalisasi, ambil screenshot presisi baru yang terpisah dan minta model meninjaunya secara visual; screenshot tonggak antara tidak pernah dapat memenuhi gerbang kebaruan pasca-finalisasi ini. Baru setelah itu panggilan finish terakhir membuat target secara atomik dengan `createIfAbsent`. Jika gerbang gagal atau `openpencil_pipeline_abort` dipanggil, target tetap tidak ada. Setiap hasil generasi yang diterbitkan adalah satu presentation yang memuat pratinjau PNG final presisi dan izin edit terbatas dokumen; bilah samping hanya terbuka otomatis saat kosong, editor sesi lain tidak pernah diganti, dan **Edit canvas** selalu tersedia untuk peralihan eksplisit. Hasil `openpencil_pipeline_finish` yang dinest melalui PTC/Code Mode tetap mempertahankan presentation yang sama dan tidak pernah turun menjadi JSON biasa atau kartu hanya-baca. Kartu historis atau yang dihidrasi tidak pernah terbuka otomatis.
+
+Dalam layanan DSH yang sama dan masih berjalan, berganti browser atau memuat ulang dapat memulihkan publication tahan lama yang diparse secara ketat dari `openpencil_new` atau `openpencil_pipeline_finish` sebagai PNG presisi beserta aksi **Edit canvas** yang eksplisit. Kartu historis tidak pernah membuka bilah samping secara otomatis; pengguna harus mengeklik aksi tersebut. `openpencil_render` historis biasa tetap hanya-baca, dan koneksi non-loopback tidak pernah menerima izin editor.
+
+Skill `openpencil-design` bawaan tetap menjadi panduan scripting dan kualitas, sementara runtime terkelola tidak bergantung pada biner desktop. `openpencil_new` tetap menjadi jalur cepat satu batch yang kompatibel, tetapi generasi berkualitas produksi sebaiknya mengutamakan pipeline penuh.
 
 Gunakan `openpencil_create` dan `openpencil_edit` hanya untuk kanvas langsung yang sudah ada. Pengeditannya tetap belum disimpan hingga aksi Simpan pada editor.
-
-## Kontrak Rendering
-
-`openpencil_render` menerima jalur `.op`, `scale` opsional (`0 < scale <= 8`, default `1`), dan `editable` opsional (default `false`). Biarkan `width` dan `height` kosong untuk jalur OpenPencil yang akurat: keduanya menggambarkan viewport runtime, bukan dimensi ekspor desain, dan hanya diterima oleh fallback Jian berfidelitas lebih rendah.
-
-Penemuan biner OpenPencil memeriksa, secara berurutan:
-
-1. `DSH_OPENPENCIL_BINARY` atau `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `openpencil-desktop` di `PATH`
-
-Penemuan fallback Jian menggunakan `DSH_OPENPENCIL_JIAN`, build rilis lokal yang diketahui, lalu `PATH`. Jika biner OpenPencil yang akurat benar-benar tidak tersedia, Jian dapat menghasilkan fallback `runtime-preview` yang diberi label jelas. Kegagalan renderer akurat, waktu habis, dan PNG tidak valid tidak akan diam-diam dialihkan ke fallback.
 
 ## Aset Penampil Web
 
@@ -186,7 +185,7 @@ Sesi yang dapat diedit menggunakan host web terkelola OpenPencil — arsitektur 
 
 Startup menggunakan listening handshake yang aman untuk mount lambat: probe kesiapan baru dimulai setelah host bawaan mengumumkan alamat yang telah di-bind. Instalasi OpenPencil desktop tidak diperlukan.
 
-Instalasi yang dipublikasikan memilih paket yang sesuai dengan OS/CPU saat ini dari enam paket platform native: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, dan `win32-x64`; kedua paket Linux menargetkan glibc. Paket root mendeklarasikan semuanya sebagai `optionalDependencies` dengan versi persis agar pengelola paket memilih varian yang benar (misalnya `@zseven-w/dsh-openpencil-darwin-arm64`). Paket tersebut menyertakan `op-host-web-server`, bundel web editor, dan CanvasKit sebagai satu runtime yang saling cocok. Karena itu, editor terkelola tidak bergantung pada `/Applications/OpenPencil.app`, `openpencil-desktop` di `PATH`, ataupun checkout sumber OpenPencil. Ketentuan ini berlaku untuk sesi terkelola yang dapat diedit; renderer PNG presisi tetap mengikuti kontrak penemuan biner terpisah yang dijelaskan di atas.
+Instalasi yang dipublikasikan memilih paket yang sesuai dengan OS/CPU saat ini dari enam paket platform native: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, dan `win32-x64`; kedua paket Linux menargetkan glibc. Paket root mendeklarasikan semuanya sebagai `optionalDependencies` dengan versi persis agar pengelola paket memilih varian yang benar (misalnya `@zseven-w/dsh-openpencil-darwin-arm64`). Paket tersebut menyertakan `op-host-web-server`, bundel web editor, dan CanvasKit sebagai satu runtime yang saling cocok. Karena itu, editor terkelola tidak bergantung pada `/Applications/OpenPencil.app`, `openpencil-desktop` di `PATH`, ataupun checkout sumber OpenPencil.
 
 Jika DSH memuat ulang atau melepas plugin saat kanvas masih kotor (belum disimpan), host menyimpan draf pemulihan lokal yang tidak transparan hingga tujuh hari. Membuka ulang sumber yang sama akan menanyakan sebelum memulihkannya ke kanvas langsung; pemulihan tidak pernah menimpa file `.op` hingga pengguna menyimpan secara eksplisit.
 
@@ -226,7 +225,7 @@ Hasil yang terlihat model tetap berupa JSON polos. `presentationMeta.$dshOpenPen
 
 Hasil juga mencatat `renderer`, `rendererBinary`, `fidelity`, dan peringatan apa pun. Pesan schema-v1 yang hanya berisi PNG yang sudah ada tetap dapat dirender.
 
-DSH `0.1.1-rc.2` tidak menyimpan metadata presentasi peramban secara persisten untuk alat yang bersarang di bawah PTC/Code Mode. Plugin memulihkan proyeksi UI-only tersebut melalui endpoint same-origin yang terikat sesi: peramban hanya mengirim session id, call id, dan SHA-256 dokumen yang tidak dapat diubah, sementara host menyelesaikan hasil otoritatif dari log sesi DSH yang tahan lama dan menggunakan penanda dalam-proses berumur pendek hanya untuk mengotorisasi pengeditan langsung terbaru. Kapabilitas pratinjau/editor bertanda tangan tidak pernah masuk ke hasil alat kanonis atau konteks model. Riwayat tahan lama dapat memulihkan pratinjau baca-saja; izin editor hanya diterbitkan untuk hasil langsung terbaru yang tepercaya.
+DSH `0.1.1-rc.2` tidak menyimpan metadata presentasi peramban secara persisten untuk alat yang bersarang di bawah PTC/Code Mode. Plugin memulihkan proyeksi UI-only tersebut melalui endpoint same-origin yang terikat sesi: peramban hanya mengirim session id, call id, dan SHA-256 dokumen yang tidak dapat diubah, sementara host menyelesaikan hasil otoritatif dari log sesi DSH yang tahan lama dan menggunakan penanda dalam-proses berumur pendek hanya untuk mengotorisasi pengeditan langsung terbaru. Kapabilitas pratinjau/editor bertanda tangan tidak pernah masuk ke hasil alat kanonis atau konteks model. Riwayat tahan lama dari `openpencil_render` biasa tetap hanya-baca. Publication tahan lama yang diparse secara ketat dari `openpencil_new` atau `openpencil_pipeline_finish` hanya dapat menerima izin editor melalui loopback dan setelah klik eksplisit pengguna; pembukaan otomatis bilah samping hanya untuk hasil langsung terbaru yang tepercaya.
 
 Untuk pemutaran ulang yang terbatas, pemulihan metadata bersarang menerima hingga 128 frame tingkat-teratas; hasil Code Mode yang lebih besar tetap tersedia melalui fallback JSON kanonisnya.
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 Build memerlukan Node 24.11 atau lebih baru dan pnpm. Paket host/klien DSH adalah dependensi peer yang disediakan oleh profil DSH target. Alat build diselesaikan dari dependensi dev lokal, checkout DSH tertaut yang aktif, atau bundel sumber DSH yang terpasang; `DSH_SOURCE_ROOT` dapat memilih checkout sumber secara eksplisit. Lockfile mengunci alat build publik yang berdiri sendiri saat lingkungan tersebut disediakan secara terpisah.

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Bản phát hành plugin hiện tại: <code>0.1.0-rc.4</code> · Đã kiểm thử đến DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Bản phát hành plugin hiện tại: <code>0.1.0-rc.5</code> · Đã kiểm thử đến DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ Với `editable: true`, hành động chỉnh sửa sẽ mở trình biên tập
 
 ### 🤖 Công cụ Thiết kế dành riêng cho Agent
 
-Năm công cụ — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — cho phép Agent tạo, sửa đổi và đọc một canvas thực thông qua các chương trình `batch_design` giao dịch.
+Năm công cụ thao tác canvas trực tiếp cùng sáu công cụ `openpencil_pipeline_*` cho phép Agent tạo, kiểm tra, tinh chỉnh, công bố, sửa đổi và đọc một canvas thực qua các runtime OpenPencil được quản lý.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ Các quyền truy cập hình ảnh và tài liệu là các capability được
 
 ### ⚡ An toàn Giao dịch
 
-Một tài liệu mới chỉ được công bố sau khi toàn bộ chương trình `batch_design` thành công. Công cụ không bao giờ ghi đè một đường dẫn đã tồn tại, một batch thất bại không để lại tệp rỗng nào, và việc lưu sử dụng một băm lạc quan với thay thế nguyên tử.
+Tài liệu trong pipeline đầy đủ vẫn là bản nháp riêng tư, chưa công bố cho đến khi vượt qua mọi cổng chất lượng native và DSH. Việc công bố không ghi đè đường dẫn hiện có; thao tác hủy hoặc batch thất bại không để lại đích rỗng.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ Thẻ công cụ và trình biên tập quản lý tuân theo ngôn ngữ Trung/
 
 ### 🎯 Một Quy trình Hoàn chỉnh
 
-"Yêu cầu trong cuộc hội thoại → Agent chỉnh sửa canvas thực → xem trước trực tiếp và kiểm chứng tương tác → tiếp tục lặp" — một vòng lặp duy nhất, không khứ hồi ảnh chụp màn hình.
+"Yêu cầu → bản nháp riêng tư → các batch ngữ nghĩa → xem xét và sửa PNG chính xác → công bố nguyên tử sau các cổng chất lượng" — một vòng khép kín trong DSH.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | Công cụ | Chức năng |
 | --- | --- |
-| `openpencil_new` | Tạo một tệp `.op` hoàn toàn mới từ một script QuickJS `batch_design` giao dịch, lưu nó một cách nguyên tử qua hệ thống tệp sandbox của DSH, rồi trả về một phần trình bày có thể chỉnh sửa đã ký ngay trong cùng lời gọi công cụ để DSH tự động mở thanh bên của trình biên tập. |
+| `openpencil_new` | Lối nhanh tương thích cho tác vụ đơn giản: chạy một script QuickJS `batch_design` giao dịch, chỉ công bố nếu đích chưa tồn tại và trả về phần trình bày có thể chỉnh sửa. Hãy ưu tiên pipeline đầy đủ cho thiết kế production. |
+| `openpencil_pipeline_begin` | Bắt đầu bản nháp riêng tư thuộc về phiên cho một đường dẫn `.op` mới tương đối với workspace; tệp đích vẫn chưa công bố và không bị đụng tới. |
+| `openpencil_pipeline_context` | Tải prompt design-agent native động cùng các hướng dẫn, style guide, biến/chủ đề và metadata hoặc tham chiếu script của UI kit liên quan. |
+| `openpencil_pipeline_batch` | Áp dụng nối tiếp các batch QuickJS ngữ nghĩa vào bản nháp: dựng bộ khung trước, sau đó thêm và tinh chỉnh từng phần. |
+| `openpencil_pipeline_inspect` | Chạy kiểm tra chất lượng native hoặc layout đã phân giải, hay tạo PNG chính xác để mô hình mở bằng khả năng đọc ảnh và xem xét trực quan. |
+| `openpencil_pipeline_finish` | Chạy finalization native, lint, layout, độ mới của screenshot và các cổng chất lượng DSH, rồi công bố nguyên tử bằng `createIfAbsent` và trả về phần trình bày có thể chỉnh sửa. |
+| `openpencil_pipeline_abort` | Loại bỏ bản nháp chưa công bố mà không tạo tệp đích. |
 | `openpencil_create` | Áp dụng một chương trình `batch_design` giao dịch để tạo hoặc tái cấu trúc các nút trên một canvas trực tiếp hiện có. |
 | `openpencil_edit` | Sửa đổi một nút tường minh hoặc nút duy nhất do người dùng chọn. |
 | `openpencil_render` | Tạo một ảnh chụp `.op` bất biến, định địa chỉ theo nội dung và kết xuất mọi khung cấp cao nhất trên trang đang hoạt động — `scale` và `editable` tùy chọn. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Quy trình Thiết kế của Agent
 
-Với một yêu cầu ngôn ngữ tự nhiên không kèm tài liệu hiện có, Agent nên gọi `openpencil_new` với một đường dẫn `.op` mới tương đối với workspace và chương trình `batch_design` hoàn chỉnh đầu tiên. Công cụ chạy chương trình đó trong một daemon OpenPencil được quản lý riêng tư và chỉ công bố tài liệu có thẩm quyền sau khi toàn bộ batch thành công. Nó không bao giờ ghi đè một đường dẫn đã tồn tại và một batch thất bại không để lại tệp rỗng nào. Phần trình bày có thể chỉnh sửa đã ký từ chính lời gọi công cụ thành công đó khiến DSH tự động mở thanh bên của trình biên tập; không cần lời gọi `openpencil_render` thứ hai hay bản xem trước PNG. Các thẻ được phát lại, thẻ lịch sử hoặc thẻ được hydrate không bao giờ tự mở.
+Với thiết kế production, hãy dùng `openpencil_pipeline_begin` → `openpencil_pipeline_context` → lặp lại `openpencil_pipeline_batch` và `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`. Daemon bản nháp chỉ dành riêng cho phiên DSH sở hữu nó, và đường dẫn workspace được yêu cầu chưa tồn tại cho đến khi công bố thành công. Ảnh chụp bản nháp riêng tư trung gian không bao giờ lộ thanh bên có thể chỉnh sửa, tránh việc chỉnh sửa của người dùng chạy đua với các batch của Agent; khả năng chỉnh sửa chỉ được cấp sau khi công bố.
 
-`openpencil_new` dùng giao diện QuickJS `script` thực của `batch_design`: Agent xây dựng bằng các lời gọi `I`/`K` cùng dữ liệu, mảng và vòng lặp JavaScript thông thường, thay vì tự viết `operations` cấp thấp. DSH luôn bật `postProcess`, rồi gọi rõ ràng `finalize_design` sau khi tạo. Bước này bổ sung quy trình dọn dẹp cuối tương đương với giai đoạn kết thúc của host OpenPencil tích hợp trước khi công bố tài liệu. Runtime được quản lý đi kèm plugin và không phụ thuộc vào binary desktop. Đây là đường tạo tài liệu hiện tại; tài liệu này không khẳng định nó đi qua các công cụ riêng `design_skeleton`, `design_content` hoặc `design_refine`.
+Ngữ cảnh không phải mẫu tĩnh: nó kết hợp prompt design-agent native động của OpenPencil với các hướng dẫn, style guide, biến/chủ đề và UI kits liên quan. Hãy dựng bộ khung cấu trúc trước, rồi thêm nội dung và tinh chỉnh theo các batch phần có ngữ nghĩa. Để giữ tốc độ, batch thành công chỉ trả về chẩn đoán layout gọn; hãy yêu cầu layout đã phân giải đầy đủ qua `openpencil_pipeline_inspect` khi cần. Tối thiểu hãy gọi `openpencil_pipeline_inspect` với `kind: "screenshot"` sau khi thiết lập dấu ấn/tiêu đề, rồi gọi lại sau khi hoàn thành tác vụ chính hoặc form cùng CTA. Ở mỗi mốc, mô hình mở PNG chính xác bằng khả năng đọc ảnh, sửa phần cắt, tràn, phân cấp, khoảng cách, tỷ lệ, độ tương phản và độ dễ đọc nhìn thấy được, rồi lặp lại khi cần; việc xem xét trực quan không tự động xảy ra.
+
+Giai đoạn hoàn tất chạy finalization, lint và kiểm tra layout native của OpenPencil cùng cổng chất lượng DSH. Các kiểm tra tất định này không tạo ra gu thẩm mỹ hay độ trau chuốt trực quan. Sau finalization, hãy chụp một ảnh chính xác mới và riêng biệt để mô hình xem xét trực quan; ảnh ở các mốc trung gian không bao giờ có thể thỏa cổng độ mới hậu finalization này. Chỉ sau đó lời gọi finish cuối mới tạo đích nguyên tử bằng `createIfAbsent`. Nếu cổng thất bại hoặc gọi `openpencil_pipeline_abort`, đích vẫn không tồn tại. Mỗi kết quả đã công bố là một presentation duy nhất chứa cả bản xem trước PNG cuối chính xác và quyền chỉnh sửa giới hạn trong tài liệu; nó chỉ tự mở thanh bên khi đang trống, không thay trình biên tập của phiên khác và luôn giữ **Sửa canvas** để chuyển đổi rõ ràng. Kết quả `openpencil_pipeline_finish` lồng qua PTC/Code Mode vẫn giữ nguyên presentation đó và không bao giờ hạ thành JSON thường hay thẻ chỉ đọc. Thẻ lịch sử hoặc đã hydrate không tự mở.
+
+Trong cùng dịch vụ DSH đang chạy, sau khi đổi trình duyệt hoặc tải lại, một publication bền vững được phân tích nghiêm ngặt từ `openpencil_new` hoặc `openpencil_pipeline_finish` có thể được khôi phục thành PNG chính xác cùng hành động **Sửa canvas** rõ ràng. Thẻ lịch sử không bao giờ tự mở thanh bên; người dùng phải bấm hành động đó. `openpencil_render` lịch sử thông thường vẫn chỉ đọc, và kết nối không phải loopback không bao giờ nhận quyền biên tập.
+
+Skill `openpencil-design` đi kèm vẫn là hướng dẫn về script và chất lượng, còn runtime được quản lý không phụ thuộc vào binary desktop. `openpencil_new` vẫn là lối nhanh một batch tương thích, nhưng việc tạo thiết kế chất lượng production nên ưu tiên pipeline đầy đủ.
 
 Chỉ dùng `openpencil_create` và `openpencil_edit` cho một canvas trực tiếp hiện có. Các chỉnh sửa của chúng vẫn chưa được lưu cho đến khi hành động Lưu của trình biên tập được thực hiện.
-
-## Hợp đồng Kết xuất
-
-`openpencil_render` chấp nhận một đường dẫn `.op`, tham số `scale` tùy chọn (`0 < scale <= 8`, mặc định `1`) và tham số `editable` tùy chọn (mặc định `false`). Để trống `width` và `height` cho đường dẫn OpenPencil chính xác: chúng mô tả một viewport lúc chạy, không phải kích thước xuất thiết kế, và chỉ được chấp nhận bởi dự phòng Jian có độ trung thực thấp hơn.
-
-Việc tìm kiếm nhị phân OpenPencil kiểm tra theo thứ tự:
-
-1. `DSH_OPENPENCIL_BINARY` hoặc `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `openpencil-desktop` trong `PATH`
-
-Việc tìm kiếm dự phòng Jian sử dụng `DSH_OPENPENCIL_JIAN`, một bản build phát hành cục bộ đã biết, rồi đến `PATH`. Nếu nhị phân OpenPencil chính xác thực sự không khả dụng, Jian có thể tạo ra dự phòng `runtime-preview` được gắn nhãn rõ ràng. Các lỗi kết xuất chính xác, hết thời gian chờ và PNG không hợp lệ không tự động chuyển sang dự phòng một cách âm thầm.
 
 ## Tài nguyên Web Viewer
 
@@ -186,7 +185,7 @@ Các phiên có thể chỉnh sửa sử dụng web host được quản lý c�
 
 Quá trình khởi động dùng listening handshake an toàn với mount chậm: các probe sẵn sàng chỉ bắt đầu sau khi host đi kèm công bố địa chỉ đã bind. Không cần cài OpenPencil bản desktop.
 
-Các bản cài đặt đã phát hành chọn gói phù hợp với OS/CPU hiện tại trong sáu gói nền tảng native: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` và `win32-x64`; cả hai gói Linux đều nhắm tới glibc. Gói gốc khai báo chúng là `optionalDependencies` với phiên bản chính xác để trình quản lý gói chọn đúng biến thể (ví dụ `@zseven-w/dsh-openpencil-darwin-arm64`). Gói đó phân phối `op-host-web-server`, web bundle của trình biên tập và CanvasKit tương thích với nhau như một runtime duy nhất. Vì vậy, trình biên tập được quản lý không phụ thuộc vào `/Applications/OpenPencil.app`, `openpencil-desktop` trong `PATH` hay một checkout mã nguồn OpenPencil. Điều này áp dụng cho các phiên chỉnh sửa được quản lý; trình kết xuất PNG chính xác vẫn tuân theo hợp đồng tìm kiếm nhị phân riêng được mô tả ở trên.
+Các bản cài đặt đã phát hành chọn gói phù hợp với OS/CPU hiện tại trong sáu gói nền tảng native: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` và `win32-x64`; cả hai gói Linux đều nhắm tới glibc. Gói gốc khai báo chúng là `optionalDependencies` với phiên bản chính xác để trình quản lý gói chọn đúng biến thể (ví dụ `@zseven-w/dsh-openpencil-darwin-arm64`). Gói đó phân phối `op-host-web-server`, web bundle của trình biên tập và CanvasKit tương thích với nhau như một runtime duy nhất. Vì vậy, trình biên tập được quản lý không phụ thuộc vào `/Applications/OpenPencil.app`, `openpencil-desktop` trong `PATH` hay một checkout mã nguồn OpenPencil.
 
 Nếu DSH tải lại hoặc gỡ plugin trong khi canvas đang có thay đổi chưa lưu, host giữ một bản nháp phục hồi cục bộ không thể đọc được trong tối đa bảy ngày. Việc mở lại cùng nguồn đó sẽ hỏi trước khi khôi phục nó vào canvas trực tiếp; phục hồi không bao giờ ghi đè tệp `.op` cho đến khi người dùng lưu một cách tường minh.
 
@@ -226,7 +225,7 @@ Kết quả hiển thị cho mô hình vẫn là JSON thuần. `presentationMeta
 
 Kết quả cũng ghi lại `renderer`, `rendererBinary`, `fidelity` và mọi cảnh báo. Các thông điệp schema-v1 chỉ có PNG hiện có vẫn có thể được kết xuất.
 
-DSH `0.1.1-rc.2` không lưu trữ siêu dữ liệu trình bày của trình duyệt cho các công cụ nằm lồng bên dưới PTC/Code Mode. Plugin khôi phục phép chiếu UI-only đó qua một endpoint same-origin, session-bound: trình duyệt chỉ gửi session id, call id và SHA-256 bất biến của tài liệu, trong khi host phân giải kết quả có thẩm quyền từ nhật ký phiên DSH bền vững và chỉ sử dụng một marker trong tiến trình có thời hạn ngắn để ủy quyền cho việc chỉnh sửa trực tiếp gần đây. Các capability xem trước/biên tập được ký không bao giờ đi vào kết quả công cụ chuẩn hoặc ngữ cảnh mô hình. Lịch sử bền vững có thể khôi phục các bản xem trước chỉ đọc; các quyền truy cập biên tập chỉ được cấp cho các kết quả trực tiếp gần đây, đáng tin cậy.
+DSH `0.1.1-rc.2` không lưu trữ siêu dữ liệu trình bày của trình duyệt cho các công cụ nằm lồng bên dưới PTC/Code Mode. Plugin khôi phục phép chiếu UI-only đó qua một endpoint same-origin, session-bound: trình duyệt chỉ gửi session id, call id và SHA-256 bất biến của tài liệu, trong khi host phân giải kết quả có thẩm quyền từ nhật ký phiên DSH bền vững và chỉ sử dụng một marker trong tiến trình có thời hạn ngắn để ủy quyền cho việc chỉnh sửa trực tiếp gần đây. Các capability xem trước/biên tập được ký không bao giờ đi vào kết quả công cụ chuẩn hoặc ngữ cảnh mô hình. Lịch sử bền vững của `openpencil_render` thông thường vẫn chỉ đọc. Publication bền vững được phân tích nghiêm ngặt từ `openpencil_new` hoặc `openpencil_pipeline_finish` chỉ có thể nhận quyền biên tập qua loopback và sau cú nhấp rõ ràng của người dùng; tự động mở thanh bên chỉ dành cho kết quả trực tiếp gần đây, đáng tin cậy.
 
 Đối với phát lại có giới hạn, việc phục hồi siêu dữ liệu lồng nhau chấp nhận tối đa 128 khung cấp cao nhất; các kết quả Code Mode lớn hơn vẫn khả dụng qua dự phòng JSON chuẩn của chúng.
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 Việc xây dựng yêu cầu Node 24.11 trở lên và pnpm. Các gói host/client của DSH là các peer dependency do hồ sơ DSH mục tiêu cung cấp. Các công cụ xây dựng được phân giải từ dev dependencies cục bộ, thư mục checkout DSH đã liên kết đang hoạt động hoặc một bundle nguồn DSH đã cài đặt; `DSH_SOURCE_ROOT` có thể chọn một checkout nguồn một cách tường minh. Lockfile cố định các công cụ xây dựng công khai độc lập khi môi trường đó được cấp phát riêng biệt.

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.4</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.5</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ Mit `editable: true` öffnet die Bearbeiten-Aktion den verwalteten OpenPencil-Ed
 
 ### 🤖 Agent-native Design-Tools
 
-Fünf Tools – `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` – ermöglichen es dem Agenten, über transaktionale `batch_design`-Programme eine echte Leinwand zu erstellen, zu verändern und zu lesen.
+Fünf direkte Canvas-Tools plus sechs `openpencil_pipeline_*`-Tools ermöglichen es dem Agenten, über verwaltete OpenPencil-Laufzeiten eine echte Leinwand zu erstellen, zu prüfen, zu verfeinern, zu veröffentlichen, zu ändern und zu lesen.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ Bild- und Dokument-Grants sind signierte, an Hashes gebundene Capabilities. Brow
 
 ### ⚡ Transaktionale Sicherheit
 
-Ein neues Dokument wird erst veröffentlicht, nachdem das gesamte `batch_design`-Programm erfolgreich abgeschlossen wurde. Das Tool überschreibt niemals einen vorhandenen Pfad, ein fehlgeschlagener Batch hinterlässt keine leere Datei, und Speichervorgänge verwenden einen optimistischen Hash mit atomarem Ersetzen.
+Ein Dokument der vollständigen Pipeline bleibt ein privater, unveröffentlichter Entwurf, bis alle nativen und DSH-Qualitäts-Gates bestanden sind. Die Veröffentlichung überschreibt keinen vorhandenen Pfad; Abbruch oder fehlerhafte Batches hinterlassen kein leeres Ziel.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ Die Tool-Karte und der verwaltete Editor übernehmen das Chinesisch-/Englisch-Lo
 
 ### 🎯 Ein vollständiger Workflow
 
-„Anforderung in der Unterhaltung → Agent bearbeitet die echte Leinwand → Live-Vorschau und Interaktionsvalidierung → weiter iterieren“ – eine Schleife, keine Screenshot-Roundtrips.
+„Anforderung → privater Entwurf → semantische Batches → Prüfung und Korrektur exakter PNGs → atomare Veröffentlichung nach Qualitäts-Gates“ – ein vollständiger Ablauf in DSH.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | Tool | Funktion |
 | --- | --- |
-| `openpencil_new` | Erstellt ein brandneues `.op` aus einem einzigen transaktionalen QuickJS-`batch_design`-Skript, speichert es atomar über das Sandbox-Dateisystem von DSH und gibt im selben Tool-Aufruf eine signierte bearbeitbare Darstellung zurück, die DSH automatisch im Seitenleisten-Editor öffnet. |
+| `openpencil_new` | Kompatibler Schnellpfad für einfache Aufgaben: führt ein transaktionales QuickJS-`batch_design`-Skript aus, veröffentlicht nur bei noch nicht vorhandenem Ziel und gibt eine bearbeitbare Darstellung zurück. Für produktionsreife Designs ist die vollständige Pipeline vorzuziehen. |
+| `openpencil_pipeline_begin` | Startet einen sitzungseigenen privaten Entwurf für einen neuen arbeitsbereichsrelativen `.op`-Pfad; die Zieldatei bleibt unveröffentlicht und unberührt. |
+| `openpencil_pipeline_context` | Lädt den nativen dynamischen Design-Agent-Prompt zusammen mit relevanten Richtlinien, Styleguides, Variablen/Themes und UI-Kit-Metadaten oder Skriptreferenzen. |
+| `openpencil_pipeline_batch` | Wendet semantische QuickJS-Batches seriell auf den Entwurf an: zuerst das Gerüst, danach Abschnitte und Verfeinerungen. |
+| `openpencil_pipeline_inspect` | Führt native Qualitäts- oder aufgelöste Layout-Prüfungen aus oder erzeugt ein exaktes PNG, das das Modell per Bildlesefunktion visuell prüfen kann. |
+| `openpencil_pipeline_finish` | Führt native Finalisierung, Lint, Layout, Screenshot-Aktualität und DSH-Qualitäts-Gates aus, veröffentlicht dann atomar mit `createIfAbsent` und gibt eine bearbeitbare Darstellung zurück. |
+| `openpencil_pipeline_abort` | Verwirft den unveröffentlichten Entwurf, ohne die Zieldatei anzulegen. |
 | `openpencil_create` | Wendet ein transaktionales `batch_design`-Programm an, um Knoten auf einer vorhandenen Live-Leinwand zu erzeugen oder umzustrukturieren. |
 | `openpencil_edit` | Modifiziert einen expliziten Knoten oder den einzelnen vom Benutzer ausgewählten Knoten. |
 | `openpencil_render` | Erstellt einen unveränderlichen, inhaltsadressierten `.op`-Snapshot und rendert jeden Frame der obersten Ebene auf der aktiven Seite – optional mit `scale` und `editable`. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Agent-Design-Workflow
 
-Für eine Anfrage in natürlicher Sprache ohne vorhandenes Dokument sollte der Agent `openpencil_new` mit einem neuen arbeitsbereichsrelativen `.op`-Pfad und dem ersten vollständigen `batch_design`-Programm aufrufen. Das Tool führt dieses Programm in einem privaten, verwalteten OpenPencil-Daemon aus und veröffentlicht das maßgebliche Dokument erst, nachdem der gesamte Batch erfolgreich war. Es überschreibt niemals einen vorhandenen Pfad, und ein fehlgeschlagener Batch hinterlässt keine leere Datei. Derselbe Tool-Aufruf gibt eine signierte bearbeitbare Darstellung zurück, und DSH öffnet den Seitenleisten-Editor automatisch mit dem maßgeblichen Dokument. Ein zweiter Aufruf von `openpencil_render` oder eine PNG-Vorschau ist für diesen Ablauf nicht erforderlich. Wiedergegebene oder hydrierte Karten aus dem Verlauf öffnen sich nie automatisch.
+Für produktionsreife Designs verwenden Sie `openpencil_pipeline_begin` → `openpencil_pipeline_context` → wiederholt `openpencil_pipeline_batch` und `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`. Der Entwurfs-Daemon ist privat für die besitzende DSH-Sitzung; der angeforderte Arbeitsbereichspfad existiert erst nach erfolgreicher Veröffentlichung. Zwischen-Screenshots des privaten Entwurfs legen keine bearbeitbare Seitenleiste offen, damit Benutzeränderungen nicht mit Agent-Batches konkurrieren; Bearbeitbarkeit wird erst nach der Veröffentlichung erteilt.
 
-`openpencil_new` verwendet die echte QuickJS-`script`-Schnittstelle von `batch_design`: Der Agent baut mit `I`-/`K`-Aufrufen sowie gewöhnlichen JavaScript-Daten, Arrays und Schleifen, statt Low-Level-`operations` von Hand zu schreiben. DSH aktiviert `postProcess` immer und ruft nach der Erstellung ausdrücklich `finalize_design` auf. Dadurch wird vor der Veröffentlichung dieselbe Abschlussbereinigung wie beim integrierten OpenPencil-Host ergänzt. Die verwaltete Laufzeit ist im Plugin enthalten und benötigt keine Desktop-Binärdatei. Dies ist der aktuelle Erstellungspfad; er durchläuft nicht vorgeblich die separaten Tools `design_skeleton`, `design_content` oder `design_refine`.
+Der Kontext ist keine statische Vorlage: Er kombiniert den nativen dynamischen Design-Agent-Prompt von OpenPencil mit relevanten Richtlinien, Styleguides, Variablen/Themes und UI-Kits. Erstellen Sie zuerst ein strukturelles Gerüst und ergänzen sowie verfeinern Sie danach semantische Abschnitte. Erfolgreiche Batches geben zugunsten der Geschwindigkeit nur kompakte Layout-Diagnosen zurück; das vollständige aufgelöste Layout wird bei Bedarf über `openpencil_pipeline_inspect` angefordert. Rufen Sie mindestens nach Fertigstellung von Signatur/Überschrift und erneut nach Aufbau der Hauptaufgabe bzw. des Formulars samt CTA `openpencil_pipeline_inspect` mit `kind: "screenshot"` auf. Das Modell öffnet jedes exakte PNG mit der Bildlesefunktion, behebt sichtbaren Beschnitt, Überlauf, Hierarchie, Abstände, Proportionen, Kontrast und Textlesbarkeit und wiederholt den Vorgang nach Bedarf; die visuelle Prüfung geschieht nicht automatisch.
+
+Beim Fertigstellen laufen die native Finalisierung, Lint- und Layout-Prüfung von OpenPencil sowie das DSH-Qualitäts-Gate. Diese deterministischen Prüfungen erzeugen weder Geschmack noch visuelle Ausgereiftheit. Nach der Finalisierung muss ein separater neuer exakter Screenshot aufgenommen und vom Modell visuell geprüft werden; Zwischen-Screenshots der Meilensteine können das Aktualitäts-Gate nach der Finalisierung niemals erfüllen. Erst der anschließende Finish-Aufruf erstellt das Ziel atomar mit `createIfAbsent`. Bei einem fehlgeschlagenen Gate oder `openpencil_pipeline_abort` bleibt das Ziel abwesend. Jedes veröffentlichte Generierungsergebnis ist eine einzige Presentation mit exakter finaler PNG-Vorschau und dokumentgebundener Bearbeitungsberechtigung; sie öffnet die Seitenleiste nur im Leerlauf automatisch, ersetzt nie den Editor einer anderen Sitzung und behält stets **Leinwand bearbeiten** für einen ausdrücklichen Wechsel. Auch ein über PTC/Code Mode verschachteltes Ergebnis von `openpencil_pipeline_finish` bewahrt diese Presentation und fällt nie auf gewöhnliches JSON oder eine schreibgeschützte Karte zurück. Historische oder hydrierte Karten öffnen sich nicht automatisch.
+
+Innerhalb desselben laufenden DSH-Dienstes lässt sich nach einem Browserwechsel oder Neuladen eine strikt geparste dauerhafte Veröffentlichung von `openpencil_new` oder `openpencil_pipeline_finish` als exaktes PNG mit ausdrücklicher Aktion **Leinwand bearbeiten** wiederherstellen. Eine Verlaufskarte öffnet die Seitenleiste nie automatisch; der Benutzer muss diese Aktion anklicken. Ein gewöhnlicher historischer `openpencil_render` bleibt schreibgeschützt, und Nicht-Loopback-Verbindungen erhalten niemals einen Editor-Grant.
+
+Der gebündelte `openpencil-design`-Skill bleibt die Anleitung für Skripting und Qualität; die verwaltete Laufzeit benötigt keine Desktop-Binärdatei. `openpencil_new` bleibt als kompatibler Einzel-Batch-Schnellpfad erhalten, für produktionsreife Generierung sollte jedoch die vollständige Pipeline verwendet werden.
 
 Verwenden Sie `openpencil_create` und `openpencil_edit` nur für eine vorhandene Live-Leinwand. Ihre Änderungen bleiben bis zur Aktion „Speichern“ im Editor ungespeichert.
-
-## Rendering-Vertrag
-
-`openpencil_render` akzeptiert einen `.op`-Pfad, ein optionales `scale` (`0 < scale <= 8`, Standard `1`) und ein optionales `editable` (Standard `false`). Lassen Sie `width` und `height` für den exakten OpenPencil-Pfad ungesetzt: Sie beschreiben einen Laufzeit-Viewport und keine Design-Exportabmessungen und werden nur vom Jian-Fallback mit geringerer Wiedergabetreue akzeptiert.
-
-Die Erkennung der OpenPencil-Binärdatei prüft in dieser Reihenfolge:
-
-1. `DSH_OPENPENCIL_BINARY` oder `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `openpencil-desktop` im `PATH`
-
-Die Fallback-Erkennung von Jian verwendet `DSH_OPENPENCIL_JIAN`, einen bekannten lokalen Release-Build, und anschließend `PATH`. Wenn die exakte OpenPencil-Binärdatei tatsächlich nicht verfügbar ist, kann Jian einen klar gekennzeichneten `runtime-preview`-Fallback erzeugen. Fehler des exakten Renderers, Timeouts und ungültige PNGs fallen nicht stillschweigend zurück.
 
 ## Web-Viewer-Assets
 
@@ -186,7 +185,7 @@ Bearbeitbare Sitzungen nutzen den verwalteten Web-Host von OpenPencil – diesel
 
 Der Start verwendet einen für langsame Mounts sicheren listening handshake: Bereitschaftsprüfungen beginnen erst, nachdem der mitgelieferte Host seine gebundene Adresse gemeldet hat. Eine Desktop-Installation von OpenPencil ist nicht erforderlich.
 
-Veröffentlichte Installationen unterstützen sechs native Ziele: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` und `win32-x64`; die Linux-Pakete setzen glibc voraus. Das Root-Paket wählt über exakt versionierte `optionalDependencies` anhand von Betriebssystem und CPU das passende Plattformpaket aus (zum Beispiel `@zseven-w/dsh-openpencil-darwin-arm64`). Dieses Paket stellt `op-host-web-server`, das Web-Bundle des Editors und CanvasKit als eine zusammengehörige Laufzeit bereit. Der verwaltete Editor hängt daher weder von `/Applications/OpenPencil.app` noch von `openpencil-desktop` im `PATH` oder einem OpenPencil-Quell-Checkout ab. Dies gilt für verwaltete bearbeitbare Sitzungen; der exakte PNG-Renderer behält den oben beschriebenen separaten Vertrag zur Binärdateierkennung bei.
+Veröffentlichte Installationen unterstützen sechs native Ziele: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` und `win32-x64`; die Linux-Pakete setzen glibc voraus. Das Root-Paket wählt über exakt versionierte `optionalDependencies` anhand von Betriebssystem und CPU das passende Plattformpaket aus (zum Beispiel `@zseven-w/dsh-openpencil-darwin-arm64`). Dieses Paket stellt `op-host-web-server`, das Web-Bundle des Editors und CanvasKit als eine zusammengehörige Laufzeit bereit. Der verwaltete Editor hängt daher weder von `/Applications/OpenPencil.app` noch von `openpencil-desktop` im `PATH` oder einem OpenPencil-Quell-Checkout ab.
 
 Wenn DSH das Plugin neu lädt oder entlädt, während die Leinwand ungespeicherte Änderungen enthält, bewahrt der Host bis zu sieben Tage lang einen undurchsichtigen lokalen Wiederherstellungsentwurf auf. Beim erneuten Öffnen derselben Quelle wird nachgefragt, bevor sie in die Live-Leinwand wiederhergestellt wird; die Wiederherstellung überschreibt die `.op`-Datei nie, bis der Benutzer explizit speichert.
 
@@ -226,7 +225,7 @@ Das für das Modell sichtbare Ergebnis bleibt einfaches JSON. Das nur im Browser
 
 Das Ergebnis erfasst außerdem `renderer`, `rendererBinary`, `fidelity` und etwaige Warnungen. Vorhandene reine PNG-Schema-v1-Nachrichten bleiben renderbar.
 
-DSH `0.1.1-rc.2` speichert Browser-Präsentationsmetadaten für Tools, die unter PTC/Code Mode verschachtelt sind, nicht dauerhaft. Das Plugin stellt diese reine UI-Projektion über einen Same-Origin-, sitzungsgebundenen Endpunkt wieder her: Der Browser sendet nur die Sitzungs-ID, die Call-ID und den unveränderlichen Dokument-SHA-256, während der Host das maßgebliche Ergebnis aus dem dauerhaften DSH-Sitzungsprotokoll auflöst und einen kurzlebigen In-Process-Marker ausschließlich zur Autorisierung aktueller Live-Bearbeitungen verwendet. Signierte Vorschau-/Editor-Capabilities gelangen nie in das kanonische Tool-Ergebnis oder den Modellkontext. Der dauerhafte Verlauf kann schreibgeschützte Vorschauen wiederherstellen; Editor-Grants werden nur für aktuelle, vertrauenswürdige Live-Ergebnisse ausgestellt.
+DSH `0.1.1-rc.2` speichert Browser-Präsentationsmetadaten für Tools, die unter PTC/Code Mode verschachtelt sind, nicht dauerhaft. Das Plugin stellt diese reine UI-Projektion über einen Same-Origin-, sitzungsgebundenen Endpunkt wieder her: Der Browser sendet nur die Sitzungs-ID, die Call-ID und den unveränderlichen Dokument-SHA-256, während der Host das maßgebliche Ergebnis aus dem dauerhaften DSH-Sitzungsprotokoll auflöst und einen kurzlebigen In-Process-Marker ausschließlich zur Autorisierung aktueller Live-Bearbeitungen verwendet. Signierte Vorschau-/Editor-Capabilities gelangen nie in das kanonische Tool-Ergebnis oder den Modellkontext. Der dauerhafte Verlauf eines gewöhnlichen `openpencil_render` bleibt schreibgeschützt. Eine strikt geparste dauerhafte Veröffentlichung von `openpencil_new` oder `openpencil_pipeline_finish` kann nur über Loopback und nach ausdrücklichem Klick des Benutzers einen Editor-Grant erhalten; das automatische Öffnen der Seitenleiste bleibt aktuellen, vertrauenswürdigen Live-Ergebnissen vorbehalten.
 
 Für eine begrenzte Wiedergabe akzeptiert die verschachtelte Metadaten-Wiederherstellung bis zu 128 Frames der obersten Ebene; größere Code-Mode-Ergebnisse bleiben über ihren kanonischen JSON-Fallback verfügbar.
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 Builds erfordern Node 24.11 oder neuer und pnpm. DSH-Host-/Client-Pakete sind Peer-Abhängigkeiten, die vom Ziel-DSH-Profil bereitgestellt werden. Build-Tools werden aus lokalen Dev-Abhängigkeiten, dem aktiven verlinkten DSH-Checkout oder einem installierten DSH-Quellbundle aufgelöst; mit `DSH_SOURCE_ROOT` kann ein Quell-Checkout explizit ausgewählt werden. Die Lockfile pinnt eigenständige öffentliche Build-Tools, wenn diese Umgebung separat bereitgestellt wird.

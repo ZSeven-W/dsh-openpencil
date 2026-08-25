@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · เวอร์ชันปลั๊กอินปัจจุบัน: <code>0.1.0-rc.4</code> · ทดสอบถึง DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · เวอร์ชันปลั๊กอินปัจจุบัน: <code>0.1.0-rc.5</code> · ทดสอบถึง DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ DSH OpenPencil เชื่อมต่อ [DeepSeek Harness](https://github.com
 
 ### 🤖 เครื่องมือออกแบบสำหรับ Agent โดยเฉพาะ
 
-เครื่องมือห้าตัว — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — ให้ Agent สร้าง แก้ไข และอ่านแคนวาสจริงผ่านโปรแกรม `batch_design` แบบ transactional
+เครื่องมือจัดการแคนวาสโดยตรงห้าตัวและเครื่องมือ `openpencil_pipeline_*` อีกหกตัว ให้ Agent สร้าง ตรวจสอบ ปรับแต่ง เผยแพร่ แก้ไข และอ่านแคนวาสจริงผ่าน runtime ของ OpenPencil แบบจัดการ
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ DSH OpenPencil เชื่อมต่อ [DeepSeek Harness](https://github.com
 
 ### ⚡ ความปลอดภัยแบบ Transactional
 
-เอกสารใหม่จะถูกเผยแพร่ก็ต่อเมื่อโปรแกรม `batch_design` ทั้งหมดสำเร็จเท่านั้น เครื่องมือจะไม่เขียนทับพาธที่มีอยู่ แบทช์ที่ล้มเหลวจะไม่ทิ้งไฟล์ว่างไว้ และการบันทึกใช้แฮชแบบ optimistic พร้อมการแทนที่แบบ atomic
+เอกสารใน pipeline เต็มรูปแบบจะคงเป็น draft ส่วนตัวที่ยังไม่เผยแพร่จนกว่าจะผ่าน quality gate ทั้งหมดของ native runtime และ DSH การเผยแพร่จะไม่เขียนทับพาธที่มีอยู่ และการยกเลิกหรือ batch ที่ล้มเหลวจะไม่ทิ้ง target ว่างไว้
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ DSH OpenPencil เชื่อมต่อ [DeepSeek Harness](https://github.com
 
 ### 🎯 เวิร์กโฟลว์ครบวงจรเดียว
 
-"ความต้องการในบทสนทนา → Agent แก้ไขแคนวาสจริง → พรีวิวสดและการตรวจสอบการโต้ตอบ → วนซ้ำต่อไป" — วงจรเดียว ไม่ต้องส่ง screenshot ไปมา
+"ความต้องการ → draft ส่วนตัว → semantic batches → ตรวจและแก้ PNG แบบแม่นยำ → เผยแพร่แบบ atomic หลังผ่าน quality gates" — วงจรที่ครบถ้วนภายใน DSH
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | เครื่องมือ | หน้าที่ |
 | --- | --- |
-| `openpencil_new` | สร้าง `.op` ใหม่ทั้งหมดจากสคริปต์ QuickJS `batch_design` แบบ transactional หนึ่งชุด บันทึกแบบ atomic ผ่านระบบไฟล์ sandbox ของ DSH และคืน presentation ที่แก้ไขได้พร้อมลายเซ็นภายใน tool call เดียวกัน เพื่อให้ DSH เปิดแถบด้านข้างของโปรแกรมแก้ไขโดยอัตโนมัติ |
+| `openpencil_new` | เส้นทางด่วนที่เข้ากันได้สำหรับงานง่าย: รันสคริปต์ QuickJS `batch_design` แบบ transactional หนึ่งชุด เผยแพร่เมื่อ target ยังไม่มีเท่านั้น และคืน presentation ที่แก้ไขได้ สำหรับงาน production ควรใช้ pipeline เต็มรูปแบบด้านล่าง |
+| `openpencil_pipeline_begin` | เริ่ม draft ส่วนตัวที่เป็นของเซสชันสำหรับพาธ `.op` ใหม่ซึ่งสัมพันธ์กับ workspace โดยไฟล์ target ยังไม่ถูกเผยแพร่และไม่ถูกแตะต้อง |
+| `openpencil_pipeline_context` | โหลด dynamic design-agent prompt แบบ native พร้อม guidelines, style guides, variables/themes และ metadata หรือ script references ของ UI kits ที่เกี่ยวข้อง |
+| `openpencil_pipeline_batch` | ใช้ semantic QuickJS batches กับ draft ตามลำดับ โดยสร้าง skeleton ก่อน แล้วจึงเพิ่มและปรับแต่งแต่ละส่วน |
+| `openpencil_pipeline_inspect` | รันการตรวจ native quality หรือ resolved layout หรือสร้าง PNG แบบแม่นยำให้โมเดลเปิดด้วย image reading และตรวจด้วยสายตา |
+| `openpencil_pipeline_finish` | รัน native finalization, lint, layout, ความใหม่ของ screenshot และ DSH quality gates จากนั้นเผยแพร่แบบ atomic ด้วย `createIfAbsent` และคืน presentation ที่แก้ไขได้ |
+| `openpencil_pipeline_abort` | ทิ้ง draft ที่ยังไม่เผยแพร่โดยไม่สร้างไฟล์ target |
 | `openpencil_create` | ใช้โปรแกรม `batch_design` แบบ transactional เพื่อสร้างหรือจัดโครงสร้างโหนดใหม่บนแคนวาสสดที่มีอยู่ |
 | `openpencil_edit` | แก้ไขโหนดที่ระบุชัดเจนหรือโหนดเดียวที่ผู้ใช้เลือก |
 | `openpencil_render` | สร้างสแนปช็อต `.op` แบบ immutable และอ้างอิงตามเนื้อหา แล้วเรนเดอร์เฟรมระดับบนสุดทุกเฟรมบนหน้าที่ใช้งานอยู่ — รองรับ `scale` และ `editable` แบบไม่บังคับ |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## เวิร์กโฟลว์การออกแบบของ Agent
 
-สำหรับคำขอภาษาธรรมชาติที่ยังไม่มีเอกสารเดิม Agent ควรเรียก `openpencil_new` พร้อมพาธ `.op` ใหม่ที่สัมพันธ์กับเวิร์กสเปซและโปรแกรม `batch_design` ฉบับสมบูรณ์ชุดแรก เครื่องมือจะรันโปรแกรมนั้นใน daemon OpenPencil แบบจัดการส่วนตัว และเผยแพร่เอกสารฉบับหลักก็ต่อเมื่อแบทช์ทั้งหมดสำเร็จเท่านั้น เครื่องมือจะไม่เขียนทับพาธที่มีอยู่ และแบทช์ที่ล้มเหลวจะไม่ทิ้งไฟล์ว่างไว้ presentation ที่แก้ไขได้พร้อมลายเซ็นจาก tool call ที่สำเร็จครั้งเดียวกันจะทำให้ DSH เปิดแถบด้านข้างของโปรแกรมแก้ไขโดยอัตโนมัติ โดยไม่ต้องเรียก `openpencil_render` ครั้งที่สองหรือใช้พรีวิว PNG การ์ดที่เล่นซ้ำ การ์ดประวัติ และการ์ดที่ hydrate แล้วจะไม่เปิดอัตโนมัติ
+สำหรับงาน production ให้ใช้ `openpencil_pipeline_begin` → `openpencil_pipeline_context` → เรียก `openpencil_pipeline_batch` และ `openpencil_pipeline_inspect` ซ้ำ → `openpencil_pipeline_finish` โดย draft daemon เป็นส่วนตัวของเซสชัน DSH เจ้าของ และพาธ workspace ที่ขอจะยังไม่มีอยู่จนกว่าการเผยแพร่จะสำเร็จ screenshot ของ private draft ระหว่างทางจะไม่เปิด editable sidebar เพื่อป้องกัน user edit แข่งกับ batch ของ Agent โดยจะให้สิทธิ์แก้ไขหลังเผยแพร่เท่านั้น
 
-`openpencil_new` ใช้อินเทอร์เฟซ QuickJS `script` จริงของ `batch_design`: Agent สร้างงานด้วยการเรียก `I`/`K` รวมถึงข้อมูล อาร์เรย์ และลูป JavaScript ตามปกติ โดยไม่ต้องเขียน `operations` ระดับล่างเอง DSH จะเปิด `postProcess` เสมอ แล้วเรียก `finalize_design` อย่างชัดเจนหลังสร้างเสร็จ ขั้นตอนนี้เติมการเก็บกวาดท้ายงานที่เทียบเท่ากับช่วงจบของ host OpenPencil แบบในตัวก่อนเผยแพร่เอกสาร runtime แบบจัดการถูกรวมมากับปลั๊กอินและไม่ขึ้นกับไบนารีเดสก์ท็อป นี่คือเส้นทางสร้างเอกสารปัจจุบัน โดยไม่ได้อ้างว่าเส้นทางนี้ผ่านเครื่องมือแยก `design_skeleton`, `design_content` หรือ `design_refine`
+Context ไม่ใช่ template แบบคงที่ แต่รวม native dynamic design-agent prompt ของ OpenPencil เข้ากับ guidelines, style guides, variables/themes และ UI kits ที่เกี่ยวข้อง ให้สร้าง structural skeleton ก่อน แล้วเพิ่มเนื้อหาและปรับแต่งเป็น semantic section batches เพื่อความเร็ว batch ที่สำเร็จจะคืนเพียง compact layout diagnostics ส่วน resolved layout แบบเต็มให้ขอผ่าน `openpencil_pipeline_inspect` เมื่อจำเป็น อย่างน้อยให้เรียก `openpencil_pipeline_inspect` ด้วย `kind: "screenshot"` หลังสร้าง signature/heading และเรียกอีกครั้งหลังทำ primary task หรือ form พร้อม CTA เสร็จ ในแต่ละ milestone โมเดลต้องเปิด exact PNG ด้วย image reading แก้การตัดขอบ การล้น ลำดับชั้น ระยะห่าง สัดส่วน คอนทราสต์ และความอ่านง่ายที่เห็น แล้วทำซ้ำตามจำเป็น การตรวจด้วยสายตาไม่ได้เกิดขึ้นอัตโนมัติ
+
+ขั้นตอน finish รัน native finalization, lint และ layout checks ของ OpenPencil รวมถึง DSH quality gate การตรวจแบบ deterministic เหล่านี้ไม่ได้สร้างรสนิยมหรือความสวยงาม หลัง finalization ต้องถ่าย exact screenshot ใหม่อีกภาพแยกต่างหากและให้โมเดลตรวจด้วยสายตา screenshot ของ milestone ระหว่างทางไม่สามารถผ่าน post-final freshness gate นี้ได้ จากนั้น finish call สุดท้ายจึงสร้าง target แบบ atomic ด้วย `createIfAbsent` หาก gate ล้มเหลวหรือเรียก `openpencil_pipeline_abort` target จะยังไม่มีอยู่ ผลลัพธ์การสร้างที่เผยแพร่ทุกชิ้นเป็น presentation เดียวที่มีทั้ง exact final PNG preview และ editable grant ที่ผูกกับเอกสาร โดย auto-open sidebar เฉพาะเมื่อว่าง ไม่แทนที่ editor ของเซสชันอื่น และมี **แก้ไขแคนวาส** เสมอสำหรับการสลับอย่างชัดเจน แม้ผลลัพธ์ `openpencil_pipeline_finish` จะถูกเรียกซ้อนผ่าน PTC/Code Mode ก็ต้องคง presentation เดิมและห้ามลดรูปเป็น JSON ธรรมดาหรือการ์ด read-only การ์ดประวัติหรือ hydrate แล้วจะไม่ auto-open
+
+ภายใน DSH service เดิมที่ยังทำงานอยู่ เมื่อเปลี่ยน browser หรือ reload จะสามารถกู้ strictly parsed durable publication จาก `openpencil_new` หรือ `openpencil_pipeline_finish` กลับมาเป็น exact PNG พร้อม action **แก้ไขแคนวาส** ที่ชัดเจน การ์ดประวัติจะไม่ auto-open sidebar ผู้ใช้ต้องคลิก action นี้เอง `openpencil_render` แบบประวัติทั่วไปยังคง read-only และ connection ที่ไม่ใช่ loopback จะไม่ได้รับ editor grant
+
+skill `openpencil-design` ที่บันเดิลมายังคงเป็นคู่มือด้าน scripting และคุณภาพ ส่วน runtime แบบจัดการไม่ขึ้นกับไบนารีเดสก์ท็อป `openpencil_new` ยังคงเป็นเส้นทางด่วนแบบ single-batch ที่เข้ากันได้ แต่งานสร้างระดับ production ควรเลือก pipeline เต็มรูปแบบ
 
 ใช้ `openpencil_create` และ `openpencil_edit` เฉพาะกับแคนวาสสดที่มีอยู่เท่านั้น การแก้ไขของทั้งคู่จะยังไม่ถูกบันทึกจนกว่าผู้ใช้จะกดบันทึกในโปรแกรมแก้ไข
-
-## ข้อตกลงการเรนเดอร์
-
-`openpencil_render` รับพาธ `.op`, `scale` แบบไม่บังคับ (`0 < scale <= 8`, ค่าเริ่มต้น `1`) และ `editable` แบบไม่บังคับ (ค่าเริ่มต้น `false`) ปล่อย `width` และ `height` ไว้ไม่ตั้งค่าสำหรับพาธ OpenPencil ที่แม่นยำ: ค่าเหล่านี้อธิบาย viewport ตอนรัน ไม่ใช่ขนาดส่งออกของงานออกแบบ และยอมรับได้เฉพาะใน Jian fallback ที่มีความเที่ยงตรงต่ำกว่าเท่านั้น
-
-การค้นหาไบนารี OpenPencil จะตรวจสอบตามลำดับ:
-
-1. `DSH_OPENPENCIL_BINARY` or `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `openpencil-desktop` บน `PATH`
-
-การค้นหา Jian fallback ใช้ `DSH_OPENPENCIL_JIAN` ซึ่งเป็น release build ในเครื่องที่รู้จัก จากนั้นจึงใช้ `PATH` หากไบนารี OpenPencil ที่แม่นยำไม่พร้อมใช้งานจริง ๆ Jian อาจสร้าง fallback `runtime-preview` ที่ติดฉลากชัดเจน ความล้มเหลวของตัวเรนเดอร์ที่แม่นยำ การหมดเวลา และ PNG ที่ไม่ถูกต้องจะไม่ถูก fall back อย่างเงียบ ๆ
 
 ## สินทรัพย์ Web Viewer
 
@@ -186,7 +185,7 @@ pnpm run sync:viewer-assets
 
 การเริ่มทำงานใช้ listening handshake ที่ปลอดภัยสำหรับ mount ที่ช้า โดยจะเริ่ม probe ความพร้อมหลังจาก host ที่มากับแพ็กเกจประกาศ address ที่ bind แล้วเท่านั้น ไม่ต้องติดตั้ง OpenPencil เดสก์ท็อป
 
-การติดตั้งรุ่นเผยแพร่จะเลือกแพ็กเกจที่ตรงกับ OS/CPU ปัจจุบันจากแพ็กเกจแพลตฟอร์มเนทีฟหกแพ็กเกจ ได้แก่ `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` และ `win32-x64` โดยแพ็กเกจ Linux ทั้งสองใช้ glibc แพ็กเกจรากประกาศแพ็กเกจเหล่านี้เป็น `optionalDependencies` แบบระบุเวอร์ชันตรงตัว เพื่อให้ตัวจัดการแพ็กเกจเลือกตัวแปรที่ถูกต้อง (เช่น `@zseven-w/dsh-openpencil-darwin-arm64`) แพ็กเกจนี้จัดส่ง `op-host-web-server`, เว็บบันเดิลของโปรแกรมแก้ไข และ CanvasKit ที่เข้าชุดกันเป็น runtime เดียว ดังนั้นโปรแกรมแก้ไขแบบจัดการจึงไม่ต้องพึ่ง `/Applications/OpenPencil.app`, `openpencil-desktop` ใน `PATH` หรือ checkout ซอร์สของ OpenPencil ข้อความนี้ใช้กับเซสชันแก้ไขแบบจัดการ ส่วนตัวเรนเดอร์ PNG แบบแม่นยำยังคงใช้สัญญาการค้นหาไบนารีแยกต่างหากตามที่อธิบายไว้ด้านบน
+การติดตั้งรุ่นเผยแพร่จะเลือกแพ็กเกจที่ตรงกับ OS/CPU ปัจจุบันจากแพ็กเกจแพลตฟอร์มเนทีฟหกแพ็กเกจ ได้แก่ `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` และ `win32-x64` โดยแพ็กเกจ Linux ทั้งสองใช้ glibc แพ็กเกจรากประกาศแพ็กเกจเหล่านี้เป็น `optionalDependencies` แบบระบุเวอร์ชันตรงตัว เพื่อให้ตัวจัดการแพ็กเกจเลือกตัวแปรที่ถูกต้อง (เช่น `@zseven-w/dsh-openpencil-darwin-arm64`) แพ็กเกจนี้จัดส่ง `op-host-web-server`, เว็บบันเดิลของโปรแกรมแก้ไข และ CanvasKit ที่เข้าชุดกันเป็น runtime เดียว ดังนั้นโปรแกรมแก้ไขแบบจัดการจึงไม่ต้องพึ่ง `/Applications/OpenPencil.app`, `openpencil-desktop` ใน `PATH` หรือ checkout ซอร์สของ OpenPencil
 
 หาก DSH โหลดซ้ำหรือยกเลิกการโหลดปลั๊กอินในขณะที่แคนวาสยังไม่บันทึก host จะเก็บร่างกู้คืนในเครื่องแบบ opaque ไว้นานสูงสุดเจ็ดวัน การเปิด source เดียวกันซ้ำจะถามก่อนกู้คืนลงในแคนวาสสด การกู้คืนจะไม่เขียนทับไฟล์ `.op` จนกว่าผู้ใช้จะบันทึกอย่างชัดเจน
 
@@ -226,7 +225,7 @@ pnpm run stage:editor-runtime
 
 ผลลัพธ์ยังบันทึก `renderer`, `rendererBinary`, `fidelity` และคำเตือนใด ๆ ข้อความ schema-v1 ที่เป็น PNG เท่านั้นยังคงเรนเดอร์ได้
 
-DSH `0.1.1-rc.2` จะไม่คงเมตาดาต้าการนำเสนอในเบราว์เซอร์สำหรับเครื่องมือที่ซ้อนอยู่ใต้ PTC/Code Mode ปลั๊กอินจะกู้คืน projection แบบ UI-only นั้นผ่าน endpoint แบบ same-origin ที่ผูกกับเซสชัน: เบราว์เซอร์ส่งเฉพาะ session id, call id และ SHA-256 ของเอกสารแบบ immutable ในขณะที่ host แก้ไขผลลัพธ์ฉบับหลักจากบันทึกเซสชัน DSH ที่ทนทาน และใช้ marker ในโพรเซสอายุสั้นเพื่ออนุญาตการแก้ไขสดล่าสุดเท่านั้น ความสามารถพรีวิว/แก้ไขที่ลงนามจะไม่เข้าไปในผลลัพธ์เครื่องมือหลักหรือบริบทของโมเดล ประวัติที่ทนทานสามารถกู้คืนพรีวิวแบบอ่านอย่างเดียว และสิทธิ์แก้ไขจะออกให้เฉพาะผลลัพธ์สดล่าสุดที่เชื่อถือได้เท่านั้น
+DSH `0.1.1-rc.2` จะไม่คงเมตาดาต้าการนำเสนอในเบราว์เซอร์สำหรับเครื่องมือที่ซ้อนอยู่ใต้ PTC/Code Mode ปลั๊กอินจะกู้คืน projection แบบ UI-only นั้นผ่าน endpoint แบบ same-origin ที่ผูกกับเซสชัน: เบราว์เซอร์ส่งเฉพาะ session id, call id และ SHA-256 ของเอกสารแบบ immutable ในขณะที่ host แก้ไขผลลัพธ์ฉบับหลักจากบันทึกเซสชัน DSH ที่ทนทาน และใช้ marker ในโพรเซสอายุสั้นเพื่ออนุญาตการแก้ไขสดล่าสุดเท่านั้น ความสามารถพรีวิว/แก้ไขที่ลงนามจะไม่เข้าไปในผลลัพธ์เครื่องมือหลักหรือบริบทของโมเดล durable history ของ `openpencil_render` ทั่วไปยังคง read-only ส่วน strictly parsed durable publication จาก `openpencil_new` หรือ `openpencil_pipeline_finish` จะได้รับ editor grant ได้เฉพาะผ่าน loopback และหลังผู้ใช้คลิกอย่างชัดเจนเท่านั้น การ auto-open sidebar สงวนไว้สำหรับ recent trusted live results
 
 สำหรับการเล่นซ้ำแบบจำกัดขอบเขต การกู้คืนเมตาดาต้าแบบซ้อนยอมรับเฟรมระดับบนสุดสูงสุด 128 เฟรม ผลลัพธ์ Code Mode ที่ใหญ่กว่ายังคงเข้าถึงได้ผ่าน canonical JSON fallback
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 การ build ต้องใช้ Node 24.11 ขึ้นไปและ pnpm แพ็กเกจ host/client ของ DSH เป็น peer dependencies ที่มาจากโปรไฟล์ DSH เป้าหมาย เครื่องมือ build ถูกแก้ไขจาก dev dependencies ในเครื่อง, checkout DSH ที่ลิงก์อยู่ หรือ DSH source bundle ที่ติดตั้งไว้; `DSH_SOURCE_ROOT` สามารถเลือก source checkout ได้อย่างชัดเจน ล็อกไฟล์จะตรึงเครื่องมือ build สาธารณะแบบ standalone เมื่อสภาพแวดล้อมนั้นถูกจัดเตรียมแยกต่างหาก

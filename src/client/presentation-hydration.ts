@@ -1,6 +1,10 @@
 /** Recover browser-only presentation metadata omitted from nested Tool results. */
 
-import { OPENPENCIL_NEW_TOOL_NAME, OPENPENCIL_RENDER_TOOL_NAME } from '../tool-names.js'
+import {
+  OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_RENDER_TOOL_NAME,
+} from '../tool-names.js'
 
 export const PRESENTATION_HYDRATION_ENDPOINT = '/_dsh/dsh-openpencil/presentation'
 export const PRESENTATION_HYDRATION_META_KEY = '$dshOpenPencil'
@@ -139,7 +143,11 @@ export function presentationHydrationRequestOf(
 ): PresentationHydrationRequest | undefined {
   if (
     candidate.embeddedGrant !== undefined
-    || (candidate.toolName !== OPENPENCIL_RENDER_TOOL_NAME && candidate.toolName !== OPENPENCIL_NEW_TOOL_NAME)
+    || (
+      candidate.toolName !== OPENPENCIL_RENDER_TOOL_NAME
+      && candidate.toolName !== OPENPENCIL_NEW_TOOL_NAME
+      && candidate.toolName !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+    )
   ) {
     return undefined
   }

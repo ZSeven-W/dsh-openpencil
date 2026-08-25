@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Geçerli eklenti sürümü: <code>0.1.0-rc.4</code> · DSH <code>0.1.1-rc.2</code> sürümüne kadar test edildi</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Geçerli eklenti sürümü: <code>0.1.0-rc.5</code> · DSH <code>0.1.1-rc.2</code> sürümüne kadar test edildi</sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ Kurulu OpenPencil başsız dışa aktarıcısı tasarıma sadık önizlemeler ü
 
 ### 🤖 Ajan-Yerli Tasarım Araçları
 
-Beş araç — `openpencil_new`, `openpencil_create`, `openpencil_edit`, `openpencil_render`, `openpencil_selection` — Ajan'ın işlemsel `batch_design` programları aracılığıyla gerçek bir tuvali oluşturmasını, değiştirmesini ve okumasını sağlar.
+Beş doğrudan tuval aracı ve altı `openpencil_pipeline_*` aracı, Ajan'ın yönetilen OpenPencil çalışma zamanları üzerinden gerçek bir tuval oluşturmasını, incelemesini, iyileştirmesini, yayımlamasını, değiştirmesini ve okumasını sağlar.
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ Görsel ve belge yetkileri, imzalı ve karmaya bağlı yeteneklerdir. Tarayıcı
 
 ### ⚡ İşlemsel Güvenlik
 
-Yeni bir belge yalnızca `batch_design` programının tamamı başarılı olduktan sonra yayımlanır. Araç mevcut bir yolu asla üzerine yazmaz, başarısız bir toplu işlem arkasında boş bir dosya bırakmaz ve kaydetmeler atomik değiştirmeyle iyimser bir karma kullanır.
+Tam pipeline belgesi, tüm yerel ve DSH kalite kapılarından geçene kadar özel ve yayımlanmamış bir taslak olarak kalır. Yayın mevcut yolu üzerine yazmaz; iptal veya başarısız toplu işlem boş bir hedef bırakmaz.
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ Araç kartı ve yönetilen düzenleyici, düzenleme oturumunu yeniden yüklemede
 
 ### 🎯 Tek ve Eksiksiz Bir İş Akışı
 
-"Sohbetteki gereksinim → Ajan gerçek tuvale düzenler → canlı önizleme ve etkileşim doğrulaması → yinelemeye devam et" — tek bir döngü, ekran görüntüsü gidiş gelişi yok.
+"Gereksinim → özel taslak → anlamsal toplu işlemler → birebir PNG inceleme ve düzeltme → kalite kapılarından sonra atomik yayın" — DSH içinde eksiksiz bir döngü.
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | Araç | Ne yapar |
 | --- | --- |
-| `openpencil_new` | Tek bir işlemsel QuickJS `batch_design` betiğinden yepyeni bir `.op` oluşturur, onu DSH'nin kum havuzlu dosya sistemi aracılığıyla atomik olarak kaydeder ve aynı çağrıda DSH'nin yan panel düzenleyicisinde otomatik olarak açtığı imzalı, düzenlenebilir bir sunum döndürür. |
+| `openpencil_new` | Basit işler için uyumlu hızlı yol: tek bir işlemsel QuickJS `batch_design` betiği çalıştırır, yalnızca hedef yoksa yayımlar ve düzenlenebilir bir sunum döndürür. Üretim tasarımında tam pipeline'ı tercih edin. |
+| `openpencil_pipeline_begin` | Çalışma alanına göreli yeni bir `.op` yolu için oturuma ait özel taslak başlatır; hedef dosya yayımlanmamış ve dokunulmamış kalır. |
+| `openpencil_pipeline_context` | Yerel dinamik tasarım ajanı prompt'unu ilgili yönergeler, stil kılavuzları, değişkenler/temalar ve UI kit meta verileri veya betik referanslarıyla yükler. |
+| `openpencil_pipeline_batch` | Anlamsal QuickJS toplu işlemlerini taslağa seri uygular: önce iskelet, ardından bölümler ve iyileştirmeler. |
+| `openpencil_pipeline_inspect` | Yerel kalite veya çözümlenmiş yerleşim incelemesi yapar ya da modelin görsel okuma ile açıp inceleyebileceği birebir PNG oluşturur. |
+| `openpencil_pipeline_finish` | Yerel sonlandırma, lint, yerleşim, ekran görüntüsü güncelliği ve DSH kalite kapılarını çalıştırır; ardından `createIfAbsent` ile atomik yayımlar ve düzenlenebilir bir sunum döndürür. |
+| `openpencil_pipeline_abort` | Hedef dosyayı oluşturmadan yayımlanmamış taslağı atar. |
 | `openpencil_create` | Mevcut canlı bir tuvalde düğümler oluşturmak veya yeniden yapılandırmak için işlemsel bir `batch_design` programı uygular. |
 | `openpencil_edit` | Belirli bir düğümü veya kullanıcının seçtiği tek düğümü değiştirir. |
 | `openpencil_render` | Değişmez, içeriğe dayalı bir `.op` anlık görüntüsü oluşturur ve etkin sayfadaki her üst düzey kareyi işler — isteğe bağlı `scale` ve `editable`. |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Ajan Tasarım İş Akışı
 
-Mevcut bir belge olmayan doğal dildeki bir istek için Ajan, yeni bir çalışma alanına göreli `.op` yolu ve ilk eksiksiz `batch_design` programıyla `openpencil_new` çağrısı yapmalıdır. Araç bu programı özel, yönetilen bir OpenPencil arka plan sürecinde çalıştırır ve otoriter belgeyi yalnızca toplu işlemin tamamı başarılı olduktan sonra yayımlar. Mevcut bir yolu asla üzerine yazmaz ve başarısız bir toplu işlem arkasında boş bir dosya bırakmaz. Aynı çağrı imzalı, düzenlenebilir bir sunum döndürür ve DSH yan panel düzenleyicisini otoriter belgeyle otomatik olarak açar. Bu akış için ikinci bir `openpencil_render` çağrısı veya PNG önizlemesi gerekmez. Yeniden oynatılan veya hydrate edilen geçmiş kartları asla otomatik açılmaz.
+Üretim tasarımında `openpencil_pipeline_begin` → `openpencil_pipeline_context` → yinelenen `openpencil_pipeline_batch` ve `openpencil_pipeline_inspect` çağrıları → `openpencil_pipeline_finish` sırasını kullanın. Taslak daemon'u sahibi olan DSH oturumuna özeldir ve istenen çalışma alanı yolu yayın başarıyla tamamlanana kadar mevcut değildir. Ara özel taslak ekran görüntüleri düzenlenebilir yan paneli açığa çıkarmaz; böylece kullanıcı düzenlemeleri Ajan toplu işlemleriyle yarışmaz. Düzenleme yetkisi yalnızca yayından sonra verilir.
 
-`openpencil_new`, `batch_design` aracının gerçek QuickJS `script` yüzeyini kullanır: Ajan, düşük düzeyli `operations` girdilerini elle yazmak yerine `I`/`K` çağrıları ile normal JavaScript verileri, dizileri ve döngülerini kullanır. DSH her zaman `postProcess` özelliğini etkinleştirir ve oluşturma sonrasında `finalize_design` çağrısını açıkça yapar. Böylece belge yayımlanmadan önce yerleşik OpenPencil ana bilgisayarının bitiş aşamasına eşdeğer temizlik tamamlanır. Yönetilen çalışma zamanı eklentiyle birlikte gelir ve masaüstü ikili dosyasına bağlı değildir. Bu, güncel oluşturma yoludur; ayrı `design_skeleton`, `design_content` veya `design_refine` araçlarından geçtiği iddia edilmez.
+Bağlam statik bir şablon değildir: OpenPencil'ın yerel dinamik tasarım ajanı prompt'unu ilgili yönergeler, stil kılavuzları, değişkenler/temalar ve UI kits ile birleştirir. Önce yapısal iskeleti kurun, ardından içeriği ve iyileştirmeleri anlamsal bölüm toplu işlemleriyle ekleyin. Hız için başarılı toplu işlem yalnızca kompakt yerleşim tanılamaları döndürür; tam çözümlenmiş yerleşimi gerektiğinde `openpencil_pipeline_inspect` ile isteyin. En azından imza/başlık oluşturulduktan sonra ve ana görev ya da form ile CTA tamamlandıktan sonra `openpencil_pipeline_inspect` aracını `kind: "screenshot"` ile çağırın. Her dönüm noktasında model birebir PNG'yi görsel okuma ile açar, görünen kırpma, taşma, hiyerarşi, aralık, oran, kontrast ve metin okunabilirliği sorunlarını düzeltir ve gerektiğinde tekrarlar; görsel inceleme otomatik gerçekleşmez.
+
+Bitirme, OpenPencil'ın yerel sonlandırma, lint ve yerleşim kontrolleriyle DSH kalite kapısını çalıştırır. Bu belirlenimci kontroller zevk veya görsel cila yaratmaz. Sonlandırmadan sonra ayrı ve yeni bir birebir ekran görüntüsü alın ve modele görsel olarak inceletin; ara dönüm noktası ekran görüntüleri sonlandırma sonrası güncellik kapısını hiçbir zaman karşılayamaz. Ancak bundan sonraki finish çağrısı hedefi `createIfAbsent` ile atomik olarak oluşturur. Kapı başarısız olursa veya `openpencil_pipeline_abort` çağrılırsa hedef yok kalır. Yayımlanan her üretim sonucu, birebir final PNG önizlemesini ve belge kapsamlı düzenleme yetkisini birlikte taşıyan tek bir presentation'dır; yan paneli yalnızca boşken otomatik açar, başka oturumun düzenleyicisini değiştirmez ve açık geçiş için **Tuvali düzenle** eylemini her zaman korur. PTC/Code Mode üzerinden iç içe dönen `openpencil_pipeline_finish` sonucu da aynı presentation'ı korur ve asla sıradan JSON'a ya da salt okunur karta indirgenmez. Geçmiş veya hydrate edilmiş kartlar otomatik açılmaz.
+
+Aynı çalışan DSH hizmeti içinde tarayıcı değiştirme veya yeniden yükleme sonrasında, `openpencil_new` ya da `openpencil_pipeline_finish` kaynaklı, sıkı biçimde ayrıştırılmış kalıcı yayın birebir PNG ve açık **Tuvali düzenle** eylemiyle geri yüklenebilir. Geçmiş kart yan paneli asla otomatik açmaz; kullanıcı bu eyleme tıklamalıdır. Sıradan geçmiş `openpencil_render` salt okunur kalır ve loopback olmayan bağlantılara hiçbir zaman düzenleyici yetkisi verilmez.
+
+Paketle gelen `openpencil-design` skill'i betik ve kalite kılavuzu olmaya devam eder; yönetilen çalışma zamanı masaüstü ikili dosyasına bağlı değildir. `openpencil_new` uyumlu tek toplu işlem hızlı yolu olarak kalır, ancak üretim kalitesinde üretim tam pipeline'ı tercih etmelidir.
 
 `openpencil_create` ve `openpencil_edit`'i yalnızca mevcut canlı bir tuval için kullanın. Düzenlemeleri, düzenleyicinin Kaydet eylemine kadar kaydedilmemiş halde kalır.
-
-## İşleme Sözleşmesi
-
-`openpencil_render` bir `.op` yolu, isteğe bağlı bir `scale` (`0 < scale <= 8`, varsayılan `1`) ve isteğe bağlı bir `editable` (varsayılan `false`) kabul eder. Birebir OpenPencil yolu için `width` ve `height` alanlarını boş bırakın: bunlar tasarım dışa aktarma boyutlarını değil, bir çalışma zamanı görünüm penceresini tanımlar ve yalnızca düşük doğruluktaki Jian yedeği tarafından kabul edilir.
-
-OpenPencil ikili dosyası keşfi sırasıyla şunları kontrol eder:
-
-1. `DSH_OPENPENCIL_BINARY` veya `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `PATH` üzerindeki `openpencil-desktop`
-
-Jian yedeği keşfi `DSH_OPENPENCIL_JIAN` değişkenini, bilinen bir yerel sürüm derlemesini ve ardından `PATH` kullanır. Birebir OpenPencil ikili dosyası gerçekten kullanılamıyorsa Jian, açıkça etiketlenmiş bir `runtime-preview` yedeği üretebilir. Birebir işleyici hataları, zaman aşımları ve geçersiz PNG'ler sessizce yedeğe düşmez.
 
 ## Web Görüntüleyici Varlıkları
 
@@ -186,7 +185,7 @@ Düzenlenebilir oturumlar, `op-vscode` tarafından kullanılan mimariyle aynı o
 
 Başlatma, yavaş bağlamalarda güvenli bir listening handshake kullanır: hazır olma denetimleri yalnızca paketlenmiş ana bilgisayar bağlı adresini bildirdikten sonra başlar. Masaüstü OpenPencil kurulumu gerekmez.
 
-Yayımlanan kurulumlar altı yerel hedefi destekler: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` ve `win32-x64`; Linux paketleri glibc gerektirir. Kök paket, işletim sistemi ve CPU'ya göre tam sürümlü `optionalDependencies` aracılığıyla uygun platform paketini seçer (örneğin `@zseven-w/dsh-openpencil-darwin-arm64`). Bu paket, birbiriyle eşleşen `op-host-web-server`, düzenleyici web paketi ve CanvasKit'i tek bir çalışma zamanı olarak sunar. Bu nedenle yönetilen düzenleyici `/Applications/OpenPencil.app` uygulamasına, `PATH` üzerindeki `openpencil-desktop` dosyasına veya bir OpenPencil kaynak checkout'una bağlı değildir. Bu açıklama yönetilen düzenlenebilir oturumlar için geçerlidir; hassas PNG oluşturucu yukarıda açıklanan ayrı ikili dosya keşif sözleşmesini kullanmayı sürdürür.
+Yayımlanan kurulumlar altı yerel hedefi destekler: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64` ve `win32-x64`; Linux paketleri glibc gerektirir. Kök paket, işletim sistemi ve CPU'ya göre tam sürümlü `optionalDependencies` aracılığıyla uygun platform paketini seçer (örneğin `@zseven-w/dsh-openpencil-darwin-arm64`). Bu paket, birbiriyle eşleşen `op-host-web-server`, düzenleyici web paketi ve CanvasKit'i tek bir çalışma zamanı olarak sunar. Bu nedenle yönetilen düzenleyici `/Applications/OpenPencil.app` uygulamasına, `PATH` üzerindeki `openpencil-desktop` dosyasına veya bir OpenPencil kaynak checkout'una bağlı değildir.
 
 Tuval kirliyken DSH eklentiyi yeniden yükler veya kaldırırsa, ana bilgisayar en fazla yedi gün boyunca opak bir yerel kurtarma taslağı tutar. Aynı kaynağı yeniden açmak, onu canlı tuvale geri yüklemeden önce sorar; kurtarma, kullanıcı açıkça kaydedene kadar `.op` dosyasını asla üzerine yazmaz.
 
@@ -226,7 +225,7 @@ Model tarafından görülebilen sonuç, düz JSON olarak kalır. Yalnızca taray
 
 Sonuç ayrıca `renderer`, `rendererBinary`, `fidelity` ve varsa uyarıları kaydeder. Yalnızca PNG içeren mevcut schema-v1 iletileri işlenebilir kalır.
 
-DSH `0.1.1-rc.2`, PTC/Kod Modu altında iç içe yer alan araçların tarayıcı sunum meta verilerini kalıcı hale getirmez. Eklenti bu yalnızca UI'ya özgü yansımayı aynı kaynaklı, oturuma bağlı bir uç nokta aracılığıyla kurtarır: tarayıcı yalnızca oturum kimliğini, çağrı kimliğini ve değişmez belge SHA-256'sını gönderir; ana bilgisayar ise otoriter sonucu kalıcı DSH oturum günlüğünden çözer ve yalnızca yakın tarihli canlı düzenlemeyi yetkilendirmek için kısa ömürlü, süreç içi bir işaret kullanır. İmzalı önizleme/düzenleyici yetenekleri hiçbir zaman kanonik araç sonucuna veya model bağlamına girmez. Kalıcı geçmiş salt okunur önizlemeleri geri yükleyebilir; düzenleyici yetkileri yalnızca yakın tarihli, güvenilen canlı sonuçlar için verilir.
+DSH `0.1.1-rc.2`, PTC/Kod Modu altında iç içe yer alan araçların tarayıcı sunum meta verilerini kalıcı hale getirmez. Eklenti bu yalnızca UI'ya özgü yansımayı aynı kaynaklı, oturuma bağlı bir uç nokta aracılığıyla kurtarır: tarayıcı yalnızca oturum kimliğini, çağrı kimliğini ve değişmez belge SHA-256'sını gönderir; ana bilgisayar ise otoriter sonucu kalıcı DSH oturum günlüğünden çözer ve yalnızca yakın tarihli canlı düzenlemeyi yetkilendirmek için kısa ömürlü, süreç içi bir işaret kullanır. İmzalı önizleme/düzenleyici yetenekleri hiçbir zaman kanonik araç sonucuna veya model bağlamına girmez. Sıradan `openpencil_render` kalıcı geçmişi salt okunur kalır. `openpencil_new` veya `openpencil_pipeline_finish` kaynaklı, sıkı biçimde ayrıştırılmış kalıcı yayın yalnızca loopback üzerinden ve kullanıcının açık tıklamasından sonra düzenleyici yetkisi alabilir; yan panelin otomatik açılması yakın tarihli, güvenilen canlı sonuçlarla sınırlıdır.
 
 Sınırlı oynatım için iç içe meta veri kurtarması en fazla 128 üst düzey kare kabul eder; daha büyük Kod Modu sonuçları, kanonik JSON yedeği aracılığıyla kullanılabilir kalır.
 
@@ -266,7 +265,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 Derlemeler Node 24.11 veya daha yenisini ve pnpm gerektirir. DSH ana bilgisayar/istemci paketleri, hedef DSH profili tarafından sağlanan eş bağımlılıklardır. Derleme araçları yerel geliştirme bağımlılıklarından, etkin bağlantılı DSH çalışma kopyasından veya kurulu bir DSH kaynak paketinden çözümlenir; `DSH_SOURCE_ROOT` bir kaynak çalışma kopyasını açıkça seçebilir. Kilit dosyası, bu ortam ayrı olarak sağlandığında bağımsız genel derleme araçlarını sabitler.

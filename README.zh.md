@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 当前插件版本：<code>0.1.0-rc.4</code> · 已通过 DSH <code>0.1.1-rc.2</code> 测试</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 当前插件版本：<code>0.1.0-rc.5</code> · 已通过 DSH <code>0.1.1-rc.2</code> 测试</sub>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ DSH OpenPencil 将 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 与 [O
 
 ### 🤖 智能体原生设计工具
 
-五个工具 —— `openpencil_new`、`openpencil_create`、`openpencil_edit`、`openpencil_render`、`openpencil_selection` —— 让智能体通过事务性的 `batch_design` 程序创建、修改和读取真实画布。
+五个直接操作画布的工具，加上六个 `openpencil_pipeline_*` 工具，让智能体能通过托管的 OpenPencil 运行时创建、检查、细化、发布、修改和读取真实画布。
 
 </td>
 </tr>
@@ -81,7 +81,7 @@ DSH OpenPencil 将 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 与 [O
 
 ### ⚡ 事务性安全
 
-只有在整个 `batch_design` 程序成功之后，新文档才会发布。工具绝不会覆盖已有路径，失败的批次不会留下空文件，保存采用乐观哈希与原子替换。
+完整管线中的文档会一直保留在私有、未发布的草稿中，直到通过全部原生与 DSH 质量门禁。发布绝不会覆盖已有路径，中止或批次失败也不会留下空的目标文件。
 
 </td>
 </tr>
@@ -97,7 +97,7 @@ DSH OpenPencil 将 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 与 [O
 
 ### 🎯 一个完整的工作流
 
-「对话中的需求 → 智能体编辑真实画布 → 实时预览与交互验证 → 持续迭代」—— 一个闭环，无需反复截图。
+「需求 → 私有草稿 → 语义化批次 → 精确 PNG 视觉检查与修复 → 质量门禁后的原子发布」—— 全部在 DSH 内完成闭环。
 
 </td>
 </tr>
@@ -141,7 +141,13 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 | 工具 | 作用 |
 | --- | --- |
-| `openpencil_new` | 根据单个事务性的 QuickJS `batch_design` 脚本创建全新的 `.op` 文档，通过 DSH 的沙箱文件系统原子保存，并在同一次工具调用中返回签名的可编辑呈现，由 DSH 自动打开编辑侧边栏；无需预先打开编辑器、PNG 预览或后续渲染。 |
+| `openpencil_new` | 面向简单任务的兼容快速路径：运行一份事务性 QuickJS `batch_design` 脚本，以“仅在不存在时创建”的语义发布并返回可编辑呈现。生产级设计应优先使用下方完整管线。 |
+| `openpencil_pipeline_begin` | 为新的工作区相对 `.op` 路径启动仅归当前会话所有的私有草稿；目标文件保持未发布且不会被改动。 |
+| `openpencil_pipeline_context` | 加载原生动态 design-agent prompt，以及相关 guidelines、style guides、变量/主题和 UI kit 元数据或脚本引用。 |
+| `openpencil_pipeline_batch` | 将语义化 QuickJS 批次串行应用到草稿；先搭结构骨架，再按区块补充与细化。 |
+| `openpencil_pipeline_inspect` | 执行原生质量检查或解析后布局检查，或生成精确 PNG，供模型用图像读取能力打开并进行视觉检查。 |
+| `openpencil_pipeline_finish` | 执行原生最终化、lint、布局、截图时效与 DSH 质量门禁，然后用 `createIfAbsent` 原子发布并返回可编辑呈现。 |
+| `openpencil_pipeline_abort` | 丢弃未发布草稿，不创建目标文件。 |
 | `openpencil_create` | 在现有的活动画布上应用事务性 `batch_design` 程序来生成或重构节点。 |
 | `openpencil_edit` | 修改显式指定的节点或用户选中的单个节点。 |
 | `openpencil_render` | 创建不可变、内容寻址的 `.op` 快照，并渲染活动页面上的每个顶层帧 —— 可选 `scale` 与 `editable` 参数。 |
@@ -149,24 +155,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## 智能体设计工作流
 
-对于没有现有文档的自然语言请求，智能体应调用 `openpencil_new`，并传入新的相对于工作区的 `.op` 路径以及第一个完整的 `batch_design` 程序。该工具会在私有的托管 OpenPencil 守护进程中运行该程序，并且只有在整个批次成功后才会发布权威文档。它绝不会覆盖已有路径，失败的批次也不会留下空文件。同一次成功的工具调用会返回签名且限定于该文档的可编辑呈现，DSH 随即使用权威文档 JSON 自动打开编辑侧边栏；无需第二次调用 `openpencil_render`，也不经过 PNG 预览。回放、水合或初始落定的历史卡片可以恢复文档呈现，但永远不会获得编辑器授权或自动打开。
+生产级设计应按顺序使用 `openpencil_pipeline_begin` → `openpencil_pipeline_context` → 多轮 `openpencil_pipeline_batch` 与 `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`。草稿守护进程仅对其所属的 DSH 会话可见；发布成功前，请求的工作区路径并不存在。中间私有草稿截图绝不暴露可编辑侧边栏，以免用户编辑与智能体批次并发冲突；只有发布成功后才授予编辑能力。
 
-`openpencil_new` 使用 `batch_design` 真正的 QuickJS `script` 模式：智能体通过 `I`/`K` 调用以及普通 JavaScript 数据、数组和循环完成构建，无需手写底层 `operations`。DSH 会强制启用 `postProcess`，并在创建后显式调用 `finalize_design`，从而在发布文档前补齐与 OpenPencil 内置宿主结束阶段等价的清理流程。托管运行时随插件打包，不依赖桌面版二进制。这是当前的新建主路径；本文不声称它会经过独立的 `design_skeleton`、`design_content` 或 `design_refine` 工具。
+上下文不是静态模板，而是把 OpenPencil 原生 design-agent prompt 与相关 guidelines、style guides、变量/主题和 UI kits 动态组合起来。先搭结构骨架，再按语义区块补充内容并细化。为兼顾速度，成功的 batch 调用只返回紧凑布局诊断；需要完整解析布局时再调用 `openpencil_pipeline_inspect`。至少要设置两个中间视觉里程碑：完成 signature/heading 后一次，完成主要任务或 form 加 CTA 后再一次；每次都调用 `openpencil_pipeline_inspect` 并传入 `kind: "screenshot"`，让模型用图像读取能力打开精确 PNG，修复可见的裁切、溢出、层级、间距、控件比例、对比度和文字可读性，并按需重复。视觉检查不会自动发生。
+
+完成阶段会执行 OpenPencil 原生最终化、lint 和布局检查，以及 DSH 质量门禁。这些确定性检查不会创造审美或视觉精致度。最终化之后必须另拍一张新的精确截图，并让模型进行视觉检查；任何中间里程碑截图都绝不能满足最终化后的截图时效门禁。只有这样，最后一次 finish 调用才会通过 `createIfAbsent` 原子创建目标文件。门禁失败或调用 `openpencil_pipeline_abort` 时，目标文件仍不存在。每个已发布的生成结果都是同一个 presentation，其中同时包含精确最终 PNG 预览和限定于该文档的可编辑授权；它只在侧边栏空闲时自动打开，绝不替换另一会话的编辑器，并始终保留 **编辑画布** 供用户显式切换。即使 `openpencil_pipeline_finish` 嵌套在 PTC/Code Mode 中调用，返回结果也必须保留同一 presentation，绝不能退化成普通 JSON 或只读卡片。历史或水合卡片不会自动打开。
+
+在同一持续运行的 DSH 服务内，切换浏览器或重载后，经过严格解析的 `openpencil_new` 或 `openpencil_pipeline_finish` 持久化 publication 可以恢复为精确 PNG 与明确的 **编辑画布** 操作。历史卡片绝不会自动打开侧边栏，必须由用户点击该操作。普通历史 `openpencil_render` 始终保持只读，非 loopback 连接也绝不会获得编辑器授权。
+
+随包提供的 `openpencil-design` skill 仍负责脚本与质量指导，托管运行时也不依赖桌面版二进制。`openpencil_new` 继续作为兼容的单批次快速路径，但生产级设计生成应优先使用完整管线。
 
 仅在已有的活动画布上使用 `openpencil_create` 与 `openpencil_edit`。在编辑器执行保存（Save）操作之前，它们的编辑都保持未保存状态。
-
-## 渲染契约
-
-`openpencil_render` 接受一个 `.op` 路径、可选的 `scale`（`0 < scale <= 8`，默认为 `1`）以及可选的 `editable`（默认为 `false`）。在精确的 OpenPencil 路径下请勿设置 `width` 和 `height`：它们描述的是运行时视口而非设计导出尺寸，且仅被保真度较低的 Jian 回退渲染器接受。
-
-OpenPencil 二进制文件的发现按以下顺序检查：
-
-1. `DSH_OPENPENCIL_BINARY` 或 `DSH_OPENPENCIL_DESKTOP`
-2. `/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-3. `~/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop`
-4. `PATH` 上的 `openpencil-desktop`
-
-Jian 回退渲染器的发现依次使用 `DSH_OPENPENCIL_JIAN`、已知的本地发布构建，然后是 `PATH`。如果精确的 OpenPencil 二进制确实不可用，Jian 可能会生成带清晰标识的 `runtime-preview` 回退结果。精确渲染器的失败、超时以及无效 PNG 不会静默回退。
 
 ## Web 查看器资源
 
@@ -186,7 +185,7 @@ pnpm run sync:viewer-assets
 
 启动过程使用可安全应对慢速挂载的 listening handshake：只有在随包宿主报告已绑定地址后才开始就绪探测。无需安装桌面版 OpenPencil。
 
-发布版提供六个原生平台包目标：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64` 与 `win32-x64`；两个 Linux 包均以 glibc 为目标。根包将所有平台包声明为精确版本的 `optionalDependencies`，由 npm 根据 OS 与 CPU 选择匹配的包。每个平台包都将 `op-host-web-server`、编辑器 Web 打包产物与 CanvasKit 作为一套相互匹配的原子运行时随包提供。因此，托管编辑器默认不依赖 `/Applications/OpenPencil.app`、`PATH` 中的 `openpencil-desktop`，也不依赖 OpenPencil 源码检出。此说明仅适用于托管的可编辑会话；精确 PNG 渲染器仍遵循上文独立的二进制发现契约。
+发布版提供六个原生平台包目标：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64` 与 `win32-x64`；两个 Linux 包均以 glibc 为目标。根包将所有平台包声明为精确版本的 `optionalDependencies`，由 npm 根据 OS 与 CPU 选择匹配的包。每个平台包都将 `op-host-web-server`、编辑器 Web 打包产物与 CanvasKit 作为一套相互匹配的原子运行时随包提供。因此，托管编辑器默认不依赖 `/Applications/OpenPencil.app`、`PATH` 中的 `openpencil-desktop`，也不依赖 OpenPencil 源码检出。
 
 如果画布处于未保存状态时 DSH 重新加载或卸载插件，宿主会保留一份不透明的本地恢复草稿，最长七天。重新打开同一来源时，会先询问是否将其恢复到活动画布中；在用户明确保存之前，恢复过程绝不会覆盖 `.op` 文件。
 
@@ -201,6 +200,13 @@ pnpm run sync:viewer-assets
 ```sh
 pnpm run build:editor-web
 pnpm run build:editor-runtime
+pnpm run stage:editor-runtime
+```
+
+如果本地没有受保护的 release bootstrap 地址，可直接构建原生宿主并在 Web bundle 完成后暂存，用于非生产 smoke。这样会验证精确预览、MCP 与托管编辑器路径；协作仍需要显式的运行时 bootstrap 覆盖或正式发布包。
+
+```sh
+cargo build --manifest-path vendor/openpencil/Cargo.toml --locked --release -p op-host-web-server
 pnpm run stage:editor-runtime
 ```
 
@@ -226,7 +232,7 @@ pnpm run stage:editor-runtime
 
 结果还会记录 `renderer`、`rendererBinary`、`fidelity` 以及任何警告。现有的仅 PNG 的 schema-v1 消息仍然可以渲染。
 
-DSH `0.1.1-rc.2` 不会为嵌套在 PTC/Code Mode 下的工具持久化浏览器展示元数据。插件会通过同源、会话绑定的端点恢复该仅 UI（UI-only）投影：浏览器仅发送 session id、call id 以及不可变文档的 SHA-256，而宿主则从持久的 DSH 会话日志中解析权威结果，并仅使用一个短暂存活的进程内标记（in-process marker）来授权近期的实时编辑。签名的预览/编辑器能力永远不会进入规范的工具结果或模型上下文。持久的历史记录可以恢复只读预览；编辑器授权仅针对最近、可信的实时结果签发。
+DSH `0.1.1-rc.2` 不会为嵌套在 PTC/Code Mode 下的工具持久化浏览器展示元数据。插件会通过同源、会话绑定的端点恢复该仅 UI（UI-only）投影：浏览器仅发送 session id、call id 以及不可变文档的 SHA-256，而宿主则从持久的 DSH 会话日志中解析权威结果，并仅使用一个短暂存活的进程内标记（in-process marker）来授权近期的实时编辑。签名的预览/编辑器能力永远不会进入规范的工具结果或模型上下文。普通 `openpencil_render` 的持久历史始终只读。经过严格解析的 `openpencil_new` 或 `openpencil_pipeline_finish` 持久化 publication，只有在 loopback 连接且用户显式点击后才可能获得编辑器授权；自动打开侧边栏仅保留给最近、可信的实时结果。
 
 为了限制回放范围，嵌套元数据恢复最多接受 128 个顶层帧；更大的 Code Mode 结果仍可通过其规范 JSON 回退获得。
 
@@ -266,7 +272,7 @@ pnpm run sync:viewer-assets
 pnpm run build
 pnpm run test:viewer-assets
 pnpm run test:client
-pnpm run test:host -- /absolute/path/to/design.op 375 1091
+pnpm run test:host /absolute/path/to/design.op 375 1091
 ```
 
 构建需要 Node 24.11 或更高版本以及 pnpm。DSH host/client 包是目标 DSH profile 提供的对等依赖（peer dependencies）。构建工具从本地开发依赖、当前链接的 DSH 检出或已安装的 DSH 源码包中解析；`DSH_SOURCE_ROOT` 可以显式指定源码检出。当该环境单独配置时，lockfile 会锁定独立的公共构建工具。
@@ -279,7 +285,7 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 切勿提交 `.npmrc`、`NPM_TOKEN` 或复制的 registry 凭据。本仓库默认忽略本地 npm 配置。
 
-`test:host` 会执行一次真实的精确渲染，校验 PNG IHDR 几何信息与 SHA-256，通过 HTTP 验证不可变图像/文档能力，并检查查看器资源是否可被授权。预期尺寸随测试夹具而异。
+`test:host` 会执行一次真实的精确渲染，校验 PNG IHDR 几何信息与 SHA-256，通过 HTTP 验证不可变图像/文档能力，启动已暂存的托管编辑器，推送实时选择，执行一次 MCP 修改，保存，并验证重新打开的是最新字节。预期尺寸随测试夹具而异。
 
 ## 生态系统
 

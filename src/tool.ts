@@ -82,6 +82,7 @@ export function createDesignRenderTool(
       + 'For a new design when no .op file exists, call openpencil_new instead; it runs the QuickJS script-first build plus OpenPencil post-processing/finalization, creates the file, and opens the editable sidebar in the same call, so do not render it afterward unless the user explicitly requests a PNG preview. '
       + 'The image appears directly in the chat; the file path is returned for further use. '
       + 'Set editable=true when the user asks to edit an existing design, and set autoOpen=true only when this render result should open its editor immediately. '
+      + 'When rendering a design generated in the current turn, editable=true is mandatory so its production preview always retains the Edit canvas/sidebar action; use autoOpen=true unless the user asked to keep the editor closed. '
       + 'Leave width/height unset for design-accurate output. Width/height are only supported '
       + 'by the lower-fidelity Jian runtime fallback.',
     parameters: {
