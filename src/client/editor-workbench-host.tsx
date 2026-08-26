@@ -36,6 +36,31 @@ function requestIdentity(request: EditorWorkbenchRequest): string {
   return editorWorkbenchEditorKey(request.grant, request.sessionId)
 }
 
+/** The sole automatic replacement allowed for an occupied workbench. */
+export function isPublishedSuccessorOfLiveDraft(
+  current: EditorWorkbenchRequest,
+  next: EditorWorkbenchRequest,
+): boolean {
+  return current.sessionId === next.sessionId
+    && current.grant.liveDraft === true
+    && next.grant.liveDraft === false
+    && typeof current.grant.draftId === 'string'
+    && current.grant.draftId === next.grant.draftId
+}
+
+/** Close the exact live attachment before its published successor is mounted. */
+export async function closeLiveDraftForPublishedSuccessor(
+  current: EditorWorkbenchRequest,
+  next: EditorWorkbenchRequest,
+  controller: EditorLifecycleController | undefined,
+  waitForController?: () => Promise<EditorLifecycleController | undefined>,
+): Promise<boolean> {
+  if (!isPublishedSuccessorOfLiveDraft(current, next)) return false
+  const resolved = controller ?? await waitForController?.()
+  if (resolved === undefined) return false
+  return resolved.requestClose().catch(() => false)
+}
+
 /**
  * Small external store that is deliberately not owned by a Tool card. The
  * replacement gate lets the mounted host retain a dirty editor when another
@@ -84,6 +109,13 @@ export interface EditorWorkbenchHost {
   open: (request: EditorWorkbenchRequest) => Promise<boolean>
   openIfIdle: (request: EditorWorkbenchRequest) => Promise<boolean>
   dispose: () => Promise<void>
+}
+
+export type AutomaticEditorWorkbenchLayout = 'fullscreen' | 'dock'
+
+/** Narrow viewports are still valid automatic targets; they use the modal. */
+export function automaticEditorWorkbenchLayout(viewportWidth: number): AutomaticEditorWorkbenchLayout {
+  return editorWorkbenchUsesFullscreen(viewportWidth) ? 'fullscreen' : 'dock'
 }
 
 export type EditorDisposePreservation = 'clean' | 'saved' | 'recovered' | 'unrecovered'
@@ -169,6 +201,32 @@ export function mountEditorWorkbenchHost(options: EditorWorkbenchHostOptions): E
   let openQueue = Promise.resolve()
   let lifecycle: EditorLifecycleState = INITIAL_EDITOR_LIFECYCLE_STATE
   let lifecycleController: EditorLifecycleController | undefined
+  const lifecycleControllerWaiters = new Set<(controller: EditorLifecycleController | undefined) => void>()
+  const publishLifecycleController = (next: EditorLifecycleController | undefined): void => {
+    lifecycleController = next
+    if (next === undefined) return
+    for (const waiter of lifecycleControllerWaiters) waiter(next)
+    lifecycleControllerWaiters.clear()
+  }
+  const waitForLifecycleController = (): Promise<EditorLifecycleController | undefined> => {
+    if (lifecycleController !== undefined) return Promise.resolve(lifecycleController)
+    return new Promise(resolveController => {
+      let settled = false
+      const finish = (next: EditorLifecycleController | undefined): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        lifecycleControllerWaiters.delete(finish)
+        resolveController(next)
+      }
+      const timer = setTimeout(() => { finish(undefined) }, 60_000)
+      lifecycleControllerWaiters.add(finish)
+    })
+  }
+  const cancelLifecycleControllerWaiters = (): void => {
+    for (const waiter of lifecycleControllerWaiters) waiter(undefined)
+    lifecycleControllerWaiters.clear()
+  }
 
   const focusSurface = (): void => {
     const target = ownerDocument.querySelector<HTMLElement>(
@@ -187,12 +245,14 @@ export function mountEditorWorkbenchHost(options: EditorWorkbenchHostOptions): E
   const close = (): void => {
     lifecycle = INITIAL_EDITOR_LIFECYCLE_STATE
     lifecycleController = undefined
+    cancelLifecycleControllerWaiters()
     store.close()
   }
 
   const destroy = (): void => {
     if (destroyed) return
     destroyed = true
+    cancelLifecycleControllerWaiters()
     root?.unmount()
     root = undefined
     container.remove()
@@ -207,7 +267,7 @@ export function mountEditorWorkbenchHost(options: EditorWorkbenchHostOptions): E
       getLocale={options.getLocale}
       ownerId={hostId}
       onLifecycleState={next => { lifecycle = next }}
-      onLifecycleController={next => { lifecycleController = next }}
+      onLifecycleController={publishLifecycleController}
       close={close}
     />,
   )
@@ -241,15 +301,33 @@ export function mountEditorWorkbenchHost(options: EditorWorkbenchHostOptions): E
     },
     openIfIdle(request) {
       if (destroyed || disposing) return Promise.resolve(false)
-      const operation = openQueue.then((): boolean => {
-        if (destroyed || disposing || store.getSnapshot() !== undefined || hasActiveEditor()) return false
+      const operation = openQueue.then(async (): Promise<boolean> => {
+        if (destroyed || disposing) return false
+        const previous = store.getSnapshot()
+        if (previous !== undefined) {
+          const closed = await closeLiveDraftForPublishedSuccessor(
+            previous,
+            request,
+            lifecycleController,
+            waitForLifecycleController,
+          )
+          if (!closed || destroyed || disposing || store.getSnapshot() !== previous) return false
+          const accepted = store.open({ ...request, automatic: true })
+          if (accepted) {
+            lifecycle = INITIAL_EDITOR_LIFECYCLE_STATE
+            lifecycleController = undefined
+          }
+          return accepted
+        }
+        if (hasActiveEditor()) return false
         const viewportWidth = ownerDocument.defaultView?.innerWidth ?? window.innerWidth
-        if (editorWorkbenchUsesFullscreen(viewportWidth)) return false
-        const dshRoot = ownerDocument.getElementById('root')
-        if (dshRoot === null) return false
-        if (dshRoot.dataset[OPENPENCIL_WORKBENCH_DOCK_ATTRIBUTE] !== undefined) return false
-        const computedMarginRight = Number.parseFloat(ownerDocument.defaultView?.getComputedStyle(dshRoot).marginRight ?? '0')
-        if (dshRoot.style.marginRight.trim() !== '' || (Number.isFinite(computedMarginRight) && computedMarginRight > 0.5)) return false
+        if (automaticEditorWorkbenchLayout(viewportWidth) === 'dock') {
+          const dshRoot = ownerDocument.getElementById('root')
+          if (dshRoot === null) return false
+          if (dshRoot.dataset[OPENPENCIL_WORKBENCH_DOCK_ATTRIBUTE] !== undefined) return false
+          const computedMarginRight = Number.parseFloat(ownerDocument.defaultView?.getComputedStyle(dshRoot).marginRight ?? '0')
+          if (dshRoot.style.marginRight.trim() !== '' || (Number.isFinite(computedMarginRight) && computedMarginRight > 0.5)) return false
+        }
         const accepted = store.open({ ...request, automatic: true })
         if (accepted) {
           lifecycle = INITIAL_EDITOR_LIFECYCLE_STATE

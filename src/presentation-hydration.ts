@@ -21,22 +21,26 @@ import { SessionId, type SessionStore } from '@deepseek-ai/dsh-session'
 import type { JsonValue, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { isLoopbackRemoteAddress, type EditorHostController } from './editor-host.js'
 import type { DesignNewResult } from './new-tool.js'
-import type { PublishedDraft } from './design-draft-tools.js'
+import type { BegunDraft, PublishedDraft } from './design-draft-tools.js'
 import {
   MAX_DOCUMENT_BYTES,
   MAX_RENDER_BYTES,
   PRESENTATION_META_KEY,
   RenderAccessController,
+  projectImageArtifactGrant,
   projectDocumentGrant,
   projectRenderGrant,
   renderDir,
   snapshotDir,
+  stateRoot,
   type RenderFrame,
   type RenderResult,
 } from './renderer.js'
 import {
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from './tool-names.js'
 import type { ViewerAssetController } from './viewer-assets.js'
@@ -55,7 +59,23 @@ const DEFAULT_MAX_RECORD_BYTES = 32 * 1024
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 const MAX_HYDRATION_FRAMES = 128
 
-type HydratableResult = RenderResult | DesignNewResult | PublishedDraft
+interface HydratableInspectionResult {
+  draftId: string
+  kind: 'screenshot'
+  version: number
+  screenshot: {
+    path: string
+    filename: string
+    mimeType: 'image/png'
+    bytes: number
+    sha256: string
+    width: number
+    height: number
+  }
+  next: string
+}
+
+type HydratableResult = RenderResult | DesignNewResult | BegunDraft | PublishedDraft | HydratableInspectionResult
 
 interface HydrationRequest {
   sessionId: string
@@ -107,7 +127,7 @@ interface PresentationHydrationDependencies {
   sessions: Pick<SessionStore, 'get'>
   render: RenderAccessController
   viewer?: Pick<ViewerAssetController, 'viewerGrant'>
-  editor?: Pick<EditorHostController, 'grantFor'>
+  editor?: Pick<EditorHostController, 'grantFor' | 'grantForDraft'>
   /** DSH Web authorities derived from `webRuntime.trustedHosts`. */
   trustedHosts?: readonly string[] | (() => readonly string[])
 }
@@ -279,13 +299,15 @@ export function parseHydratableNewResult(value: unknown): DesignNewResult | unde
   return value as unknown as DesignNewResult
 }
 
-const PIPELINE_RESULT_KEYS = new Set([...NEW_RESULT_KEYS, 'published', 'preview'])
+const PIPELINE_RESULT_KEYS = new Set([...NEW_RESULT_KEYS, 'draftId', 'published', 'preview'])
 
 /** Accept only the canonical document-only result emitted by pipeline_finish. */
 export function parseHydratablePipelineResult(value: unknown): PublishedDraft | undefined {
   if (!isRecord(value) || !hasExactKeys(value, PIPELINE_RESULT_KEYS)) return undefined
   if (
-    !isSafeString(value.path)
+    typeof value.draftId !== 'string'
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
+    || !isSafeString(value.path)
     || !isAbsolute(value.path)
     || !value.path.toLowerCase().endsWith('.op')
     || typeof value.filename !== 'string'
@@ -310,23 +332,146 @@ export function parseHydratablePipelineResult(value: unknown): PublishedDraft | 
   return value as unknown as PublishedDraft
 }
 
+const BEGIN_RESULT_KEYS = new Set([
+  'draftId', 'path', 'version', 'createdAt', 'platform', 'editorState',
+  'canvas', 'buildContract', 'styleGuideTags', 'document', 'sourceTool', 'previewIntent', 'editable',
+  'autoOpenEditor', 'liveCanvas', 'published', 'next',
+])
+
+const BEGIN_CANVAS_KEYS = new Set([
+  'platform', 'width', 'seedHeight', 'finalHeight', 'fixedViewport', 'rootCount', 'rootType',
+])
+
+function isBeginCanvasContract(value: unknown, platform: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, BEGIN_CANVAS_KEYS)) return false
+  return value.platform === platform
+    && (value.platform === 'web' || value.platform === 'mobile')
+    && isSafeInteger(value.width, 240, 3_840)
+    && (value.platform === 'mobile' ? value.width <= 500 : value.width > 500)
+    && isSafeInteger(value.seedHeight, 240, 20_000)
+    && (value.finalHeight === 'fit_content' || isSafeInteger(value.finalHeight, 240, 20_000))
+    && typeof value.fixedViewport === 'boolean'
+    && value.rootCount === 1
+    && value.rootType === 'frame'
+    && (value.fixedViewport ? value.finalHeight === value.seedHeight : value.finalHeight === 'fit_content')
+}
+
+const COMPACT_BUILD_CONTRACT_V1_KEYS = new Set([
+  'version', 'canvas', 'script', 'operations', 'node', 'layoutRules',
+])
+const COMPACT_BUILD_CONTRACT_V2_KEYS = new Set([
+  ...COMPACT_BUILD_CONTRACT_V1_KEYS, 'firstBatch',
+])
+
+function isCompactBuildContract(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const expectedKeys = value.version === 'openpencil-batch-v2'
+    ? COMPACT_BUILD_CONTRACT_V2_KEYS
+    : value.version === 'openpencil-batch-v1'
+      ? COMPACT_BUILD_CONTRACT_V1_KEYS
+      : undefined
+  if (expectedKeys === undefined || !hasExactKeys(value, expectedKeys)) return false
+  if (
+    !isRecord(value.canvas)
+    || !isRecord(value.script)
+    || !isSafeString(value.operations)
+    || !isRecord(value.node)
+    || !Array.isArray(value.layoutRules)
+    || (value.version === 'openpencil-batch-v2' && !isRecord(value.firstBatch))
+  ) return false
+  try {
+    return Buffer.byteLength(JSON.stringify(value)) <= 16 * 1024
+  } catch {
+    return false
+  }
+}
+
+/** Accept only the compact live-draft settlement emitted by pipeline_begin. */
+export function parseHydratableBeginResult(value: unknown): BegunDraft | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, BEGIN_RESULT_KEYS)) return undefined
+  if (
+    typeof value.draftId !== 'string'
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
+    || !isSafeString(value.path)
+    || !isAbsolute(value.path)
+    || !value.path.toLowerCase().endsWith('.op')
+    || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
+    || (value.createdAt !== undefined && !isSafeInteger(value.createdAt, 0, Number.MAX_SAFE_INTEGER))
+    || (value.platform !== 'web' && value.platform !== 'mobile')
+    || !isBeginCanvasContract(value.canvas, value.platform)
+    || !isCompactBuildContract(value.buildContract)
+    || !isRecord(value.editorState)
+    || !isRecord(value.styleGuideTags)
+    || !isDocumentSnapshot(value.document)
+    || value.sourceTool !== OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+    || value.previewIntent !== 'document'
+    || value.editable !== true
+    || value.autoOpenEditor !== true
+    || value.liveCanvas !== true
+    || value.published !== false
+    || !isSafeString(value.next)
+  ) return undefined
+  return value as unknown as BegunDraft
+}
+
+const INSPECTION_RESULT_KEYS = new Set(['draftId', 'kind', 'version', 'screenshot', 'next'])
+const INSPECTION_SCREENSHOT_KEYS = new Set([
+  'path', 'filename', 'mimeType', 'bytes', 'sha256', 'width', 'height',
+])
+
+/** Accept only a private content-addressed screenshot settlement. */
+export function parseHydratableInspectionResult(value: unknown): HydratableInspectionResult | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, INSPECTION_RESULT_KEYS)) return undefined
+  const screenshot = value.screenshot
+  if (!isRecord(screenshot) || !hasExactKeys(screenshot, INSPECTION_SCREENSHOT_KEYS)) return undefined
+  if (
+    typeof value.draftId !== 'string'
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
+    || value.kind !== 'screenshot'
+    || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
+    || typeof screenshot.sha256 !== 'string'
+    || !isSha256(screenshot.sha256)
+    || screenshot.filename !== `${screenshot.sha256}.png`
+    || !isManagedArtifactPath(
+      screenshot.path,
+      join(stateRoot(), 'design-draft-inspections'),
+      screenshot.filename,
+    )
+    || screenshot.mimeType !== 'image/png'
+    || !isSafeInteger(screenshot.bytes, 1, MAX_RENDER_BYTES)
+    || !isSafeInteger(screenshot.width, 1, 32_768)
+    || !isSafeInteger(screenshot.height, 1, 32_768)
+    || screenshot.width * screenshot.height > 128 * 1024 * 1024
+    || !isSafeString(value.next)
+  ) return undefined
+  return value as unknown as HydratableInspectionResult
+}
+
 function parseHydratableResult(toolName: unknown, value: unknown): HydratableResult | undefined {
   if (toolName === OPENPENCIL_RENDER_TOOL_NAME) return parseHydratableRenderResult(value)
   if (toolName === OPENPENCIL_NEW_TOOL_NAME) return parseHydratableNewResult(value)
+  if (toolName === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME) return parseHydratableBeginResult(value)
+  if (toolName === OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME) return parseHydratableInspectionResult(value)
   if (toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME) return parseHydratablePipelineResult(value)
   return undefined
 }
 
 function resultDocument(result: HydratableResult): NonNullable<RenderResult['document']> {
-  return result.document!
+  if ('document' in result) return result.document!
+  throw new Error('inspection results do not contain a document')
+}
+
+function resultFingerprint(result: HydratableResult): string {
+  return 'screenshot' in result ? result.screenshot.sha256 : resultDocument(result).sha256
 }
 
 function resultSourcePath(result: HydratableResult): string | undefined {
+  if ('screenshot' in result) return undefined
   return result.sourceTool === OPENPENCIL_RENDER_TOOL_NAME ? result.sourcePath : result.path
 }
 
 function resultEditable(result: HydratableResult): boolean {
-  return result.editable === true
+  return 'editable' in result && result.editable === true
 }
 
 function canonicalJson(value: unknown): string {
@@ -532,7 +677,7 @@ export class PresentationHydrationController {
       kind: 'authorization',
       expiresAt: now + this.#ttlMs,
       bytes: 0,
-      documentSha256: resultDocument(parsed).sha256,
+      documentSha256: resultFingerprint(parsed),
       sourcePath: resultSourcePath(parsed),
       editable: resultEditable(parsed),
       resultDigest: resultDigest(parsed),
@@ -593,26 +738,55 @@ export class PresentationHydrationController {
     if (result === undefined) return undefined
     const authorization = this.#liveAuthorization(request, result)
     if (authorization === null) return undefined
+    if ('sourceTool' in result && result.sourceTool === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME && authorization === undefined) {
+      // An unpublished draft is process-local authority. Never recreate a
+      // live launch from historical text after the trusted settlement record
+      // expired or the plugin restarted.
+      return undefined
+    }
     const sourcePath = resultSourcePath(result)
-    const durablePublication = result.sourceTool === OPENPENCIL_NEW_TOOL_NAME
-      || result.sourceTool === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
-    const editor = editorAllowed
-      && sourcePath !== undefined
-      && (
-        (authorization !== undefined && authorization.editable)
-        || (authorization === undefined && durablePublication && resultEditable(result))
-      )
-      ? this.dependencies.editor?.grantFor(sourcePath, resultDocument(result).sha256)
-      : undefined
+    const sourceTool = 'sourceTool' in result ? result.sourceTool : OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME
+    const durablePublication = sourceTool === OPENPENCIL_NEW_TOOL_NAME
+      || sourceTool === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+    const editor = sourceTool === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME && 'draftId' in result
+      ? editorAllowed && authorization !== undefined
+        ? this.dependencies.editor?.grantForDraft(result.draftId, request.sessionId)
+        : undefined
+      : editorAllowed
+        && sourcePath !== undefined
+        && (
+          (authorization !== undefined && authorization.editable)
+          || (authorization === undefined && durablePublication && resultEditable(result))
+        )
+        ? this.dependencies.editor?.grantFor(sourcePath, resultDocument(result).sha256)
+        : undefined
     // A different browser may explicitly reopen a strictly parsed durable
     // publication, but only the original live settlement may request
     // automatic UI mutation. Historical cards always require an Edit click.
-    const projectionResult = authorization === undefined && durablePublication
+    const legacyLiveBegin = sourceTool === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+      && 'buildContract' in result
+      && isRecord(result.buildContract)
+      && result.buildContract.version === 'openpencil-batch-v1'
+    const projectionResult = (authorization === undefined && durablePublication) || legacyLiveBegin
       ? { ...result, autoOpenEditor: undefined }
       : result
-    const projected = result.sourceTool !== OPENPENCIL_RENDER_TOOL_NAME
-      ? projectDocumentGrant(projectionResult as unknown as JsonValue, this.dependencies.render, editor)
-      : projectRenderGrant(
+    const projected = sourceTool === OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME
+      ? projectImageArtifactGrant(
+          projectionResult as unknown as JsonValue,
+          this.dependencies.render,
+          {
+            filename: `render-stage-${resultFingerprint(result)}.png`,
+            bytes: (result as HydratableInspectionResult).screenshot.bytes,
+            sha256: resultFingerprint(result),
+            width: (result as HydratableInspectionResult).screenshot.width,
+            height: (result as HydratableInspectionResult).screenshot.height,
+            name: 'Live design preview',
+            index: 0,
+          },
+        )
+      : sourceTool !== OPENPENCIL_RENDER_TOOL_NAME
+        ? projectDocumentGrant(projectionResult as unknown as JsonValue, this.dependencies.render, editor)
+        : projectRenderGrant(
           projectionResult as unknown as JsonValue,
           this.dependencies.render,
           this.dependencies.viewer?.viewerGrant,
@@ -658,7 +832,7 @@ export class PresentationHydrationController {
     if (settlement === undefined || settlement.duplicate || settlement.event === undefined) return undefined
 
     const result = this.#parseHistoricalEvent(settlement.event)
-    return result !== undefined && resultDocument(result).sha256 === request.documentSha256 ? result : undefined
+    return result !== undefined && resultFingerprint(result) === request.documentSha256 ? result : undefined
   }
 
   #historyIndex(session: StoredSession): SessionHistoryIndex {
@@ -685,6 +859,8 @@ export class PresentationHydrationController {
         || (
           event.data.name !== OPENPENCIL_RENDER_TOOL_NAME
           && event.data.name !== OPENPENCIL_NEW_TOOL_NAME
+          && event.data.name !== OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+          && event.data.name !== OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME
           && event.data.name !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
         )
       ) continue

@@ -42,8 +42,17 @@ export interface LaunchResponse {
   recovery?: EditorRecoverySummary
   closeUrl: string
   docJson?: string
+  /** The iframe is attached to a pipeline-owned daemon instead of a persisted source session. */
+  liveDraft?: boolean
+  /** Same-origin capability that acknowledges the live iframe after its bridge is ready. */
+  readyUrl?: string
   /** Client-only marker: the persisted launch capability was renewed. */
   renewed?: true
+}
+
+/** Pipeline drafts publish through `pipeline_finish`; their canvas has no independent save edge. */
+export function managedEditorAllowsSave(launch: Pick<LaunchResponse, 'liveDraft'> | undefined): boolean {
+  return launch?.liveDraft !== true
 }
 
 const DEFAULT_REFRESH_URL = '/_dsh/dsh-openpencil/editor/refresh'
@@ -61,6 +70,13 @@ function launchResponseOf(value: unknown): LaunchResponse {
       throw new Error(`OpenPencil editor launch omitted ${field}`)
     }
   }
+  const liveDraft = value.liveDraft === true
+  if (value.liveDraft !== undefined && typeof value.liveDraft !== 'boolean') {
+    throw new Error('OpenPencil editor launch returned an invalid liveDraft flag')
+  }
+  if (liveDraft && (typeof value.readyUrl !== 'string' || value.readyUrl.length === 0)) {
+    throw new Error('OpenPencil live draft launch omitted readyUrl')
+  }
   return {
     sessionId: value.sessionId as string,
     iframeUrl: value.iframeUrl as string,
@@ -75,6 +91,10 @@ function launchResponseOf(value: unknown): LaunchResponse {
     closeUrl: editorControlUrl(value.closeUrl as string),
     ...(editorRecoverySummaryOf(value.recovery) === undefined ? {} : { recovery: editorRecoverySummaryOf(value.recovery) }),
     ...(typeof value.docJson === 'string' ? { docJson: value.docJson } : {}),
+    ...(value.liveDraft === undefined ? {} : { liveDraft }),
+    ...(typeof value.readyUrl === 'string' && value.readyUrl.length > 0
+      ? { readyUrl: editorControlUrl(value.readyUrl) }
+      : {}),
   }
 }
 
@@ -239,6 +259,10 @@ export async function prepareManagedEditor(
   const fetcher = options.fetcher ?? fetch
   const launch = await launchManagedEditor(editor, document, { ...options, fetcher })
   try {
+    // The pipeline daemon already owns the authoritative in-memory document.
+    // Fetching (and later opening) a publication snapshot would both delay the
+    // sidebar and risk replacing edits made after the begin result settled.
+    if (launch.liveDraft === true) return { launch, documentJson: '' }
     if (launch.docJson !== undefined) return { launch, documentJson: launch.docJson }
     if (editor.refreshUrl !== undefined || launch.renewed === true) {
       throw new Error('OpenPencil editor launch omitted current docJson')
@@ -255,6 +279,34 @@ export async function prepareManagedEditor(
     await closeManagedEditorLaunch(launch, { fetcher, keepalive: true }).catch(() => {})
     throw error
   }
+}
+
+/**
+ * Complete the bridge-ready edge without confusing a live pipeline daemon
+ * with a persisted editor session. Normal sessions receive their exact boot
+ * document; live drafts acknowledge attachment through a same-origin host
+ * capability and keep the daemon's current document untouched.
+ */
+export async function completeManagedEditorBridgeReady(
+  launch: LaunchResponse,
+  documentJson: string,
+  post: (message: Parameters<typeof encodeEditorOutbound>[0]) => void,
+  options: { fetcher?: typeof fetch; signal?: AbortSignal } = {},
+): Promise<'document-open-requested' | 'live-draft-attached'> {
+  if (launch.liveDraft !== true) {
+    post({ type: 'op-bridge/open-document', json: documentJson })
+    return 'document-open-requested'
+  }
+  if (launch.readyUrl === undefined) throw new Error('OpenPencil live draft launch omitted readyUrl')
+  const response = await (options.fetcher ?? fetch)(launch.readyUrl, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: launch.sessionId }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  })
+  if (!response.ok) throw new Error(`OpenPencil live draft attach failed (${response.status})`)
+  return 'live-draft-attached'
 }
 
 /** Close exactly the managed session returned by one launch response. */
@@ -350,6 +402,8 @@ export interface EditorUnmountState {
   dirty: boolean
   /** False after a successful explicit close cleared the exact launch. */
   hasLiveLaunch: boolean
+  /** Pipeline-owned daemons are only detached by this panel and never retained for recovery. */
+  liveDraft?: boolean
 }
 
 export interface EditorInitRetryTimer<T> {
@@ -473,13 +527,17 @@ export namespace beginEditorInitRetry {
 
 /**
  * Apply the unmount policy without letting React cleanup accidentally issue
- * DELETE. Dirty live launches are retained by default even when their native
- * Tool-details owner has no lifecycle controller.
+ * DELETE for a dirty persisted editor. Pipeline-owned live drafts are the
+ * inverse: DELETE only detaches this panel, so they are always released.
  */
 export function applyManagedEditorUnmountPolicy(
   state: EditorUnmountState,
   closeDaemon: () => void,
 ): EditorUnmountDisposition {
+  if (state.liveDraft === true) {
+    closeDaemon()
+    return 'closed'
+  }
   if (state.retainServerSession || (state.dirty && state.hasLiveLaunch)) return 'retained'
   closeDaemon()
   return 'closed'
@@ -524,6 +582,7 @@ export function ManagedOpenPencilEditor({
   lifecycleControllerRef.current = onLifecycleController
   const stopInitLoopRef = useRef<EditorInitRetryController>()
   const bridgeReadyRef = useRef(false)
+  const liveReadyAbortRef = useRef<AbortController>()
   const selectionPollStopRef = useRef<() => void>()
   const requestCounterRef = useRef(0)
   const saveWaitersRef = useRef(new Map<string, { resolve: (message: Extract<EditorInboundMessage, { type: 'op-bridge/snapshot-result' }>) => void; reject: (error: Error) => void }>())
@@ -563,6 +622,7 @@ export function ManagedOpenPencilEditor({
     if (saveInFlightRef.current !== undefined) return saveInFlightRef.current
     const launch = launchRef.current
     if (launch === undefined || phaseRef.current === 'launching' || phaseRef.current === 'loading') return false
+    if (!managedEditorAllowsSave(launch)) return true
     if (!dirtyRef.current) return true
     const operation = (async (): Promise<boolean> => {
       updatePhase('saving')
@@ -631,7 +691,7 @@ export function ManagedOpenPencilEditor({
       },
       captureRecovery: async () => {
         const launch = launchRef.current
-        if (launch?.recoveryUrl === undefined) return false
+        if (!managedEditorAllowsSave(launch) || launch?.recoveryUrl === undefined) return false
         try {
           await captureManagedEditorRecovery(launch)
           return true
@@ -661,7 +721,10 @@ export function ManagedOpenPencilEditor({
       clearOpenPencilSelection(sessionId, documentGrant.path)
       const launch = launchRef.current
       if (launch === undefined) return
-      await closeManagedEditorLaunch(launch, { dirty: dirtyAtClose, keepalive: true })
+      await closeManagedEditorLaunch(launch, {
+        dirty: managedEditorAllowsSave(launch) ? dirtyAtClose : false,
+        keepalive: true,
+      })
       if (launchRef.current === launch) launchRef.current = undefined
     }
     closeDaemonRef.current = closeDaemon
@@ -699,7 +762,7 @@ export function ManagedOpenPencilEditor({
         // the already-created daemon.
         launchRef.current = launch
         let { documentJson } = prepared
-        if (launch.recovery !== undefined) {
+        if (managedEditorAllowsSave(launch) && launch.recovery !== undefined) {
           const recoveryCopy = editorRecoveryCopy(localeRef.current)
           const message = launch.recovery.sourceChangedSinceCapture
             ? recoveryCopy.conflict(launch.recovery.sourceName)
@@ -736,6 +799,8 @@ export function ManagedOpenPencilEditor({
       releaseEditor()
       stopInitLoopRef.current?.stop()
       stopInitLoopRef.current = undefined
+      liveReadyAbortRef.current?.abort()
+      liveReadyAbortRef.current = undefined
       const disposed = new Error('OpenPencil editor closed')
       for (const waiter of saveWaitersRef.current.values()) waiter.reject(disposed)
       saveWaitersRef.current.clear()
@@ -744,6 +809,7 @@ export function ManagedOpenPencilEditor({
         retainServerSession: retainServerSessionOnUnmountRef.current,
         dirty: dirtyRef.current,
         hasLiveLaunch: launchRef.current !== undefined,
+        liveDraft: launchRef.current?.liveDraft === true,
       }, () => {
         void closeDaemon().catch(() => {})
       })
@@ -836,14 +902,35 @@ export function ManagedOpenPencilEditor({
           stopInitLoopRef.current = undefined
           post({ type: 'op-bridge/theme', colorScheme: colorSchemeRef.current })
           post({ type: 'op-bridge/locale', locale: localeRef.current })
-          post({ type: 'op-bridge/open-document', json: docJsonRef.current })
+          {
+            const launch = launchRef.current
+            if (launch === undefined) break
+            const controller = new AbortController()
+            liveReadyAbortRef.current?.abort()
+            liveReadyAbortRef.current = controller
+            void completeManagedEditorBridgeReady(launch, docJsonRef.current, post, {
+              signal: controller.signal,
+            }).then(result => {
+              if (controller.signal.aborted) return
+              if (liveReadyAbortRef.current === controller) liveReadyAbortRef.current = undefined
+              if (result === 'live-draft-attached') updatePhase('ready')
+            }).catch(error => {
+              if (controller.signal.aborted) return
+              if (liveReadyAbortRef.current === controller) liveReadyAbortRef.current = undefined
+              setFailure(error instanceof Error ? error.message : String(error))
+              updatePhase('error')
+            })
+          }
           break
         case 'op-bridge/opened':
+          if (launchRef.current?.liveDraft === true) break
           updatePhase('ready')
           if (restoredRecoveryRef.current) updateDirty(true)
           break
         case 'op-bridge/dirty-changed':
-          updateDirty(restoredRecoveryRef.current || message.dirty)
+          if (managedEditorAllowsSave(launchRef.current)) {
+            updateDirty(restoredRecoveryRef.current || message.dirty)
+          }
           break
         case 'op-bridge/snapshot-result':
           saveWaitersRef.current.get(message.requestId)?.resolve(message)
@@ -858,7 +945,7 @@ export function ManagedOpenPencilEditor({
           updatePhase('error')
           break
         case 'op-shell/save':
-          void save()
+          if (managedEditorAllowsSave(launchRef.current)) void save()
           break
         case 'op-shell/copy':
           void navigator.clipboard?.writeText(message.text).catch(() => {})
@@ -891,29 +978,33 @@ export function ManagedOpenPencilEditor({
 
   const title = documentGrant.path?.replaceAll('\\', '/').split('/').at(-1) ?? 'OpenPencil'
   const copy = editorPanelCopy(locale)
+  const liveDraft = launchRef.current?.liveDraft === true
+  const saveEnabled = launchRef.current !== undefined && managedEditorAllowsSave(launchRef.current)
   return (
     <section
       style={panelStyles.root}
       data-tool-details-fill="true"
       data-tool-details-dirty={dirty || undefined}
       data-openpencil-editor-panel="true"
+      data-openpencil-live-draft={liveDraft || undefined}
       aria-busy={phase === 'launching' || phase === 'loading' || phase === 'saving' || undefined}
     >
       <div style={panelStyles.toolbar}>
         <strong style={panelStyles.title} title={documentGrant.path}>{title}</strong>
-        <span style={panelStyles.status}>{phase === 'saving' ? copy.saving : dirty ? copy.unsaved : phase === 'ready' ? copy.saved : ''}</span>
-        <button type="button" style={panelStyles.button} disabled={!dirty || phase === 'saving'} onClick={() => { void save() }}>{copy.save}</button>
+        {saveEnabled ? <span style={panelStyles.status}>{phase === 'saving' ? copy.saving : dirty ? copy.unsaved : phase === 'ready' ? copy.saved : ''}</span> : null}
+        {saveEnabled ? <button type="button" style={panelStyles.button} disabled={!dirty || phase === 'saving'} onClick={() => { void save() }}>{copy.save}</button> : null}
         {workbenchActions}
       </div>
       <div style={panelStyles.stage}>
         {launchRef.current !== undefined ? (
           <iframe
             ref={iframeRef}
-            style={panelStyles.iframe}
+            style={liveDraft ? { ...panelStyles.iframe, pointerEvents: 'none' } : panelStyles.iframe}
             src={iframeSrcRef.current}
             title={copy.editorTitle(title)}
             allow="clipboard-read; clipboard-write"
-            tabIndex={phase === 'ready' || phase === 'saving' ? 0 : -1}
+            aria-disabled={liveDraft || undefined}
+            tabIndex={!liveDraft && (phase === 'ready' || phase === 'saving') ? 0 : -1}
           />
         ) : null}
         {phase === 'launching' || phase === 'loading' ? <div style={panelStyles.overlay} role="status">{copy.loading}</div> : null}

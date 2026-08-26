@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.6</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.7</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -144,9 +144,9 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | Tool | What it does |
 | --- | --- |
 | `openpencil_new` | Compatible fast path for simple jobs: runs one transactional QuickJS `batch_design` script, publishes with create-if-absent semantics, and returns an editable presentation. Prefer the full pipeline below for production design. |
-| `openpencil_pipeline_begin` | Starts an owner-scoped private draft for a new workspace-relative `.op` path; the target file remains unpublished and untouched. |
-| `openpencil_pipeline_context` | Loads the native dynamic design-agent prompt together with relevant guidelines, style guides, variables/themes, and UI-kit metadata or script references. |
-| `openpencil_pipeline_batch` | Applies serialized semantic QuickJS batches to the draft; build the skeleton first, then add and refine sections. |
+| `openpencil_pipeline_begin` | Starts an owner-scoped private draft, returns a compact runtime-matched canvas/build contract, and immediately opens the same live draft in the sidebar; an unqualified page is a verified Web canvas and the target `.op` remains unpublished. |
+| `openpencil_pipeline_context` | Loads one bounded guideline, style, theme, or UI-kit detail that is genuinely missing from the begin contract; it is not a startup-context refresh loop. |
+| `openpencil_pipeline_batch` | Applies serialized semantic QuickJS batches to the draft; build the complete skeleton first, then continue in a few substantial content/repair batches. The begin canvas width is enforced and healthy batches do not trigger redundant full quality/layout reads. |
 | `openpencil_pipeline_inspect` | Runs native quality or resolved-layout inspection, or creates an exact PNG that the model can open with image reading and review visually. |
 | `openpencil_pipeline_finish` | Runs native finalization, lint, layout, screenshot freshness, and DSH quality gates, then atomically publishes with `createIfAbsent` and returns an editable presentation. |
 | `openpencil_pipeline_abort` | Discards the unpublished draft without creating the target file. |
@@ -157,15 +157,17 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## Agent Design Workflow
 
-For production design, use `openpencil_pipeline_begin` → `openpencil_pipeline_context` → repeated `openpencil_pipeline_batch` and `openpencil_pipeline_inspect` calls → `openpencil_pipeline_finish`. The draft daemon is private to the owning DSH session, and the requested workspace path does not exist until publication succeeds. Intermediate draft screenshots never expose an editable sidebar, preventing user edits from racing the Agent's batches; editability is granted only after publication.
+For production design, use the fast path `openpencil_pipeline_begin` → 2–4 substantial `openpencil_pipeline_batch` calls → one useful draft screenshot → `openpencil_pipeline_finish` (native finalize phase) → a distinct post-final screenshot → `openpencil_pipeline_finish` (atomic publication). Begin immediately opens the same owner-scoped private draft daemon in the sidebar, so the user sees each batch land on the live canvas instead of waiting for publication. The live draft has no independent save path; the requested workspace file remains absent until the pipeline publishes it atomically.
 
-Context is dynamic rather than a static template: it combines OpenPencil's native design-agent prompt with the relevant guidelines, style guides, variables/themes, and UI kits. Build a structural skeleton first, then add content and refinement in semantic section batches. Successful batch calls return only compact layout diagnostics for speed; request the full resolved layout through `openpencil_pipeline_inspect` when needed. At minimum, call `openpencil_pipeline_inspect` with `kind: "screenshot"` after the signature/heading is established and again after the primary task or form plus CTA is in place. At each milestone the model opens the exact PNG with image reading, fixes visible clipping, overflow, hierarchy, spacing, control proportions, contrast, and text legibility, and repeats as needed; visual review does not happen automatically.
+The begin result is the compact authoritative run contract. Preserve it, never re-fetch fields it already returned, and do not request variables or the full native design-agent prompt merely as a startup ritual. An unqualified page, homepage, dashboard, form, or screen defaults to web/desktop; only explicit mobile, phone, iOS, Android, 移动, or 手机 wording selects a mobile canvas. Use `openpencil_pipeline_context` at most once for a specifically missing guideline/kit, never as repeated reassurance. Create the complete structural skeleton in the first batch and continue directly into content instead of creating an eight-item task list.
+
+The live sidebar is continuous user feedback, while `openpencil_pipeline_inspect` with `kind: "screenshot"` provides the exact pixels the model can read. One meaningful draft screenshot is normally enough before finalization; request full layout or quality only for a concrete diagnostic. Open the PNG with image reading, fix visible clipping, hierarchy, spacing, typography, controls, contrast, and legibility, then continue.
 
 Finishing runs OpenPencil's native finalization, lint, and layout checks plus DSH's quality gate. These deterministic checks do not create taste or visual polish. After finalization, take a separate new exact screenshot and have the model review it visually; intermediate milestone screenshots can never satisfy this post-final freshness gate. Only then does the final finish call atomically create the target with `createIfAbsent`. A failed gate or `openpencil_pipeline_abort` leaves the target absent. Every published generation result is one presentation containing the exact final PNG preview and a document-scoped editable grant; it auto-opens the sidebar only when idle, never replaces another session's editor, and always keeps **Edit canvas** for an explicit switch. A nested `openpencil_pipeline_finish` result returned through PTC/Code Mode preserves that same presentation and never degrades into ordinary JSON or a read-only card. Historical or hydrated cards never auto-open.
 
 Within the same running DSH service, switching browsers or reloading can recover a strictly parsed durable publication from `openpencil_new` or `openpencil_pipeline_finish` as the exact PNG plus an explicit **Edit canvas** action. A historical card never auto-opens the sidebar; the user must click that action. An ordinary historical `openpencil_render` remains read-only, and non-loopback connections never receive an editor grant.
 
-The bundled `openpencil-design` skill remains the scripting and quality guide, and the managed runtime does not depend on the desktop binary. `openpencil_new` remains a compatible single-batch fast path for simple work, but production-quality generation should prefer the full pipeline.
+The bundled `openpencil-design` skill is deliberately a thin DSH adapter; the compact begin contract and current native tool schema remain authoritative. The managed runtime does not depend on the desktop binary. `openpencil_new` remains a compatible single-batch path only for explicitly requested simple one-shot work.
 
 Use `openpencil_create` and `openpencil_edit` only for an existing live canvas. Their edits remain unsaved until the editor Save action.
 
@@ -183,7 +185,7 @@ Viewer assets are lazy-loaded only after the user opens the canvas. If they are 
 
 ## Managed Editor
 
-Editable sessions use OpenPencil's managed web host — the same architecture used by `op-vscode`. The plugin starts the host only after an authorized user action, keeps the daemon token in memory, validates iframe source and origin, and closes the process when the editor session ends. The editor surface is selected progressively: native Tool details when the host declares that seam, otherwise the plugin's right-hand workbench with resize and full-screen controls.
+Editable sessions use OpenPencil's managed web host — the same architecture used by `op-vscode`. The plugin starts the single-tenant host only after an authorized user action and does not send `X-OpenPencil-Token` or `Authorization` to it; those request credentials remain reserved for online multi-tenant deployments. The managed daemon is loopback-only, inherits the supervisor's stdin lifetime, validates browser origins, and is closed when the editor session ends. DSH's ephemeral read-only browser proxy uses a separate per-attach capability and strips it before forwarding native requests. The editor surface is selected progressively: native Tool details when the host declares that seam, otherwise the plugin's right-hand workbench with resize and full-screen controls.
 
 Startup uses a slow-mount-safe listening handshake: readiness probes begin only after the bundled host announces its bound address. No desktop OpenPencil installation is required.
 

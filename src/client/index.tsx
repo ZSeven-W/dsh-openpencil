@@ -1,6 +1,6 @@
 /**
- * Browser presentation for `openpencil_new`, `openpencil_pipeline_finish`, `openpencil_render`, and
- * historical `design_render` conversation cards.
+ * Browser presentation for OpenPencil render/new/pipeline cards and historical
+ * `design_render` conversation cards.
  *
  * PNG remains the replay-safe default. When the host also grants access to
  * the source `.op`, the user can opt into one shared, read-only Web SDK
@@ -35,19 +35,23 @@ import type { GalleryFrame, GalleryLocale } from './frame-gallery.js'
 import { OpenPencilSelectionDock } from './selection-dock.js'
 import {
   presentationHydrationRequestOf,
-  requestPresentationGrant,
+  requestPresentationGrantWithRetry,
 } from './presentation-hydration.js'
 import {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
 export {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
@@ -74,8 +78,10 @@ export {
   applyManagedEditorUnmountPolicy,
   beginEditorInitRetry,
   closeManagedEditorLaunch,
+  completeManagedEditorBridgeReady,
   editorPanelCopy,
   launchManagedEditor,
+  managedEditorAllowsSave,
   prepareManagedEditor,
   prepareManagedEditorForMount,
 } from './editor-panel.js'
@@ -103,7 +109,10 @@ export {
   OPENPENCIL_WORKBENCH_DOCK_ATTRIBUTE,
 } from './editor-dock-layout.js'
 export {
+  automaticEditorWorkbenchLayout,
+  closeLiveDraftForPublishedSuccessor,
   createEditorWorkbenchStore,
+  isPublishedSuccessorOfLiveDraft,
   mountEditorWorkbenchHost,
   preserveEditorBeforeWorkbenchDispose,
 } from './editor-workbench-host.js'
@@ -156,6 +165,7 @@ export {
   PRESENTATION_HYDRATION_ENDPOINT,
   presentationHydrationRequestOf,
   requestPresentationGrant,
+  requestPresentationGrantWithRetry,
 } from './presentation-hydration.js'
 
 /** Presentation metadata key the host half projects into `block.meta`. */
@@ -165,7 +175,7 @@ const LIVE_AUTO_OPEN_TTL_MS = 15 * 60 * 1000
 const LIVE_AUTO_OPEN_MAX = 256
 const liveAutoOpenActivatedAt = Date.now()
 interface LiveAutoOpenRecord {
-  state: 'armed' | 'consumed'
+  state: 'armed' | 'opening' | 'accepted'
   expiresAt: number
 }
 
@@ -189,19 +199,56 @@ function pruneLiveAutoOpenCalls(now = Date.now()): void {
 export function rememberLiveAutoOpenCall(key: string): void {
   pruneLiveAutoOpenCalls()
   const existing = liveAutoOpenCalls.get(key)
-  if (existing?.state === 'consumed') return
+  if (existing?.state === 'opening' || existing?.state === 'accepted') return
   liveAutoOpenCalls.delete(key)
   liveAutoOpenCalls.set(key, { state: 'armed', expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS })
   pruneLiveAutoOpenCalls()
 }
 
+/**
+ * Legacy synchronous acceptance used by pure callers. The automatic React
+ * path below waits for the host's actual answer before accepting the call.
+ */
 export function takeLiveAutoOpenCall(key: string): boolean {
   pruneLiveAutoOpenCalls()
   const record = liveAutoOpenCalls.get(key)
   if (record?.state !== 'armed') return false
   liveAutoOpenCalls.delete(key)
-  liveAutoOpenCalls.set(key, { state: 'consumed', expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS })
+  liveAutoOpenCalls.set(key, { state: 'accepted', expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS })
   return true
+}
+
+/**
+ * Attempt one live auto-open without consuming it until the host accepts.
+ * A busy/unmounted host or a rejected promise re-arms the call for a later
+ * card projection, while `opening` prevents duplicate concurrent requests.
+ */
+export async function attemptLiveAutoOpenCall(
+  key: string,
+  open: () => boolean | Promise<boolean>,
+): Promise<boolean> {
+  pruneLiveAutoOpenCalls()
+  const record = liveAutoOpenCalls.get(key)
+  if (record?.state !== 'armed') return false
+  liveAutoOpenCalls.delete(key)
+  liveAutoOpenCalls.set(key, { state: 'opening', expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS })
+
+  let accepted = false
+  try {
+    accepted = await open() === true
+  } catch {
+    accepted = false
+  }
+
+  const current = liveAutoOpenCalls.get(key)
+  if (current?.state === 'opening') {
+    liveAutoOpenCalls.delete(key)
+    liveAutoOpenCalls.set(key, {
+      state: accepted ? 'accepted' : 'armed',
+      expiresAt: Date.now() + LIVE_AUTO_OPEN_TTL_MS,
+    })
+  }
+  return accepted
 }
 
 function forgetLiveAutoOpenCall(key: string): void {
@@ -288,7 +335,9 @@ export function designRenderCopy(locale: PresentationLocale) {
 /** Keep canonical create cards visually distinct while reusing one workbench. */
 export function openPencilPresentationTitle(toolName: string, locale: PresentationLocale): string {
   const copy = designRenderCopy(locale)
-  return toolName === OPENPENCIL_NEW_TOOL_NAME || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+  return toolName === OPENPENCIL_NEW_TOOL_NAME
+    || toolName === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+    || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
     ? copy.designNew
     : copy.designRender
 }
@@ -344,6 +393,8 @@ export interface PresentationGrant {
   fidelity?: string
   warnings?: string[]
   autoOpenEditor?: boolean
+  draftId?: string
+  liveDraft?: boolean
 }
 
 function optionalString(record: Record<string, unknown>, key: string): string | undefined {
@@ -440,6 +491,8 @@ export function presentationGrantOfMeta(metaValue: unknown): PresentationGrant |
   const image = imageGrantOf(envelope.image) ?? frames?.[0]
   const document = documentGrantOf(envelope, envelope.image)
   if (image === undefined && document === undefined) return undefined
+  const draftId = optionalString(envelope, 'draftId')
+  const liveDraft = typeof envelope.liveDraft === 'boolean' ? envelope.liveDraft : undefined
   return {
     schemaVersion: envelope.schemaVersion,
     image,
@@ -452,6 +505,8 @@ export function presentationGrantOfMeta(metaValue: unknown): PresentationGrant |
     fidelity: optionalString(envelope, 'fidelity'),
     warnings: optionalStrings(envelope, 'warnings'),
     ...(envelope.autoOpenEditor === true ? { autoOpenEditor: true } : {}),
+    ...(draftId === undefined || !/^[A-Za-z0-9_-]{32}$/.test(draftId) ? {} : { draftId }),
+    ...(liveDraft === undefined ? {} : { liveDraft }),
   }
 }
 
@@ -820,7 +875,9 @@ export function DesignRenderView({
     ?? (hydrated !== undefined && hydrated.key === hydrationKey ? hydrated.grant : undefined)
   const hydrationPending = hydrationKey !== undefined && hydrationFailedKey !== hydrationKey
   const copy = designRenderCopy(locale)
-  const creating = toolName === OPENPENCIL_NEW_TOOL_NAME || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
+  const creating = toolName === OPENPENCIL_NEW_TOOL_NAME
+    || toolName === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+    || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
   const text = resultText(block)
   const frames = grant?.frames ?? []
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
@@ -833,7 +890,7 @@ export function DesignRenderView({
   useEffect(() => {
     if (hydrationKey === undefined || hydrationRequest === undefined) return
     const controller = new AbortController()
-    void requestPresentationGrant(hydrationRequest, presentationGrantOfMeta, { signal: controller.signal }).then(nextGrant => {
+    void requestPresentationGrantWithRetry(hydrationRequest, presentationGrantOfMeta, { signal: controller.signal }).then(nextGrant => {
       if (nextGrant !== undefined && !controller.signal.aborted) {
         setHydrated({ key: hydrationKey, grant: nextGrant })
       } else if (!controller.signal.aborted) {
@@ -884,8 +941,10 @@ export function DesignRenderView({
       || grant.editor?.enabled !== true
       || autoOpenEditorWorkbench === undefined
     ) return
-    if (!takeLiveAutoOpenCall(liveAutoOpenCallKey)) return
-    void autoOpenEditorWorkbench({ grant, sessionId: String(sessionId) })
+    void attemptLiveAutoOpenCall(liveAutoOpenCallKey, () => autoOpenEditorWorkbench({
+      grant,
+      sessionId: String(sessionId),
+    }))
   }, [autoOpenEditorWorkbench, error, grant, liveAutoOpenCallKey, running, sessionId])
 
   useEffect(() => () => { releaseRef.current?.() }, [])
@@ -1012,6 +1071,7 @@ export function apply(ctx: ClientContext): void {
   for (const toolName of [
     OPENPENCIL_RENDER_TOOL_NAME,
     OPENPENCIL_NEW_TOOL_NAME,
+    OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
     OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
     LEGACY_DESIGN_RENDER_TOOL_NAME,
   ]) {
@@ -1024,6 +1084,10 @@ export function apply(ctx: ClientContext): void {
       HostSyncedOpenPencilEditorPanel,
     ))
   }
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(
+    { name: 'tool.call.toolview', key: OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME },
+    HostSyncedDesignRenderView,
+  ))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
     HostSyncedOpenPencilSelectionDock,

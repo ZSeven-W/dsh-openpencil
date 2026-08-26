@@ -13,23 +13,81 @@ const logPath = process.env.FAKE_DRAFT_LOG
 const fileIndex = process.argv.indexOf('--file')
 const sourcePath = process.argv[fileIndex + 1]
 const handshakeDelay = Number(process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS || 0)
+const dropResetResponseOnce = process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE === '1'
 let document = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
 let version = 1
+let resetConsumed = false
+let resetResponseDropped = false
 let active = 0
 let maxActive = 0
 function log(value) { fs.appendFileSync(logPath, JSON.stringify(value) + '\\n') }
+function controllerUsesNoCredentials(req) {
+  return req.headers.authorization === undefined
+    && req.headers['x-openpencil-token'] === undefined
+}
 const server = http.createServer((req, res) => {
+  if (req.url === '/api/mcp/sync-reset' && req.method === 'POST') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
+    if (resetConsumed) {
+      log({ event: 'sync-reset', skipped: true, version, authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] })
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ ok: true, skipped: true, version }))
+      return
+    }
+    document = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
+    version += 1
+    resetConsumed = true
+    log({ event: 'sync-reset', skipped: false, version, authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] })
+    if (dropResetResponseOnce && !resetResponseDropped) {
+      resetResponseDropped = true
+      req.socket.destroy()
+      return
+    }
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ ok: true, version }))
+    return
+  }
   if (req.url === '/api/mcp/document' && req.method === 'GET') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
+    log({ event: 'document-get', authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] })
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ document, version }))
     return
   }
+  if (req.url === '/api/mcp/document' && req.method === 'POST') {
+    log({
+      event: 'document-post',
+      authorization: req.headers.authorization,
+      token: req.headers['x-openpencil-token'],
+    })
+    res.statusCode = 500
+    res.end(JSON.stringify({ ok: false, error: 'browser write reached daemon' }))
+    return
+  }
   if (req.url === '/api/mcp/version') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ version }))
     return
   }
   if (req.url === '/mcp' && req.method === 'POST') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
     let body = ''
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
@@ -38,7 +96,14 @@ const server = http.createServer((req, res) => {
       const args = request.params.arguments || {}
       active += 1
       maxActive = Math.max(maxActive, active)
-      log({ event: 'start', tool, active, maxActive })
+      log({
+        event: 'start',
+        tool,
+        active,
+        maxActive,
+        authorization: req.headers.authorization,
+        token: req.headers['x-openpencil-token'],
+      })
       const delay = Number(args.delayMs || 0)
       setTimeout(() => {
         let value
@@ -138,8 +203,10 @@ async function createHarness(options = {}) {
   await chmod(binary, 0o755)
   const previousLog = process.env.FAKE_DRAFT_LOG
   const previousHandshakeDelay = process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS
+  const previousDropResetResponse = process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE
   process.env.FAKE_DRAFT_LOG = logPath
   process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS = String(options.handshakeDelayMs ?? 0)
+  process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE = options.dropResetResponseOnce === true ? '1' : '0'
   const { DesignDraftController } = await import(`../lib/design-draft-controller.js?draft=${Date.now()}-${Math.random()}`)
   const controller = new DesignDraftController({
     binary,
@@ -162,6 +229,8 @@ async function createHarness(options = {}) {
       else process.env.FAKE_DRAFT_LOG = previousLog
       if (previousHandshakeDelay === undefined) delete process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS
       else process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS = previousHandshakeDelay
+      if (previousDropResetResponse === undefined) delete process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE
+      else process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE = previousDropResetResponse
       await rm(root, { recursive: true, force: true })
     },
   }
@@ -208,6 +277,133 @@ test('draft persists across calls, isolates owners, rejects paths, and serialize
     const context = await harness.controller.call(begun.draftId, 'owner-a', 'get_design_prompt', {})
     assert.equal(JSON.stringify(context).includes('fake-draft-token'), false)
     assert.equal(JSON.stringify(context).includes('dsh-openpencil-draft-'), false)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('live launch consumes reset server-side so writes never race browser bootstrap and reopen stays skipped', async () => {
+  const harness = await createHarness()
+  try {
+    const begun = await harness.controller.begin({
+      ownerSessionId: 'owner-live',
+      target: { id: 'live-target', label: 'Live canvas' },
+      signal: new AbortController().signal,
+    })
+    await harness.controller.call(begun.draftId, 'owner-live', 'batch_design', { script: 'before attach' })
+    const live = await harness.controller.prepareLiveLaunch(begun.draftId, 'owner-live')
+    assert.equal(live.draftId, begun.draftId)
+    assert.match(live.baseUrl, /^http:\/\/127\.0\.0\.1:\d+$/)
+    assert.equal(JSON.parse(live.documentJson).children[0].name, 'before attach')
+    assert.equal(JSON.parse(await readFile(live.sourcePath, 'utf8')).children[0].name, 'before attach')
+
+    assert.notEqual(live.token, 'fake-draft-token-123456789', 'browser must receive an independent proxy capability')
+    assert.equal((await fetch(`${live.baseUrl}/`)).status, 200, 'static Web shell remains tokenless')
+    assert.equal((await fetch(`${live.baseUrl}/api/mcp/document`)).status, 401)
+    assert.equal((await fetch(`${live.baseUrl}/api/mcp/document`, {
+      headers: { authorization: `Bearer ${live.token}` },
+    })).status, 401, 'Authorization is not a live browser capability')
+    assert.equal((await fetch(`${live.baseUrl}/api/mcp/events`, {
+      headers: { 'x-openpencil-token': live.token },
+    })).status, 403, 'tokenless EventSource is omitted in favor of version/document polling')
+    assert.equal((await fetch(`${live.baseUrl}/api/settings/providers`, {
+      headers: { 'x-openpencil-token': live.token },
+    })).status, 403, 'unknown privileged GET routes fail closed')
+    const browserPush = await fetch(`${live.baseUrl}/api/mcp/document`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${live.token}`,
+        'x-openpencil-token': live.token,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ document: { version: '1.0.0', children: [] }, baseVersion: live.version }),
+    })
+    assert.equal(browserPush.status, 403)
+    assert.equal((await browserPush.json()).code, 'read-only-live-canvas')
+    assert.equal(
+      (await logEntries(harness.logPath)).some(entry => entry.event === 'document-post'),
+      false,
+      'browser document POST must be rejected before the daemon',
+    )
+
+    await harness.controller.call(begun.draftId, 'owner-live', 'batch_design', { script: 'after attach' })
+    const agentWrite = (await logEntries(harness.logPath)).findLast(entry => entry.event === 'start' && entry.tool === 'batch_design')
+    assert.equal(agentWrite.authorization, undefined, 'Agent writes must not send an Authorization bearer')
+    assert.equal(agentWrite.token, undefined, 'Agent writes must not send X-OpenPencil-Token')
+    const browserRead = await fetch(`${live.baseUrl}/api/mcp/document`, {
+      headers: { 'x-openpencil-token': live.token },
+    })
+    assert.equal(browserRead.status, 200)
+    const upstreamRead = (await logEntries(harness.logPath)).findLast(entry => entry.event === 'document-get')
+    assert.equal(upstreamRead.authorization, undefined, 'the read-only proxy must strip browser Authorization upstream')
+    assert.equal(upstreamRead.token, undefined, 'the read-only proxy must strip its browser capability upstream')
+    const browserReset = await fetch(`${live.baseUrl}/api/mcp/sync-reset`, {
+      method: 'POST',
+      headers: { 'x-openpencil-token': live.token, 'content-type': 'application/json' },
+      body: '{}',
+    })
+    assert.equal(browserReset.status, 200)
+    assert.equal((await browserReset.json()).skipped, true, 'browser bootstrap must only see the consumed reset')
+    const nativeReset = (await logEntries(harness.logPath)).find(entry => entry.event === 'sync-reset' && entry.skipped === false)
+    assert.equal(nativeReset.authorization, undefined, 'daemon reset must not send Authorization')
+    assert.equal(nativeReset.token, undefined, 'daemon reset must not send X-OpenPencil-Token')
+    assert.equal(harness.controller.markLiveReady(begun.draftId, 'owner-live', live.attachId), true)
+    const snapshot = await harness.controller.snapshot(begun.draftId, 'owner-live')
+    assert.deepEqual(JSON.parse(snapshot.documentJson).children.map(node => node.name), [
+      'before attach',
+      'after attach',
+    ])
+    assert.equal(harness.controller.markLiveReady(begun.draftId, 'owner-live', live.attachId), false)
+    assert.equal(harness.controller.detachLive(begun.draftId, 'owner-live', live.attachId), true)
+
+    const resetsBeforeReopen = (await logEntries(harness.logPath)).filter(entry => entry.event === 'sync-reset').length
+    const reopened = await harness.controller.prepareLiveLaunch(begun.draftId, 'owner-live')
+    assert.notEqual(reopened.attachId, live.attachId)
+    assert.equal(
+      (await logEntries(harness.logPath)).filter(entry => entry.event === 'sync-reset').length,
+      resetsBeforeReopen,
+      'reopening the same draft must not try to consume the one-shot reset again',
+    )
+    await harness.controller.call(begun.draftId, 'owner-live', 'batch_design', { script: 'after reopen' })
+    const reopenedSnapshot = await harness.controller.snapshot(begun.draftId, 'owner-live')
+    assert.deepEqual(JSON.parse(reopenedSnapshot.documentJson).children.map(node => node.name), [
+      'before attach',
+      'after attach',
+      'after reopen',
+    ])
+    const finished = await harness.controller.finish(begun.draftId, 'owner-live', {
+      requireCurrentScreenshot: false,
+      publish: async snapshot => JSON.parse(snapshot.documentJson).children.map(node => node.name),
+    })
+    assert.deepEqual(finished.published, ['before attach', 'after attach', 'after reopen'])
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('live launch confirms an uncertain reset response by versioned daemon readback', async () => {
+  const harness = await createHarness({ dropResetResponseOnce: true })
+  try {
+    const begun = await harness.controller.begin({
+      ownerSessionId: 'owner-reset-loss',
+      target: { id: 'reset-loss-target' },
+      signal: new AbortController().signal,
+    })
+    await harness.controller.call(begun.draftId, 'owner-reset-loss', 'batch_design', { script: 'survives response loss' })
+    const live = await harness.controller.prepareLiveLaunch(begun.draftId, 'owner-reset-loss')
+    assert.equal(JSON.parse(live.documentJson).children[0].name, 'survives response loss')
+    const browserReset = await fetch(`${live.baseUrl}/api/mcp/sync-reset`, {
+      method: 'POST',
+      headers: { 'x-openpencil-token': live.token, 'content-type': 'application/json' },
+      body: '{}',
+    })
+    assert.equal((await browserReset.json()).skipped, true)
+    await harness.controller.call(begun.draftId, 'owner-reset-loss', 'batch_design', { script: 'continues safely' })
+    const snapshot = await harness.controller.snapshot(begun.draftId, 'owner-reset-loss')
+    assert.deepEqual(JSON.parse(snapshot.documentJson).children.map(node => node.name), [
+      'survives response loss',
+      'continues safely',
+    ])
   } finally {
     await harness.cleanup()
   }

@@ -82,6 +82,18 @@ export interface RenderGrant {
   index?: number
 }
 
+/** Immutable image fields needed to mint a browser-only preview grant. */
+export interface ImageArtifactPresentation {
+  filename: string
+  bytes: number
+  sha256: string
+  width?: number
+  height?: number
+  id?: string
+  name?: string
+  index?: number
+}
+
 /** One immutable top-level frame retained from an exact render. */
 export interface RenderFrame {
   path: string
@@ -118,6 +130,10 @@ export interface DocumentPresentationResult {
   /** Optional exact final preview paired with this published document. */
   preview?: RenderFrame
   autoOpenEditor?: boolean
+  /** Pipeline identity used for the controlled live-draft -> published handoff. */
+  draftId?: string
+  liveCanvas?: boolean
+  published?: boolean
 }
 
 /** Canonical result shape the tool returns and the envelope enriches. */
@@ -832,6 +848,14 @@ export function projectDocumentGrant(
     || typeof result.document.sha256 !== 'string'
   ) return value
   const document = projectDocumentCapability(result.document, result.path, controller)
+  const draftId = typeof result.draftId === 'string' && /^[A-Za-z0-9_-]{32}$/.test(result.draftId)
+    ? result.draftId
+    : undefined
+  const liveDraft = draftId !== undefined && result.liveCanvas === true && result.published === false
+    ? true
+    : draftId !== undefined && result.published === true
+      ? false
+      : undefined
   const preview = result.preview
   const image = preview === undefined
     ? undefined
@@ -862,6 +886,8 @@ export function projectDocumentGrant(
     sourcePath: result.path,
     ...(editor === undefined ? {} : { editor }),
     ...(editor === undefined || result.autoOpenEditor !== true ? {} : { autoOpenEditor: true }),
+    ...(draftId === undefined ? {} : { draftId }),
+    ...(liveDraft === undefined ? {} : { liveDraft }),
   }
   return { ...value, [PRESENTATION_META_KEY]: envelope } as unknown as JsonValue
 }
@@ -933,6 +959,55 @@ export function projectRenderGrant(
     ...(editor === undefined || result.autoOpenEditor !== true ? {} : { autoOpenEditor: true }),
   }
   return { ...value, [PRESENTATION_META_KEY]: envelope } as unknown as JsonValue
+}
+
+/**
+ * Add one immutable image preview without disclosing its managed host path.
+ *
+ * The artifact must already live in `renderDir()` under `filename`. The v2
+ * capability binds only filename, byte length, and digest; the presentation
+ * envelope deliberately uses that basename as its display path so a browser
+ * never receives the private cache directory.
+ */
+export function projectImageArtifactGrant(
+  value: JsonValue,
+  controller: RenderAccessController,
+  artifact: ImageArtifactPresentation,
+): JsonValue {
+  if (!controller.routeAvailable || !isRecord(value)) return value
+  if (
+    typeof artifact.filename !== 'string'
+    || basename(artifact.filename) !== artifact.filename
+    || typeof artifact.bytes !== 'number'
+    || !Number.isSafeInteger(artifact.bytes)
+    || artifact.bytes <= 0
+    || typeof artifact.sha256 !== 'string'
+  ) return value
+  const token = controller.signArtifact({
+    kind: 'image',
+    filename: artifact.filename,
+    bytes: artifact.bytes,
+    sha256: artifact.sha256,
+  })
+  const url = `${RENDER_ROUTE_PREFIX}/${token}`
+  const image: RenderGrant = {
+    path: artifact.filename,
+    previewUrl: url,
+    downloadUrl: `${url}?download=1`,
+    ...(artifact.width === undefined ? {} : { width: artifact.width }),
+    ...(artifact.height === undefined ? {} : { height: artifact.height }),
+    ...(artifact.id === undefined ? {} : { id: artifact.id }),
+    ...(artifact.name === undefined ? {} : { name: artifact.name }),
+    ...(artifact.index === undefined ? {} : { index: artifact.index }),
+  }
+  return {
+    ...value,
+    [PRESENTATION_META_KEY]: {
+      schemaVersion: 2,
+      image,
+      frames: [image],
+    },
+  } as unknown as JsonValue
 }
 
 /** Reserve a fresh output path inside the managed render directory. */

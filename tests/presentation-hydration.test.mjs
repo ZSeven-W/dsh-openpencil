@@ -9,6 +9,8 @@ import { test } from 'node:test'
 import {
   PRESENTATION_HYDRATION_ROUTE,
   PresentationHydrationController,
+  parseHydratableBeginResult,
+  parseHydratableInspectionResult,
   parseHydratableNewResult,
   parseHydratablePipelineResult,
   parseHydratableRenderResult,
@@ -17,10 +19,12 @@ import {
   RenderAccessController,
   renderDir,
   snapshotDir,
+  stateRoot,
 } from '../lib/renderer.js'
 
 const IMAGE_SHA = 'a'.repeat(64)
 const DOCUMENT_SHA = 'b'.repeat(64)
+const DRAFT_ID = 'd'.repeat(32)
 
 function closeServer(server) {
   return new Promise(resolve => server.close(resolve))
@@ -104,6 +108,7 @@ function pipelineResult(overrides = {}) {
   const previewFilename = 'render-00000000-0000-4000-8000-000000000099.png'
   return {
     ...base,
+    draftId: DRAFT_ID,
     sourceTool: 'openpencil_pipeline_finish',
     published: true,
     preview: {
@@ -121,14 +126,90 @@ function pipelineResult(overrides = {}) {
   }
 }
 
-function historicalEvent(callId, result, content) {
+function beginResult(overrides = {}) {
+  const documentFilename = `${DOCUMENT_SHA}.op`
+  return {
+    draftId: DRAFT_ID,
+    path: '/tmp/ecommerce-home.op',
+    version: 1,
+    createdAt: 123,
+    platform: 'web',
+    canvas: {
+      platform: 'web', width: 1440, seedHeight: 900, finalHeight: 'fit_content',
+      fixedViewport: false, rootCount: 1, rootType: 'frame',
+    },
+    buildContract: {
+      version: 'openpencil-batch-v2',
+      canvas: { width: 1440 },
+      script: { create: 'const root = I(null, node)' },
+      firstBatch: {
+        required: ['root plus 4-8 empty named top-level frame shells'],
+        forbidden: ['nested content'],
+      },
+      operations: 'Use exact ids for later edits.',
+      node: { types: ['frame'] },
+      layoutRules: ['one root'],
+    },
+    editorState: { activePageId: 'page-1' },
+    styleGuideTags: { tags: ['editorial'] },
+    document: {
+      path: join(snapshotDir(), documentFilename),
+      filename: documentFilename,
+      mimeType: 'application/json',
+      bytes: 4567,
+      sha256: DOCUMENT_SHA,
+    },
+    sourceTool: 'openpencil_pipeline_begin',
+    previewIntent: 'document',
+    editable: true,
+    autoOpenEditor: true,
+    liveCanvas: true,
+    published: false,
+    next: 'Continue in a few large batches while the live canvas stays open.',
+    ...overrides,
+  }
+}
+
+function legacyBeginResult(overrides = {}) {
+  const current = beginResult()
+  const { firstBatch: _firstBatch, ...legacyBuildContract } = current.buildContract
+  return {
+    ...current,
+    buildContract: {
+      ...legacyBuildContract,
+      version: 'openpencil-batch-v1',
+    },
+    ...overrides,
+  }
+}
+
+function inspectionResult(overrides = {}) {
+  return {
+    draftId: DRAFT_ID,
+    kind: 'screenshot',
+    version: 2,
+    screenshot: {
+      path: join(stateRoot(), 'design-draft-inspections', `${IMAGE_SHA}.png`),
+      filename: `${IMAGE_SHA}.png`,
+      mimeType: 'image/png',
+      bytes: 1234,
+      sha256: IMAGE_SHA,
+      width: 390,
+      height: 844,
+    },
+    next: 'Open the exact PNG and repair visible defects.',
+    ...overrides,
+  }
+}
+
+function historicalEvent(callId, result, content, toolName = result.sourceTool) {
   return {
     type: 'tool/code-dispatch',
     data: {
       rootCallId: 'outer',
       parentCallId: 'outer',
       subCallId: callId,
-      name: result.sourceTool,
+      name: toolName,
       arguments: { path: '/tmp/design.op' },
       isError: false,
       content: content ?? [{ type: 'text', text: JSON.stringify(result) }],
@@ -169,6 +250,14 @@ async function createHarness({
           enabled: true,
           launchUrl: '/_dsh/dsh-openpencil/editor/live/launch',
           refreshUrl: '/_dsh/dsh-openpencil/editor/live/refresh',
+        }
+      },
+      grantForDraft(draftId, ownerSessionId) {
+        editorCalls.push({ draftId, ownerSessionId })
+        return {
+          enabled: true,
+          launchUrl: '/_dsh/dsh-openpencil/editor/draft/launch',
+          refreshUrl: '/_dsh/dsh-openpencil/editor/draft/refresh',
         }
       },
     },
@@ -241,9 +330,9 @@ async function createHarness({
   }
 }
 
-function observe(hydration, sessionId, callId, result) {
+function observe(hydration, sessionId, callId, result, toolName = result.sourceTool) {
   hydration.observeToolResult({
-    name: result.sourceTool,
+    name: toolName,
     callId,
     parent: Symbol('run-code'),
     agent: { id: sessionId, session: { id: sessionId } },
@@ -313,6 +402,8 @@ test('nested pipeline_finish restores the same live document grant and idle auto
     assert.equal(envelope.document.path, '/tmp/generated.op')
     assert.equal(envelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
     assert.equal(envelope.autoOpenEditor, true)
+    assert.equal(envelope.draftId, DRAFT_ID)
+    assert.equal(envelope.liveDraft, false)
     assert.deepEqual(harness.editorCalls, [{
       sourcePath: '/tmp/generated.op',
       sourceSha256: DOCUMENT_SHA,
@@ -329,6 +420,112 @@ test('nested pipeline_finish restores the same live document grant and idle auto
     assert.match(historicalEnvelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
     assert.equal(historicalEnvelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/live/launch')
     assert.equal('autoOpenEditor' in historicalEnvelope, false)
+    assert.equal(historicalEnvelope.draftId, DRAFT_ID)
+    assert.equal(historicalEnvelope.liveDraft, false)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('nested pipeline_begin restores an owner-bound live draft grant and never revives it from history alone', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = beginResult()
+    const callId = 'outer:code:pipeline-begin'
+    observe(harness.hydration, 'session-pipeline-begin', callId, result)
+    sessions.set('session-pipeline-begin', {
+      events: [historicalEvent(callId, result)],
+    })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-begin',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.equal('image' in envelope, false)
+    assert.equal(envelope.document.path, '/tmp/ecommerce-home.op')
+    assert.equal(envelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/draft/launch')
+    assert.equal(envelope.autoOpenEditor, true)
+    assert.deepEqual(harness.editorCalls, [{
+      draftId: DRAFT_ID,
+      ownerSessionId: 'session-pipeline-begin',
+    }])
+
+    sessions.set('session-pipeline-begin-history', {
+      events: [historicalEvent(callId, result)],
+    })
+    const historical = await harness.request({
+      sessionId: 'session-pipeline-begin-history',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(historical.status, 404, 'an unpublished daemon must not be revived from transcript text')
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('a live v1 pipeline_begin remains explicitly editable but cannot recover v2 auto-open authority', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = legacyBeginResult()
+    const callId = 'outer:code:pipeline-begin-v1'
+    observe(harness.hydration, 'session-pipeline-begin-v1', callId, result)
+    sessions.set('session-pipeline-begin-v1', {
+      events: [historicalEvent(callId, result)],
+    })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-begin-v1',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.equal(envelope.editor.launchUrl, '/_dsh/dsh-openpencil/editor/draft/launch')
+    assert.equal('autoOpenEditor' in envelope, false)
+
+    sessions.set('session-pipeline-begin-v1-history', {
+      events: [historicalEvent(callId, result)],
+    })
+    const historical = await harness.request({
+      sessionId: 'session-pipeline-begin-v1-history',
+      callId,
+      documentSha256: DOCUMENT_SHA,
+    })
+    assert.equal(historical.status, 404)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('nested pipeline screenshot hydrates a visible stage image without exposing the private cache path', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = inspectionResult()
+    const callId = 'outer:code:pipeline-inspect'
+    observe(harness.hydration, 'session-pipeline-inspect', callId, result, 'openpencil_pipeline_inspect')
+    sessions.set('session-pipeline-inspect', {
+      events: [historicalEvent(callId, result, undefined, 'openpencil_pipeline_inspect')],
+    })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-inspect',
+      callId,
+      // Legacy field name now carries the canonical artifact fingerprint for
+      // either a document or a stage image.
+      documentSha256: IMAGE_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.equal(envelope.schemaVersion, 2)
+    assert.equal(envelope.image.path, `render-stage-${IMAGE_SHA}.png`)
+    assert.match(envelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
+    assert.equal(JSON.stringify(envelope).includes('design-draft-inspections'), false)
+    assert.equal('document' in envelope, false)
+    assert.equal('editor' in envelope, false)
   } finally {
     await harness.cleanup()
   }
@@ -715,8 +912,41 @@ test('strict new-result parser binds the source and immutable document fingerpri
 test('strict pipeline-result parser requires the published document-only contract', () => {
   const result = pipelineResult()
   assert.ok(parseHydratablePipelineResult(result))
+  assert.equal(parseHydratablePipelineResult({ ...result, draftId: 'short' }), undefined)
   assert.equal(parseHydratablePipelineResult({ ...result, sourceTool: 'openpencil_new' }), undefined)
   assert.equal(parseHydratablePipelineResult({ ...result, published: false }), undefined)
   assert.equal(parseHydratablePipelineResult({ ...result, result: { applied: true } }), undefined)
   assert.equal(parseHydratablePipelineResult({ ...result, autoOpenEditor: false }), undefined)
+})
+
+test('strict begin parser binds a compact unpublished live-draft contract', () => {
+  const result = beginResult()
+  assert.ok(parseHydratableBeginResult(result))
+  assert.ok(parseHydratableBeginResult(legacyBeginResult()))
+  assert.equal(parseHydratableBeginResult({ ...result, draftId: 'short' }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, liveCanvas: false }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, platform: 'tablet' }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, canvas: { ...result.canvas, width: 390 } }), undefined)
+  const { firstBatch: _firstBatch, ...withoutFirstBatch } = result.buildContract
+  assert.equal(parseHydratableBeginResult({ ...result, buildContract: withoutFirstBatch }), undefined)
+  assert.equal(parseHydratableBeginResult({
+    ...result,
+    buildContract: { ...result.buildContract, unexpected: true },
+  }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, buildContract: { version: 'unknown' } }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, designAgentPrompt: 'oversized duplicate' }), undefined)
+})
+
+test('strict inspection parser binds the private screenshot cache identity', () => {
+  const result = inspectionResult()
+  assert.ok(parseHydratableInspectionResult(result))
+  assert.equal(parseHydratableInspectionResult({
+    ...result,
+    screenshot: { ...result.screenshot, path: '/tmp/leaked.png' },
+  }), undefined)
+  assert.equal(parseHydratableInspectionResult({
+    ...result,
+    screenshot: { ...result.screenshot, sha256: DOCUMENT_SHA },
+  }), undefined)
+  assert.equal(parseHydratableInspectionResult({ ...result, kind: 'layout' }), undefined)
 })

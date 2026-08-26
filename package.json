@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/dsh-openpencil",
-  "version": "0.1.0-rc.6",
+  "version": "0.1.0-rc.7",
   "description": "Preview, inspect, and edit real .op OpenPencil design documents inside DSH conversations — headless rendering, a read-only canvas, and a managed editor.",
   "license": "MIT",
   "keywords": [
@@ -107,12 +107,12 @@
     "react-dom": "^18.2.0"
   },
   "optionalDependencies": {
-    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.6",
-    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.6",
-    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.6",
-    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.6",
-    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.6",
-    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.6"
+    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.7",
+    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.7",
+    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.7",
+    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.7",
+    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.7",
+    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -219,8 +219,6 @@ export async function callOpenPencilMcp(options: McpCallOptions): Promise<OpenPe
     const response = await fetcher(new URL('/mcp', origin).href, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${options.token}`,
-        'x-openpencil-token': options.token,
         'content-type': 'application/json',
         accept: 'application/json',
       },
@@ -274,7 +272,7 @@ export async function getOpenPencilMcpVersion(options: McpVersionOptions): Promi
   const timeout = AbortSignal.timeout(options.timeoutMs ?? MCP_TIMEOUT_MS)
   const signal = options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout])
   const response = await (options.fetcher ?? fetch)(new URL('/api/mcp/version', origin).href, {
-    headers: { authorization: `Bearer ${options.token}`, 'x-openpencil-token': options.token },
+    headers: { accept: 'application/json' },
     signal,
   })
   if (!response.ok) throw new Error(`OpenPencil MCP version probe failed (${response.status})`)

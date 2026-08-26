@@ -35,15 +35,21 @@ test('parses bounded MCP ImageContent and strips duplicate embedded base64 metad
 
 test('call client redacts daemon credentials from successful values and errors', async () => {
   const token = 'sensitive-daemon-token-123456789'
+  let successRequest
   const success = await mcp.callOpenPencilMcp({
     baseUrl: 'http://127.0.0.1:43123',
     token,
     tool: 'get_design_prompt',
-    fetcher: async () => Response.json({
-      jsonrpc: '2.0', id: 1,
-      result: { content: [{ type: 'text', text: JSON.stringify({ token, message: `echo ${token}` }) }] },
-    }),
+    fetcher: async (_url, init) => {
+      successRequest = init
+      return Response.json({
+        jsonrpc: '2.0', id: 1,
+        result: { content: [{ type: 'text', text: JSON.stringify({ token, message: `echo ${token}` }) }] },
+      })
+    },
   })
+  assert.equal(successRequest.headers.authorization, undefined)
+  assert.equal(successRequest.headers['x-openpencil-token'], undefined)
   assert.deepEqual(success.value, { token: '[redacted]', message: 'echo [redacted]' })
   assert.equal(JSON.stringify(success).includes(token), false)
 
@@ -92,4 +98,19 @@ test('version probes time out even when the daemon never responds', async () => 
     fetcher,
     timeoutMs: 10,
   }), error => error?.name === 'TimeoutError')
+})
+
+test('version probes do not send deployment credentials to the bundled daemon', async () => {
+  let request
+  const version = await mcp.getOpenPencilMcpVersion({
+    baseUrl: 'http://127.0.0.1:43123',
+    token: 'unused-single-tenant-token',
+    fetcher: async (_url, init) => {
+      request = init
+      return Response.json({ version: 7 })
+    },
+  })
+  assert.equal(version, 7)
+  assert.equal(request.headers.authorization, undefined)
+  assert.equal(request.headers['x-openpencil-token'], undefined)
 })

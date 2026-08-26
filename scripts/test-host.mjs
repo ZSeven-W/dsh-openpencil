@@ -190,8 +190,6 @@ try {
   const selectResponse = await fetch(`${daemonOrigin}/api/mcp/selection`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${launch.token}`,
-      'x-openpencil-token': launch.token,
       'content-type': 'application/json',
     },
     body: JSON.stringify({ selectedIds: [selectedId], activePageId: initialSelection.activePageId }),

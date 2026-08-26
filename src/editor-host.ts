@@ -63,15 +63,26 @@ export interface EditorGrant {
   refreshUrl: string
 }
 
-interface EditCapability {
+interface CapabilityLifetime {
   v: 1
-  scope: 'edit-source'
-  sourcePath: string
-  sourceSha256: string
   issuedAt: number
   launchExpiresAt: number
   refreshExpiresAt: number
 }
+
+interface EditCapability extends CapabilityLifetime {
+  scope: 'edit-source'
+  sourcePath: string
+  sourceSha256: string
+}
+
+interface LiveDraftCapability extends CapabilityLifetime {
+  scope: 'live-draft'
+  draftId: string
+  ownerSessionId: string
+}
+
+type EditorCapability = EditCapability | LiveDraftCapability
 
 function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
@@ -88,16 +99,11 @@ function deriveEditorKey(masterKey: Buffer): Buffer {
   ))
 }
 
-function capabilityFrom(value: unknown): EditCapability | undefined {
+function capabilityFrom(value: unknown): EditorCapability | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const payload = value as Record<string, unknown>
   if (
     payload.v !== 1
-    || payload.scope !== 'edit-source'
-    || typeof payload.sourcePath !== 'string'
-    || !isAbsolute(payload.sourcePath)
-    || !payload.sourcePath.toLowerCase().endsWith('.op')
-    || !isSha256(payload.sourceSha256)
     || typeof payload.issuedAt !== 'number'
     || !Number.isSafeInteger(payload.issuedAt)
     || typeof payload.launchExpiresAt !== 'number'
@@ -109,7 +115,27 @@ function capabilityFrom(value: unknown): EditCapability | undefined {
     || payload.refreshExpiresAt < payload.launchExpiresAt
     || payload.refreshExpiresAt - payload.issuedAt > CAPABILITY_REFRESH_TTL_MS
   ) return undefined
-  return payload as unknown as EditCapability
+  if (payload.scope === 'edit-source') {
+    if (
+      typeof payload.sourcePath !== 'string'
+      || !isAbsolute(payload.sourcePath)
+      || !payload.sourcePath.toLowerCase().endsWith('.op')
+      || !isSha256(payload.sourceSha256)
+    ) return undefined
+    return payload as unknown as EditCapability
+  }
+  if (payload.scope === 'live-draft') {
+    if (
+      typeof payload.draftId !== 'string'
+      || !/^[A-Za-z0-9_-]{32}$/.test(payload.draftId)
+      || typeof payload.ownerSessionId !== 'string'
+      || payload.ownerSessionId.length === 0
+      || payload.ownerSessionId.length > 256
+      || payload.ownerSessionId.includes('\0')
+    ) return undefined
+    return payload as unknown as LiveDraftCapability
+  }
+  return undefined
 }
 
 interface ManagedHandshake {
@@ -133,6 +159,17 @@ interface EditorSession {
   mutating: boolean
   activeOperation?: Promise<void>
   recoveryCaptureRequested: boolean
+}
+
+interface LiveDraftEditorSession {
+  id: string
+  draftId: string
+  ownerSessionId: string
+  attachId: string
+  iframeUrl: string
+  daemonToken: string
+  createdAt: number
+  closed: boolean
 }
 
 export type OpenPencilLiveTool = 'get_selection' | 'update_node' | 'batch_design'
@@ -467,6 +504,7 @@ export class EditorHostController {
   readonly #editorKey: Buffer
   readonly #recoveryStore: EditorRecoveryStore
   #sessions = new Map<string, EditorSession>()
+  #liveDraftSessions = new Map<string, LiveDraftEditorSession>()
   #pendingChildren = new Set<ChildProcessWithoutNullStreams>()
   #launchQueue: Promise<void> = Promise.resolve()
   #disposePromise: Promise<void> | undefined
@@ -491,6 +529,9 @@ export class EditorHostController {
       runtimeUnavailableMessage: detail === undefined || detail.length === 0
         ? 'OpenPencil editor runtime is unavailable'
         : `OpenPencil editor runtime is unavailable: ${detail}`,
+      onDraftEnded: (draftId, ownerSessionId) => {
+        this.#revokeLiveDraftSessions(draftId, ownerSessionId)
+      },
     })
   }
 
@@ -528,6 +569,28 @@ export class EditorHostController {
     }
   }
 
+  /** Mint an owner-bound capability for the exact unpublished draft daemon. */
+  grantForDraft(draftId: string, ownerSessionId: string): EditorGrant | undefined {
+    if (!this.available || !this.routeAvailable) return undefined
+    if (!/^[A-Za-z0-9_-]{32}$/.test(draftId)) return undefined
+    if (ownerSessionId.length === 0 || ownerSessionId.length > 256 || ownerSessionId.includes('\0')) return undefined
+    const now = Date.now()
+    const token = this.#sealCapability({
+      v: 1,
+      scope: 'live-draft',
+      draftId,
+      ownerSessionId,
+      issuedAt: now,
+      launchExpiresAt: now + CAPABILITY_TTL_MS,
+      refreshExpiresAt: now + CAPABILITY_REFRESH_TTL_MS,
+    })
+    return {
+      enabled: true,
+      launchUrl: `${EDITOR_ROUTE_PREFIX}/${token}/launch`,
+      refreshUrl: `${EDITOR_ROUTE_PREFIX}/${token}/refresh`,
+    }
+  }
+
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       this.#prune()
@@ -544,6 +607,7 @@ export class EditorHostController {
       const selection = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)/selection$`).exec(url.pathname)
       const recovery = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)/recovery$`).exec(url.pathname)
       const recoveryItem = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)/recovery/([A-Za-z0-9_-]+)$`).exec(url.pathname)
+      const ready = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)/ready$`).exec(url.pathname)
       const close = new RegExp(`^${EDITOR_ROUTE_PREFIX}/session/([A-Za-z0-9_-]+)$`).exec(url.pathname)
       if (launch !== null && req.method === 'POST') {
         const body = await readRequestBody(req)
@@ -579,6 +643,23 @@ export class EditorHostController {
       if (save !== null && req.method === 'POST') {
         requestOrigin(req)
         await this.#save(save[1]!, req, res)
+        return
+      }
+      if (ready !== null && req.method === 'POST') {
+        requestOrigin(req)
+        const body = await readRequestBody(req)
+        let sessionId: unknown
+        try {
+          const value: unknown = JSON.parse(body.toString('utf8'))
+          sessionId = typeof value === 'object' && value !== null && !Array.isArray(value)
+            ? (value as Record<string, unknown>).sessionId
+            : undefined
+        } catch {
+          throw new HttpError(400, 'live editor ready request is not valid JSON')
+        }
+        if (sessionId !== ready[1]) throw new HttpError(400, 'live editor ready request is incomplete')
+        const attached = this.#liveDraftReady(ready[1]!)
+        json(res, 200, { ok: true, attached })
         return
       }
       if (selection !== null && req.method === 'GET') {
@@ -630,10 +711,13 @@ export class EditorHostController {
       this.#routeGeneration += 1
       const sessions = [...this.#sessions.values()]
       this.#sessions.clear()
+      const liveDraftSessions = [...this.#liveDraftSessions.values()]
+      this.#liveDraftSessions.clear()
       const pending = [...this.#pendingChildren]
       await Promise.all([
         this.designDrafts.dispose(),
         ...sessions.map(session => this.#captureThenDispose(session, 'plugin-dispose')),
+        ...liveDraftSessions.map(session => this.#detachLiveDraftSession(session)),
         ...pending.map(child => stopChild(child)),
       ])
       // A launch can already own a retired session after removing it from the
@@ -877,6 +961,13 @@ export class EditorHostController {
       assertConnected()
       const capability = this.#openCapability(token)
       if (Date.now() > capability.launchExpiresAt) throw new HttpError(410, 'editor capability expired; open the .op file in a new editable OpenPencil card')
+      if (capability.scope === 'live-draft') {
+        if (ownerSessionId === undefined || ownerSessionId !== capability.ownerSessionId) {
+          throw new HttpError(403, 'live OpenPencil draft belongs to a different DSH session')
+        }
+        await this.#launchLiveDraft(capability, res, routeGeneration, assertConnected)
+        return
+      }
       const current = await readSourceDocument(capability.sourcePath)
       assertConnected()
       if (sha256(current) !== capability.sourceSha256) {
@@ -889,7 +980,12 @@ export class EditorHostController {
       // successor starts so stale transcript cards cannot retain authority.
       const old = [...this.#sessions.values()]
       this.#sessions.clear()
-      await Promise.all(old.map(session => this.#captureThenDispose(session, 'plugin-dispose')))
+      const oldLive = [...this.#liveDraftSessions.values()]
+      this.#liveDraftSessions.clear()
+      await Promise.all([
+        ...old.map(session => this.#captureThenDispose(session, 'plugin-dispose')),
+        ...oldLive.map(session => this.#detachLiveDraftSession(session)),
+      ])
       assertConnected()
 
       const env: NodeJS.ProcessEnv = {
@@ -974,10 +1070,79 @@ export class EditorHostController {
     }
   }
 
+  async #launchLiveDraft(
+    capability: LiveDraftCapability,
+    res: ServerResponse,
+    routeGeneration: number,
+    assertConnected: () => void,
+  ): Promise<void> {
+    this.#assertLaunchLifecycle(routeGeneration)
+
+    // The details pane owns one canvas. Detach any prior draft canvas and
+    // retire persisted editors before binding the exact Agent draft daemon.
+    const old = [...this.#sessions.values()]
+    this.#sessions.clear()
+    const oldLive = [...this.#liveDraftSessions.values()]
+    this.#liveDraftSessions.clear()
+    await Promise.all([
+      ...old.map(session => this.#captureThenDispose(session, 'plugin-dispose')),
+      ...oldLive.map(session => this.#detachLiveDraftSession(session)),
+    ])
+    assertConnected()
+
+    let session: LiveDraftEditorSession | undefined
+    try {
+      const launch = await this.designDrafts.prepareLiveLaunch(
+        capability.draftId,
+        capability.ownerSessionId,
+      )
+      session = {
+        id: randomBytes(24).toString('base64url'),
+        draftId: capability.draftId,
+        ownerSessionId: capability.ownerSessionId,
+        attachId: launch.attachId,
+        iframeUrl: `${launch.baseUrl}/?embed=vscode`,
+        daemonToken: launch.token,
+        createdAt: Date.now(),
+        closed: false,
+      }
+      assertConnected()
+      this.#liveDraftSessions.set(session.id, session)
+      json(res, 200, {
+        sessionId: session.id,
+        iframeUrl: session.iframeUrl,
+        token: session.daemonToken,
+        // Kept for the shared launch response contract. The live client hides
+        // save and this route rejects writes to an unpublished pipeline draft.
+        saveUrl: `${EDITOR_ROUTE_PREFIX}/session/${session.id}/save`,
+        closeUrl: `${EDITOR_ROUTE_PREFIX}/session/${session.id}`,
+        readyUrl: `${EDITOR_ROUTE_PREFIX}/session/${session.id}/ready`,
+        docJson: launch.documentJson,
+        liveDraft: true,
+      })
+      if (!await waitForResponseFinish(res)) throw new HttpError(499, 'editor launch client disconnected')
+    } catch (error) {
+      if (session !== undefined) {
+        if (this.#liveDraftSessions.get(session.id) === session) this.#liveDraftSessions.delete(session.id)
+        await this.#detachLiveDraftSession(session)
+      }
+      throw error
+    }
+  }
+
   async #refresh(token: string, res: ServerResponse): Promise<void> {
     const capability = this.#openCapability(token)
     const now = Date.now()
     if (now > capability.refreshExpiresAt) throw new HttpError(410, 'editor capability expired; open the .op file in a new editable OpenPencil card')
+    if (capability.scope === 'live-draft') {
+      const next = this.#sealCapability({
+        ...capability,
+        issuedAt: now,
+        launchExpiresAt: Math.min(now + CAPABILITY_TTL_MS, capability.refreshExpiresAt),
+      })
+      json(res, 200, { launchUrl: `${EDITOR_ROUTE_PREFIX}/${next}/launch` })
+      return
+    }
     const current = await readSourceDocument(capability.sourcePath)
     if (sha256(current) !== capability.sourceSha256) {
       throw new HttpError(409, 'source changed since this card was created; open the .op file in a new editable OpenPencil card')
@@ -992,6 +1157,10 @@ export class EditorHostController {
 
   async #save(id: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!TOKEN_PATTERN.test(id)) throw new HttpError(404, 'editor session not found')
+    if (this.#liveDraftSessions.has(id)) {
+      await readRequestBody(req).catch(() => Buffer.alloc(0))
+      throw new HttpError(409, 'live pipeline drafts are saved only by openpencil_pipeline_finish')
+    }
     const session = this.#sessions.get(id)
     if (session === undefined || session.closed) throw new HttpError(410, 'editor session has ended')
     await this.#enqueueSessionOperation(session, async () => {
@@ -1050,6 +1219,12 @@ export class EditorHostController {
   }
 
   async #close(id: string): Promise<void> {
+    const liveDraft = this.#liveDraftSessions.get(id)
+    if (liveDraft !== undefined) {
+      this.#liveDraftSessions.delete(id)
+      await this.#detachLiveDraftSession(liveDraft)
+      return
+    }
     const session = this.#sessions.get(id)
     if (session === undefined) return
     // An ordinary user close remains guarded while a write is active. Once a
@@ -1065,6 +1240,28 @@ export class EditorHostController {
       await this.#captureThenDispose(session, 'client-dispose')
     } else {
       await this.#disposeSession(session)
+    }
+  }
+
+  #liveDraftReady(id: string): boolean {
+    if (!TOKEN_PATTERN.test(id)) throw new HttpError(404, 'editor session not found')
+    const session = this.#liveDraftSessions.get(id)
+    if (session === undefined || session.closed) throw new HttpError(410, 'editor session has ended')
+    session.createdAt = Date.now()
+    return this.designDrafts.markLiveReady(session.draftId, session.ownerSessionId, session.attachId)
+  }
+
+  async #detachLiveDraftSession(session: LiveDraftEditorSession): Promise<void> {
+    if (session.closed) return
+    session.closed = true
+    this.designDrafts.detachLive(session.draftId, session.ownerSessionId, session.attachId)
+  }
+
+  #revokeLiveDraftSessions(draftId: string, ownerSessionId: string): void {
+    for (const [id, session] of this.#liveDraftSessions) {
+      if (session.draftId !== draftId || session.ownerSessionId !== ownerSessionId) continue
+      this.#liveDraftSessions.delete(id)
+      session.closed = true
     }
   }
 
@@ -1225,9 +1422,15 @@ export class EditorHostController {
         void this.#captureThenDispose(session, 'plugin-dispose')
       }
     }
+    for (const [id, session] of this.#liveDraftSessions) {
+      if (now - session.createdAt > SESSION_IDLE_MS) {
+        this.#liveDraftSessions.delete(id)
+        void this.#detachLiveDraftSession(session)
+      }
+    }
   }
 
-  #sealCapability(capability: EditCapability): string {
+  #sealCapability(capability: EditorCapability): string {
     const nonce = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm', this.#editorKey, nonce)
     cipher.setAAD(EDITOR_CAPABILITY_AAD)
@@ -1235,7 +1438,7 @@ export class EditorHostController {
     return `${EDITOR_CAPABILITY_PREFIX}${Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64url')}`
   }
 
-  #openCapability(token: string): EditCapability {
+  #openCapability(token: string): EditorCapability {
     if (!token.startsWith(EDITOR_CAPABILITY_PREFIX)) {
       // Compatibility boundary for pre-fix transcript cards: their random
       // in-memory token cannot safely be recreated after a plugin reload.

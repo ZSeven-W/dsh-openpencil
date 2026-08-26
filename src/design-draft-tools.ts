@@ -19,7 +19,9 @@ import {
   RenderAccessController,
   createRenderOutput,
   createDocumentSnapshotFromText,
+  projectImageArtifactGrant,
   projectDocumentGrant,
+  renderDir,
   stateRoot,
   verifyRenderOutput,
   type RenderFrame,
@@ -36,13 +38,13 @@ import {
 const MAX_BRIEF_LENGTH = 64 * 1024
 const MAX_BATCH_LENGTH = 256 * 1024
 const MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
+const MAX_TARGETED_CONTEXT_CALLS = 4
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const EXPLICIT_MOBILE_BRIEF = /(?:\b(?:mobile|phone|iphone|ios|android)\b|移动(?:端|应用|界面)?|手机(?:端|应用|界面)?)/iu
+const EXPLICIT_CANVAS_SIZE = /(?:^|\D)(\d{3,4})\s*(?:x|×|✕|\*)\s*(\d{3,5})(?:\D|$)/iu
 
 const CONTEXT_TOOLS = [
-  'get_editor_state',
-  'get_design_agent_prompt',
   'get_guidelines',
-  'get_style_guide_tags',
   'get_style_guide',
   'list_style_guides',
   'get_variables',
@@ -55,11 +57,8 @@ const CONTEXT_TOOLS = [
   'get_component',
   'batch_get',
   'read_nodes',
-  'snapshot_layout',
   'find_empty_space',
   'get_canvas_bounds',
-  'get_design_quality',
-  'lint_document',
   'apply_design_system',
   'enrich_images',
 ] as const
@@ -77,15 +76,29 @@ export interface DesignDraftToolServices {
 
 interface PendingPublication {
   ownerSessionId: string
-  brief: string
   requestedPath: string
   processPath: string
   target: FsTarget
   previewCount: number
+  canvas: DraftCanvasContract
+  canvasValidated: boolean
+  contextCalls: Set<string>
+  enrichmentUsed: boolean
   latestRootScreenshot?: { path: string; version: number; bytes: number; sha256: string }
 }
 
+export interface DraftCanvasContract {
+  platform: 'web' | 'mobile'
+  width: number
+  seedHeight: number
+  finalHeight: number | 'fit_content'
+  fixedViewport: boolean
+  rootCount: 1
+  rootType: 'frame'
+}
+
 export interface PublishedDraft {
+  draftId: string
   path: string
   filename: string
   bytes: number
@@ -101,6 +114,27 @@ export interface PublishedDraft {
   preview: RenderFrame
   document: DocumentSnapshot
   note: string
+}
+
+/** Compact unpublished result projected into the live editor workbench. */
+export interface BegunDraft {
+  draftId: string
+  path: string
+  version: number
+  createdAt?: number
+  platform: 'web' | 'mobile'
+  canvas: DraftCanvasContract
+  buildContract: JsonValue
+  editorState: JsonValue
+  styleGuideTags: JsonValue
+  document: DocumentSnapshot
+  sourceTool: typeof OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+  previewIntent: 'document'
+  editable: true
+  autoOpenEditor: true
+  liveCanvas: true
+  published: false
+  next: string
 }
 
 class DesignDraftJsQualityError extends Error {
@@ -135,6 +169,133 @@ function asJson(value: unknown): JsonValue {
   return (value ?? null) as JsonValue
 }
 
+function draftCanvasContract(brief: string): DraftCanvasContract {
+  const explicit = EXPLICIT_CANVAS_SIZE.exec(brief)
+  const explicitWidth = explicit === null ? undefined : Number(explicit[1])
+  const explicitHeight = explicit === null ? undefined : Number(explicit[2])
+  const validExplicit = explicitWidth !== undefined
+    && explicitHeight !== undefined
+    && Number.isSafeInteger(explicitWidth)
+    && Number.isSafeInteger(explicitHeight)
+    && explicitWidth >= 240
+    && explicitWidth <= 3_840
+    && explicitHeight >= 240
+    && explicitHeight <= 20_000
+  const mobile = EXPLICIT_MOBILE_BRIEF.test(brief) || (validExplicit && explicitWidth <= 500)
+  const width = validExplicit ? explicitWidth! : mobile ? 390 : 1_440
+  const seedHeight = validExplicit ? explicitHeight! : mobile ? 844 : 900
+  return {
+    platform: mobile ? 'mobile' : 'web',
+    width,
+    seedHeight,
+    finalHeight: validExplicit ? seedHeight : 'fit_content',
+    fixedViewport: validExplicit,
+    rootCount: 1,
+    rootType: 'frame',
+  }
+}
+
+/**
+ * Small, version-pinned subset of the native design contract needed to make
+ * the first valid batch. It deliberately avoids the full native prompt while
+ * giving the model executable field names instead of asking it to guess.
+ */
+function compactBuildContract(canvas: DraftCanvasContract): JsonValue {
+  return {
+    version: 'openpencil-batch-v2',
+    canvas: {
+      instruction: `Create exactly one root frame at ${canvas.width}x${canvas.seedHeight} in the first batch.`,
+      width: canvas.width,
+      seedHeight: canvas.seedHeight,
+      finalHeight: canvas.finalHeight,
+      finalHeightInstruction: canvas.fixedViewport
+        ? 'Keep the explicitly requested numeric viewport.'
+        : 'After the content flow is complete, update the root height to "fit_content".',
+    },
+    script: {
+      runtime: 'sandboxed QuickJS',
+      create: 'const root = I(null, node); const child = I(root, node);',
+      component: 'K(kitId, parent, overrides) only with a real kit id returned by native context.',
+      rules: [
+        'I and K are the only creation functions; use const/let, arrays, and loops for repeated content.',
+        'A child parent is the binding returned by an earlier I/K call, never an invented id or display name.',
+        'Do not use imports, console, Node.js, browser, network, filesystem, or update/delete operations in script mode.',
+      ],
+    },
+    firstBatch: {
+      purpose: 'Make the live canvas visibly useful as fast as possible; stop after the empty page-region skeleton.',
+      required: [
+        `Create one fixed root frame with width ${canvas.width} and height ${canvas.seedHeight}.`,
+        'Create 4-8 named top-level frame shells directly under the root binding.',
+        'Keep every shell empty: omit children or use children:[]; do not create descendants.',
+        'Use no more than 10 I(...) calls total, including the root.',
+      ],
+      forbidden: [
+        'text, icon_font, image, path, controls, ref, K(...), G(...), or any non-frame node',
+        'nested content, inline child nodes, or I(...) calls parented below a top-level shell',
+        'filling a shell with labels, icons, images, controls, cards, or decorative content',
+      ],
+      completion: 'Return immediately after the root and empty named shells exist. Populate them in subsequent batches.',
+    },
+    operations: 'For later edits use newline DSL U("exact-id", patch), R, D, M, C, or G; ids must come from prior native results.',
+    node: {
+      types: ['frame', 'text', 'rectangle', 'ellipse', 'line', 'path', 'image', 'icon_font', 'group', 'ref', 'text_input', 'text_area', 'select', 'checkbox'],
+      container: 'width/height: number | "fill_container" | "fit_content"; layout: "vertical" | "horizontal" | "none"; gap; padding is only a number, [vertical,horizontal], or [top,right,bottom,left] (never an object); justifyContent; alignItems; clipContent; cornerRadius.',
+      text: 'Use content (not text), fontSize, fontWeight, lineHeight, letterSpacing, textAlign, and a fill array.',
+      paint: 'fill is [{type:"solid",color:"#RRGGBB"}]; stroke is {thickness,fill:[...]}; effects is an array.',
+      controls: 'Use native text_input/text_area/select/checkbox nodes. Inputs need width:"fill_container" and an explicit 44-52px height; password text_input uses secure:true; leadingIcon/trailingIcon accept only a glyph-name string such as "mail" or "eye", never an object or node.',
+      icons: 'Use icon_font with iconFontName (for example search, cart, heart, user); never emoji or guessed SVG/path data.',
+    },
+    layoutRules: [
+      'Never set x/y on children inside a layout container.',
+      'Do not put fill_container inside a fit_content parent on the same axis.',
+      'Use equal sizing strategies for siblings in a row and verify fixed item widths fit the inner width.',
+      'First create only the fixed root and 4-8 empty named top-level frame shells; populate those shells in later batches.',
+    ],
+  } as JsonValue
+}
+
+function draftRootNodes(document: Record<string, unknown>): unknown[] {
+  if (Array.isArray(document.children) && document.children.length > 0) return document.children
+  if (!Array.isArray(document.pages)) return []
+  return document.pages.flatMap(page => isRecord(page) && Array.isArray(page.children) ? page.children : [])
+}
+
+function canvasContractDiagnostics(documentJson: string, canvas: DraftCanvasContract): string[] {
+  let document: unknown
+  try {
+    document = JSON.parse(documentJson)
+  } catch {
+    return ['The native draft document is not valid JSON.']
+  }
+  if (!isRecord(document)) return ['The native draft document root is invalid.']
+  const roots = draftRootNodes(document)
+  if (roots.length !== canvas.rootCount) {
+    return [`Canvas contract requires exactly one root frame; current root count is ${roots.length}.`]
+  }
+  const root = roots[0]
+  if (!isRecord(root) || root.type !== canvas.rootType) {
+    return ['Canvas contract requires the single root node to be a frame.']
+  }
+  if (root.width !== canvas.width) {
+    return [`Canvas contract requires root width ${canvas.width}px; current root width is ${String(root.width)}.`]
+  }
+  if (canvas.fixedViewport && root.height !== canvas.seedHeight) {
+    return [`Canvas contract requires the explicit root height ${canvas.seedHeight}px; current root height is ${String(root.height)}.`]
+  }
+  return []
+}
+
+function contextFingerprint(tool: ContextTool, args: Record<string, unknown>): string {
+  const canonical = (value: unknown): string => {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`
+  }
+  return `${tool}:${canonical(args)}`
+}
+
 function publicCall(result: DesignDraftCallResult): Record<string, JsonValue> {
   return {
     tool: result.tool,
@@ -162,8 +323,10 @@ function assertNoExternalArguments(value: unknown, location = 'arguments', depth
 }
 
 const ISSUE_FIELD = /(?:issues$|^advisories$|^diagnostics$|^errors$|^emptyShells$|^intentQuestions$|^imageSlots$)/i
+const OBSERVATIONAL_QUALITY_FIELD = /^emptyShells$/i
 
-function issueValues(value: unknown): string[] {
+function issueValues(value: unknown, options: { includeObservational?: boolean } = {}): string[] {
+  const includeObservational = options.includeObservational ?? true
   const issues: string[] = []
   const seen = new Set<object>()
   const visit = (candidate: unknown, key = '', depth = 0): void => {
@@ -184,6 +347,11 @@ function issueValues(value: unknown): string[] {
     }
     for (const [childKey, child] of Object.entries(candidate)) {
       if (ISSUE_FIELD.test(childKey)) {
+        // Empty shells include intentional layout primitives such as spacers
+        // and dividers. Keep them visible in quality inspection, but let the
+        // publication gate exclude this observational heuristic without
+        // weakening any other native diagnostic category.
+        if (!includeObservational && OBSERVATIONAL_QUALITY_FIELD.test(childKey)) continue
         if (Array.isArray(child)) visit(child, childKey, depth + 1)
         else if (typeof child === 'string' && child.trim().length > 0) issues.push(child.slice(0, 300))
       } else {
@@ -215,6 +383,32 @@ function presentationMeta(editorHost: EditorHostController, render: RenderAccess
     const result = value as unknown as PublishedDraft
     const editor = editorHost.grantFor(result.path, result.document?.sha256)
     return projectDocumentGrant(value, render, editor)
+  }
+}
+
+function inspectionPreviewFilename(sha256: string): string {
+  return `render-stage-${sha256}.png`
+}
+
+function inspectionPresentationMeta(render: RenderAccessController) {
+  return (_args: unknown, value: JsonValue): JsonValue => {
+    if (!isRecord(value) || value.kind !== 'screenshot' || !isRecord(value.screenshot)) return value
+    const artifact = value.screenshot
+    if (
+      typeof artifact.bytes !== 'number'
+      || typeof artifact.sha256 !== 'string'
+      || typeof artifact.width !== 'number'
+      || typeof artifact.height !== 'number'
+    ) return value
+    return projectImageArtifactGrant(value, render, {
+      filename: inspectionPreviewFilename(artifact.sha256),
+      bytes: artifact.bytes,
+      sha256: artifact.sha256,
+      width: artifact.width,
+      height: artifact.height,
+      name: 'Live design preview',
+      index: 0,
+    })
   }
 }
 
@@ -252,12 +446,31 @@ async function persistInspectionScreenshot(screenshot: DesignDraftScreenshot): P
       throw new Error('OpenPencil content-addressed draft screenshot was modified')
     }
   }
+  const browserFilename = inspectionPreviewFilename(sha256)
+  const browserDirectory = renderDir()
+  const browserPath = join(browserDirectory, browserFilename)
+  await mkdir(browserDirectory, { recursive: true, mode: 0o700 })
+  try {
+    await writeFile(browserPath, screenshot.bytes, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const existing = await readFile(browserPath)
+    if (!existing.equals(screenshot.bytes)) {
+      throw new Error('OpenPencil content-addressed browser preview was modified')
+    }
+  }
+  const verified = await verifyRenderOutput(browserPath)
+  if (verified.bytes !== screenshot.bytes.length || verified.sha256 !== sha256) {
+    throw new Error('OpenPencil browser preview did not match its inspection screenshot')
+  }
   return {
     path,
     filename,
     mimeType: 'image/png',
     bytes: screenshot.bytes.length,
     sha256,
+    width: verified.width,
+    height: verified.height,
   }
 }
 
@@ -315,17 +528,27 @@ export class DesignDraftToolController {
   #beginTool() {
     const drafts = this.#drafts
     const services = this.#services
+    const editorHost = this.#editorHost
     return defineTool({
       name: OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
-      description: 'Begin the complete OpenPencil design-agent pipeline in a private unpublished draft. '
-        + 'Use this for new production designs. It requires Workspace Write, validates a new .op target, '
-        + 'starts an isolated native draft, and returns OpenPencil\'s complete design-agent prompt plus '
-        + 'editor state, style-guide tags, and variables. The target is not created until pipeline_finish.',
+      description: 'Begin a fast, private OpenPencil design draft and immediately open its live canvas. '
+        + 'Use this for new production designs. It validates a new .op target, starts one native daemon, '
+        + 'and returns compact authoritative starter context. The target is not created until pipeline_finish.',
       parameters: {
         path: { type: 'string', required: true, description: 'New workspace-relative or absolute .op target. It must not exist.' },
-        brief: { type: 'string', required: true, description: 'The complete user design brief, including product, platform, content, and constraints.' },
+        brief: { type: 'string', required: true, description: 'The user\'s design request. Preserve it; do not invent a mobile platform when none was requested.' },
       },
-      output: { schema: { type: 'object', additionalProperties: true }, render: renderJson },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: renderJson,
+        presentationMeta: (_args: unknown, value: JsonValue): JsonValue => {
+          if (!isRecord(value) || typeof value.draftId !== 'string') return value
+          const pending = this.#pending.get(value.draftId)
+          if (pending === undefined || !isRecord(value.document)) return value
+          const editor = editorHost.grantForDraft(value.draftId, pending.ownerSessionId)
+          return projectDocumentGrant(value, services.render, editor)
+        },
+      },
       execute: async (args: { path: string; brief: string }, exec) => {
         const requestedPath = args.path.trim()
         const brief = args.brief.trim()
@@ -333,6 +556,7 @@ export class DesignDraftToolController {
         if (extname(requestedPath).toLowerCase() !== '.op') throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: path must end in .op`)
         if (brief.length === 0) throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: brief is required`)
         if (brief.length > MAX_BRIEF_LENGTH) throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: brief is too large`)
+        const canvas = draftCanvasContract(brief)
         const owner = ownerSessionId(exec)
         const policy = services.sandboxPolicy.resolve({ session: exec.agent?.session })
         if (services.fs.sandboxMode !== undefined && policy.mode === 'read-only') {
@@ -365,32 +589,41 @@ export class DesignDraftToolController {
           signal: exec.signal,
         })
         try {
-          const designAgentPrompt = await drafts.call(begun.draftId, owner, 'get_design_agent_prompt', {
-            userMessage: brief,
-            verifyProtocol: 'screenshot',
-          }, { signal: exec.signal })
           const editorState = await drafts.call(begun.draftId, owner, 'get_editor_state', {}, { signal: exec.signal })
           const styleGuideTags = await drafts.call(begun.draftId, owner, 'get_style_guide_tags', {}, { signal: exec.signal })
-          const variables = await drafts.call(begun.draftId, owner, 'get_variables', {}, { signal: exec.signal })
+          const authoritative = await drafts.snapshot(begun.draftId, owner, { signal: exec.signal })
+          const document = await (services.createDocumentSnapshot ?? createDocumentSnapshotFromText)(
+            authoritative.documentJson,
+          )
           this.#pending.set(begun.draftId, {
             ownerSessionId: owner,
-            brief,
             requestedPath,
             processPath,
             target,
             previewCount: 0,
+            canvas,
+            canvasValidated: false,
+            contextCalls: new Set(),
+            enrichmentUsed: false,
           })
           return {
             draftId: begun.draftId,
             path: processPath,
-            version: variables.version,
+            version: authoritative.version,
             ...(begun.createdAt === undefined ? {} : { createdAt: begun.createdAt }),
-            designAgentPrompt: asJson(designAgentPrompt.value),
+            platform: canvas.platform,
+            canvas: asJson(canvas),
+            buildContract: compactBuildContract(canvas),
             editorState: asJson(editorState.value),
             styleGuideTags: asJson(styleGuideTags.value),
-            variables: asJson(variables.value),
+            document: asJson(document),
+            sourceTool: OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
+            previewIntent: 'document',
+            editable: true,
+            autoOpenEditor: true,
+            liveCanvas: true,
             published: false,
-            next: `Use ${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME} to resolve guidelines/style and then ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME} in skeleton-first batches.`,
+            next: `Use the returned canvas and buildContract directly. Make the first ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME} script only the fixed root plus 4-8 empty named top-level frame shells, with at most 10 I calls and no text, icon, image, control, or nested content; return after that fast live-canvas skeleton, then populate the shells in later batches. Do not re-fetch the design-agent prompt or already-returned context.`,
           }
         } catch (error) {
           await drafts.abort(begun.draftId, owner).catch(() => {})
@@ -406,7 +639,7 @@ export class DesignDraftToolController {
     return defineTool({
       name: OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME,
       description: 'Read native design context for an unpublished OpenPencil pipeline draft. '
-        + 'The allowlist includes the full design-agent read surface, draft-local design-system/variable/theme configuration, and bounded post-final enrich_images; '
+        + 'Use it only for context not already returned by pipeline_begin. The allowlist includes bounded design reads, draft-local design-system/theme configuration, and post-final enrich_images; '
         + 'filesystem paths, URLs, imports, exports, and spawned agents are forbidden.',
       parameters: {
         draftId: { type: 'string', required: true, description: 'Draft id returned by openpencil_pipeline_begin.' },
@@ -419,10 +652,6 @@ export class DesignDraftToolController {
         const pending = this.#requirePending(args.draftId, owner)
         if (!CONTEXT_TOOLS.includes(args.tool)) throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: tool is not allowed`)
         const nativeArgs = { ...(args.arguments ?? {}) }
-        if (args.tool === 'get_design_agent_prompt' && nativeArgs.userMessage === undefined) {
-          nativeArgs.userMessage = pending.brief
-          nativeArgs.verifyProtocol ??= 'screenshot'
-        }
         assertNoExternalArguments(nativeArgs)
         if (args.tool === 'enrich_images') {
           for (const key of Object.keys(nativeArgs)) {
@@ -435,7 +664,20 @@ export class DesignDraftToolController {
             || !nativeArgs.root_ids.every(id => typeof id === 'string' && id.trim().length > 0)
           )) throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: enrich_images root_ids must be an array of node ids`)
         }
+        const fingerprint = contextFingerprint(args.tool, nativeArgs)
+        if (pending.contextCalls.has(fingerprint)) {
+          throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: this exact native context request was already consumed; continue from the prior result`)
+        }
+        if (args.tool === 'enrich_images') {
+          if (pending.enrichmentUsed) {
+            throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: enrich_images already ran for this draft`)
+          }
+        } else if (pending.contextCalls.size >= MAX_TARGETED_CONTEXT_CALLS) {
+          throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: targeted context budget exhausted; continue with the compact begin contract and current draft`)
+        }
         const result = await drafts.call(args.draftId, owner, args.tool, nativeArgs, { signal: exec.signal })
+        pending.contextCalls.add(fingerprint)
+        if (args.tool === 'enrich_images') pending.enrichmentUsed = true
         return { draftId: args.draftId, ...publicCall(result) }
       },
       presentCall: (args: { tool: string }) => ({ card: 'generic', title: `Read OpenPencil draft context: ${args.tool}`, kind: 'read' }),
@@ -447,20 +689,21 @@ export class DesignDraftToolController {
     return defineTool({
       name: OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
       description: 'Apply one transactional native batch_design step to an unpublished draft. '
-        + 'Use script for skeleton-first I/K creation and operations for later U/R/D/M/G/C repairs. '
-        + 'Exactly one must be provided. OpenPencil post-processing is always forced on; every result includes native quality and compact resolved-layout diagnostics. '
-        + 'Use pipeline_inspect(kind:"screenshot") plus read_image at visual milestones instead of relying on numeric layout alone.',
+        + 'The first script is a strict fast-live-canvas checkpoint: create only the fixed root plus 4-8 empty named top-level frame shells, use at most 10 I calls, and stop without text, icons, images, controls, K/G calls, or nested content. '
+        + 'Populate those shells with script in subsequent batches, then use operations for later U/R/D/M/G/C repairs. '
+        + 'Exactly one must be provided. OpenPencil post-processing is always forced on and the begin canvas width is enforced. '
+        + 'The batch returns its own native diagnostics without adding automatic quality/layout round trips; use pipeline_inspect only for a concrete diagnostic or visual milestone.',
       parameters: {
         draftId: { type: 'string', required: true },
-        script: { type: 'string', description: 'Sandboxed QuickJS creation program using I/K.' },
+        script: { type: 'string', description: 'Sandboxed QuickJS creation program. First call: fixed root + 4-8 empty named top-level frame shells only, at most 10 I calls, no content or nesting. Later calls may use I/K to populate exact shells.' },
         operations: { type: 'string', description: 'Transactional edit operations for existing draft nodes.' },
         pageId: { type: 'string', description: 'Optional page id from native editor state.' },
-        canvasWidth: { type: 'number', description: 'Optional post-processing canvas width.' },
+        canvasWidth: { type: 'number', description: 'Optional compatibility assertion. When provided it must equal the canvas width returned by pipeline_begin; the wrapper always supplies that authoritative width.' },
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderJson },
       execute: async (args: { draftId: string; script?: string; operations?: string; pageId?: string; canvasWidth?: number }, exec) => {
         const owner = ownerSessionId(exec)
-        this.#requirePending(args.draftId, owner)
+        const pending = this.#requirePending(args.draftId, owner)
         const script = args.script?.trim() ?? ''
         const operations = args.operations?.trim() ?? ''
         if ((script === '') === (operations === '')) {
@@ -471,30 +714,34 @@ export class DesignDraftToolController {
         if (args.canvasWidth !== undefined && (!Number.isFinite(args.canvasWidth) || args.canvasWidth <= 0 || args.canvasWidth > 16_384)) {
           throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: canvasWidth must be greater than 0 and at most 16384`)
         }
+        if (args.canvasWidth !== undefined && args.canvasWidth !== pending.canvas.width) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: canvasWidth must match the ${pending.canvas.width}px begin canvas contract`)
+        }
         const batch = await drafts.call(args.draftId, owner, 'batch_design', {
           ...(script === '' ? { operations } : { script }),
           postProcess: true,
           ...(args.pageId === undefined || args.pageId.trim() === '' ? {} : { pageId: args.pageId }),
-          ...(args.canvasWidth === undefined ? {} : { canvasWidth: args.canvasWidth }),
+          canvasWidth: pending.canvas.width,
         }, { signal: exec.signal })
-        const quality = await drafts.call(args.draftId, owner, 'get_design_quality', {}, { signal: exec.signal })
-        const layout = await drafts.call(args.draftId, owner, 'snapshot_layout', { maxDepth: 4 }, { signal: exec.signal })
-        const layoutDiagnostics = issueValues(layout.value)
-        const diagnostics = issueValues({ batch: batch.value, quality: quality.value, layout: layout.value })
+        const snapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+        const version = snapshot.version
+        const canvasDiagnostics = canvasContractDiagnostics(snapshot.documentJson, pending.canvas)
+        pending.canvasValidated = canvasDiagnostics.length === 0
+        const diagnostics = [...canvasDiagnostics, ...issueValues(batch.value)].slice(0, 30)
         return {
           draftId: args.draftId,
-          version: layout.version,
+          version,
           changed: batch.changed === true,
           batch: asJson(batch.value),
-          quality: asJson(quality.value),
-          layoutCheck: {
-            version: layout.version,
-            diagnostics: layoutDiagnostics,
+          canvas: asJson(pending.canvas),
+          canvasCheck: {
+            valid: pending.canvasValidated,
+            diagnostics: canvasDiagnostics,
           },
           diagnostics,
           canContinue: true,
           next: diagnostics.length === 0
-            ? `Continue the next semantic batch; at each visual milestone call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" and open it with read_image.`
+            ? `Continue the next semantic batch; at each visual milestone call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" so the user receives an exact preview. If the current model supports image input, open it with read_image; after one explicit unsupported-image error, do not retry or inspect source.`
             : 'Repair every reported diagnostic with another operations batch before finishing.',
         }
       },
@@ -508,7 +755,8 @@ export class DesignDraftToolController {
       name: OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
       description: 'Inspect an unpublished draft using native resolved layout, composite quality/lint, or an exact PNG screenshot. '
         + 'Layout inspection returns the resolved node array directly as tree (not a nested layout.layout envelope). '
-        + 'Screenshot returns a bounded content-addressed DSH cache path that can be opened with read_image and records visual verification for that exact draft version.',
+        + 'Screenshot always returns a bounded content-addressed DSH cache path for the user preview and records proof for that exact draft version. '
+        + 'Open it with read_image only when the current model supports image input; after one explicit unsupported-image error, do not retry or inspect source.',
       parameters: {
         draftId: { type: 'string', required: true },
         kind: { type: 'string', required: true, enum: ['layout', 'quality', 'screenshot'] },
@@ -518,7 +766,11 @@ export class DesignDraftToolController {
           description: 'Optional layout-only depth, default 6 and max 12. Omit for quality and screenshot inspection.',
         },
       },
-      output: { schema: { type: 'object', additionalProperties: true }, render: renderJson },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: renderJson,
+        presentationMeta: inspectionPresentationMeta(this.#services.render),
+      },
       execute: async (args: { draftId: string; kind: 'layout' | 'quality' | 'screenshot'; nodeId?: string; maxDepth?: number }, exec) => {
         const owner = ownerSessionId(exec)
         this.#requirePending(args.draftId, owner)
@@ -572,7 +824,7 @@ export class DesignDraftToolController {
           kind: args.kind,
           version: screenshot.version,
           screenshot: artifact,
-          next: `Open ${artifact.path} with read_image, judge the rendered composition, and use ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME} for any visual correction.`,
+          next: `The exact user preview is ready at ${artifact.path}. If the current model supports image input, open it with read_image and judge the rendered composition; after one explicit unsupported-image error, do not retry or inspect source. Continue with native quality/finalize gates and state honestly when model visual review was unavailable.`,
         } as Record<string, JsonValue>
       },
       presentCall: (args: { kind: string }) => ({ card: 'generic', title: `Inspect OpenPencil draft: ${args.kind}`, kind: 'read' }),
@@ -586,7 +838,8 @@ export class DesignDraftToolController {
       name: OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
       description: 'Finalize and publish a complete OpenPencil draft in two phases. '
         + 'Each call runs native finalization, design quality, lint, and layout checks. Diagnostics/advisories keep the draft private for repair. '
-        + 'A clean finalized version must then be inspected with pipeline_inspect(kind:"screenshot") and read visually before finish is called again. '
+        + 'A clean finalized version must then receive a distinct pipeline_inspect(kind:"screenshot") user preview before finish is called again. '
+        + 'Use read_image only when the current model supports image input; an explicit unsupported-image error must not be retried or replaced by source inspection. '
         + 'Only that exact post-final screenshot version may pass the JS quality gate and atomic DSH createIfAbsent publication. '
         + 'The published presentation pairs the exact PNG with an editable document grant, an Edit canvas action, and idle-only editor auto-open, including in nested PTC/Code Mode.',
       parameters: {
@@ -608,10 +861,25 @@ export class DesignDraftToolController {
             stage: 'needs_visual_preview',
             diagnostics: [],
             canContinue: true,
-            next: `Before finalization, call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot", open the exact PNG with read_image, and repair visible defects. Numeric quality/layout alone is not a design preview.`,
+            next: `Before finalization, call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" to generate the exact user preview. If the current model supports image input, open the PNG with read_image and repair visible defects; after one explicit unsupported-image error, do not retry or inspect source, and continue with native quality/finalize gates while stating that model visual review was unavailable.`,
           }
         }
         const finalized = await drafts.finalize(args.draftId, owner, { signal: exec.signal })
+        const finalizedSnapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+        const canvasDiagnostics = canvasContractDiagnostics(finalizedSnapshot.documentJson, pending.canvas)
+        pending.canvasValidated = canvasDiagnostics.length === 0
+        if (!pending.canvasValidated) {
+          return {
+            draftId: args.draftId,
+            path: pending.processPath,
+            published: false,
+            stage: 'needs_correction',
+            version: finalizedSnapshot.version,
+            diagnostics: canvasDiagnostics,
+            canContinue: true,
+            next: `Repair the authoritative ${pending.canvas.width}px root canvas contract with ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}, then take a fresh screenshot and finish again.`,
+          }
+        }
         const quality = await drafts.call(args.draftId, owner, 'get_design_quality', {}, { signal: exec.signal })
         const lint = await drafts.call(args.draftId, owner, 'lint_document', {}, { signal: exec.signal })
         const layout = await drafts.call(args.draftId, owner, 'snapshot_layout', { maxDepth: 8 }, { signal: exec.signal })
@@ -621,7 +889,7 @@ export class DesignDraftToolController {
           quality: quality.value,
           lint: blockingLint,
           layout: layout.value,
-        })
+        }, { includeObservational: false })
         if (nativeDiagnostics.length > 0) {
           return {
             draftId: args.draftId,
@@ -718,6 +986,7 @@ export class DesignDraftToolController {
                 // Best-effort post-commit notification only.
               }
               return {
+                draftId: args.draftId,
                 path: pending.processPath,
                 filename: basename(pending.processPath),
                 bytes: document.bytes,
@@ -760,7 +1029,7 @@ export class DesignDraftToolController {
               version: layout.version,
               diagnostics: [],
               canContinue: true,
-              next: `Call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot", open its cache path with read_image, correct any visible defects, then call finish again.`,
+              next: `Call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" to generate the exact post-final user preview. If the current model supports image input, open it with read_image and correct visible defects. After one explicit unsupported-image error, do not retry or inspect source; rely on the native quality/finalize gates, state that model visual review was unavailable, and call finish again.`,
             }
           }
           throw error

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 현재 플러그인 릴리스: <code>0.1.0-rc.6</code> · DSH <code>0.1.1-rc.2</code>까지 테스트됨</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 현재 플러그인 릴리스: <code>0.1.0-rc.7</code> · DSH <code>0.1.1-rc.2</code>까지 테스트됨</sub>
 </p>
 
 <p align="center">

@@ -1,6 +1,17 @@
 /** Shared lifecycle primitives for plugin-owned OpenPencil managed daemons. */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
+import {
+  createServer,
+  request as requestHttp,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type OutgoingHttpHeaders,
+  type Server,
+  type ServerResponse,
+} from 'node:http'
+import type { Socket } from 'node:net'
 import { isAbsolute } from 'node:path'
 import { readManagedDaemonDocument, type ManagedDaemonDocument } from './editor-recovery.js'
 import type { EditorRuntime } from './editor-runtime.js'
@@ -8,8 +19,45 @@ import type { EditorRuntime } from './editor-runtime.js'
 const START_TIMEOUT_MS = 20_000
 const READY_TIMEOUT_MS = 15_000
 const STOP_TIMEOUT_MS = 3_000
+const RESET_TIMEOUT_MS = 8_000
 const MAX_HANDSHAKE_BYTES = 16 * 1024
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024
+const MAX_RESET_RESPONSE_BYTES = 16 * 1024
+const READ_ONLY_PROXY_TOKEN_BYTES = 32
+const READ_ONLY_PROXY_ERROR_BYTES = 16 * 1024
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+])
+
+const FORWARDED_REQUEST_HEADERS = new Set([
+  'accept',
+  'accept-encoding',
+  'cache-control',
+  'if-modified-since',
+  'if-none-match',
+  'range',
+  'user-agent',
+])
+
+const READ_ONLY_PROXY_GET_PATHS = new Set([
+  '/api/mcp/document',
+  '/api/mcp/indicators',
+  '/api/mcp/selection',
+  '/api/mcp/server',
+  '/api/mcp/version',
+])
+// `/api/mcp/events` is intentionally absent: EventSource cannot present the
+// per-attach header. The current Web shell's authoritative 400 ms
+// version/document polling remains available and is sufficient for Agent
+// batch updates without opening a tokenless stream.
 
 interface ManagedHandshake {
   port: number
@@ -21,10 +69,19 @@ export interface ManagedEditorDaemon {
   /** Internal child handle. Never include this object in a model-facing result. */
   readonly child: ChildProcessWithoutNullStreams
   readonly baseUrl: string
-  /** Internal bearer credential. Never include this object in a model-facing result. */
+  /** Internal managed credential. Never include this object in a model-facing result. */
   readonly token: string
   readonly sourcePath: string
   readonly runtimeVersion: string
+}
+
+/** Revocable browser-only view of one managed daemon. */
+export interface ManagedEditorReadOnlyProxy {
+  readonly baseUrl: string
+  /** Browser credential for this proxy only; never accepted by the daemon. */
+  readonly token: string
+  /** Synchronously revoke the browser endpoint and all open proxy sockets. */
+  stop(): void
 }
 
 export interface StartManagedEditorDaemonOptions {
@@ -43,6 +100,98 @@ function sanitizedDiagnostics(value: string, sourcePath?: string): string {
   const redacted = value
     .replace(/((?:authorization|bearer|token)[\s"'=:]+)[A-Za-z0-9._~-]{8,}/gi, '$1[redacted]')
   return (sourcePath === undefined ? redacted : redacted.split(sourcePath).join('[managed-document]')).trim()
+}
+
+function proxyJson(res: ServerResponse, status: number, value: unknown): void {
+  if (res.headersSent || res.destroyed) return
+  const body = Buffer.from(JSON.stringify(value))
+  res.writeHead(status, {
+    'cache-control': 'no-store',
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': body.byteLength,
+  })
+  res.end(body)
+}
+
+function browserTokenMatches(req: IncomingMessage, token: string): boolean {
+  const presented = req.headers['x-openpencil-token']
+  if (typeof presented !== 'string') return false
+  const expectedBytes = Buffer.from(token)
+  const presentedBytes = Buffer.from(presented)
+  return expectedBytes.byteLength === presentedBytes.byteLength
+    && timingSafeEqual(expectedBytes, presentedBytes)
+}
+
+function requestHeadersForDaemon(req: IncomingMessage): OutgoingHttpHeaders {
+  const headers: OutgoingHttpHeaders = {}
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!FORWARDED_REQUEST_HEADERS.has(name) || value === undefined) continue
+    headers[name] = value
+  }
+  return headers
+}
+
+function responseHeadersForBrowser(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
+  const forwarded: OutgoingHttpHeaders = {}
+  for (const [name, value] of Object.entries(headers)) {
+    if (HOP_BY_HOP_HEADERS.has(name) || name === 'set-cookie' || value === undefined) continue
+    forwarded[name] = value
+  }
+  return forwarded
+}
+
+function forwardReadOnlyRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  daemon: ManagedEditorDaemon,
+  path: string,
+): void {
+  const upstream = requestHttp(new URL(path, daemon.baseUrl), {
+    method: req.method,
+    headers: requestHeadersForDaemon(req),
+  }, upstreamResponse => {
+    if (res.destroyed) {
+      upstreamResponse.destroy()
+      return
+    }
+    res.writeHead(
+      upstreamResponse.statusCode ?? 502,
+      responseHeadersForBrowser(upstreamResponse.headers),
+    )
+    upstreamResponse.pipe(res)
+  })
+  upstream.on('error', () => {
+    if (!res.headersSent) proxyJson(res, 502, { ok: false, error: 'OpenPencil live canvas upstream is unavailable' })
+    else res.destroy()
+  })
+  req.once('aborted', () => { upstream.destroy() })
+  res.once('close', () => { upstream.destroy() })
+  // Only GET/HEAD requests reach this helper, so browser-controlled bytes are
+  // never relayed into the managed daemon.
+  upstream.end()
+}
+
+async function currentDaemonVersion(daemon: ManagedEditorDaemon): Promise<number> {
+  const response = await fetch(`${daemon.baseUrl}/api/mcp/version`, {
+    headers: {
+      accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(2_000),
+  })
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (!response.ok) throw new Error(`OpenPencil managed daemon version failed (${response.status})`)
+  if (bytes.byteLength > READ_ONLY_PROXY_ERROR_BYTES) {
+    throw new Error('OpenPencil managed daemon version response exceeded its size limit')
+  }
+  try {
+    const value = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>
+    if (typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 0) {
+      return value.version
+    }
+    throw new Error('OpenPencil managed daemon version response was invalid')
+  } catch {
+    throw new Error('OpenPencil managed daemon version response was invalid')
+  }
 }
 
 function parseHandshake(line: string): ManagedHandshake {
@@ -251,8 +400,229 @@ export async function startManagedEditorDaemon(
   }
 }
 
+/**
+ * Expose a managed daemon to one live browser mount without delegating its
+ * writer credential. Static resources are public on this ephemeral loopback
+ * origin; daemon data requires a per-attach browser token and only GET/HEAD
+ * requests are forwarded. The Web shell's mandatory bootstrap reset receives
+ * a synthetic already-consumed acknowledgement, while every other mutation is
+ * rejected before any bytes can reach the daemon.
+ */
+export async function startManagedEditorReadOnlyProxy(
+  daemon: ManagedEditorDaemon,
+  signal?: AbortSignal,
+): Promise<ManagedEditorReadOnlyProxy> {
+  signal?.throwIfAborted()
+  const browserToken = randomBytes(READ_ONLY_PROXY_TOKEN_BYTES).toString('base64url')
+  const sockets = new Set<Socket>()
+  let stopped = false
+  let expectedHost: string | undefined
+  const server: Server = createServer((req, res) => {
+    if (expectedHost !== undefined && req.headers.host !== expectedHost) {
+      req.resume()
+      proxyJson(res, 403, { ok: false, error: 'OpenPencil live canvas host is invalid' })
+      return
+    }
+    const rawUrl = req.url ?? '/'
+    if (rawUrl.startsWith('//') || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(rawUrl)) {
+      proxyJson(res, 400, { ok: false, error: 'absolute OpenPencil live canvas URLs are forbidden' })
+      return
+    }
+    let path: string
+    let pathname: string
+    try {
+      const parsed = new URL(rawUrl, 'http://127.0.0.1')
+      pathname = parsed.pathname
+      path = `${parsed.pathname}${parsed.search}`
+    } catch {
+      proxyJson(res, 400, { ok: false, error: 'invalid OpenPencil live canvas request' })
+      return
+    }
+    const method = (req.method ?? 'GET').toUpperCase()
+    if ((method === 'GET' || method === 'HEAD') && (
+      req.headers['transfer-encoding'] !== undefined
+      || (req.headers['content-length'] !== undefined && req.headers['content-length'] !== '0')
+    )) {
+      req.resume()
+      proxyJson(res, 400, { ok: false, error: 'OpenPencil live canvas reads cannot carry a request body' })
+      return
+    }
+    const privileged = pathname === '/mcp'
+      || pathname.startsWith('/mcp/')
+      || pathname.startsWith('/api/')
+
+    if (method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-headers': 'X-OpenPencil-Token, Content-Type',
+        'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
+        'cache-control': 'no-store',
+      })
+      res.end()
+      return
+    }
+    if (privileged && !browserTokenMatches(req, browserToken)) {
+      req.resume()
+      proxyJson(res, 401, { ok: false, error: 'OpenPencil live canvas capability is required' })
+      return
+    }
+    if (method === 'POST' && pathname === '/api/mcp/sync-reset') {
+      // prepareLiveLaunch consumed and verified the daemon's one-shot reset.
+      // Do not forward this browser POST: acknowledge the harmless skipped
+      // state locally so a compromised iframe still cannot race that guard.
+      req.resume()
+      void currentDaemonVersion(daemon).then(version => {
+        proxyJson(res, 200, { ok: true, skipped: true, version })
+      }).catch(() => {
+        proxyJson(res, 502, { ok: false, error: 'OpenPencil live canvas version is unavailable' })
+      })
+      return
+    }
+    if (method !== 'GET' && method !== 'HEAD') {
+      req.resume()
+      proxyJson(res, 403, {
+        ok: false,
+        error: 'OpenPencil live pipeline canvas is read-only',
+        code: 'read-only-live-canvas',
+      })
+      return
+    }
+    if (privileged && !READ_ONLY_PROXY_GET_PATHS.has(pathname)) {
+      proxyJson(res, 403, {
+        ok: false,
+        error: 'OpenPencil live pipeline canvas route is not available to a read-only browser',
+        code: 'read-only-live-canvas',
+      })
+      return
+    }
+    forwardReadOnlyRequest(req, res, daemon, path)
+  })
+  server.on('connection', socket => {
+    sockets.add(socket)
+    socket.once('close', () => { sockets.delete(socket) })
+  })
+  server.on('clientError', (_error, socket) => {
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+  })
+  try {
+    await new Promise<void>((resolveListening, rejectListening) => {
+      const onError = (error: Error): void => {
+        cleanup()
+        rejectListening(error)
+      }
+      const onAbort = (): void => {
+        cleanup()
+        rejectListening(signal?.reason instanceof Error
+          ? signal.reason
+          : new Error('OpenPencil live canvas proxy startup was cancelled'))
+      }
+      const cleanup = (): void => {
+        server.off('error', onError)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      server.once('error', onError)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address()
+        if (address !== null && typeof address !== 'string') expectedHost = `127.0.0.1:${address.port}`
+        cleanup()
+        resolveListening()
+      })
+      if (signal?.aborted) onAbort()
+    })
+  } catch (error) {
+    server.close()
+    for (const socket of sockets) socket.destroy()
+    throw error
+  }
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    server.close()
+    for (const socket of sockets) socket.destroy()
+    throw new Error('OpenPencil live canvas proxy did not bind a loopback port')
+  }
+  server.unref()
+  const stop = (): void => {
+    if (stopped) return
+    stopped = true
+    server.close()
+    for (const socket of sockets) socket.destroy()
+  }
+  // Retain an error listener after startup so a late listener fault cannot
+  // escape as an uncaught process error. Revocation remains owned by stop().
+  server.on('error', stop)
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    token: browserToken,
+    stop,
+  }
+}
+
 export function stopManagedEditorDaemon(daemon: ManagedEditorDaemon): Promise<void> {
   return stopManagedEditorChild(daemon.child)
+}
+
+/**
+ * Consume the daemon's one-shot sync reset after the controller has refreshed
+ * its private backing file. The credential and backing path never enter a returned
+ * value or diagnostic; a browser mount can therefore only receive the later
+ * `skipped: true` reset response.
+ */
+export async function resetManagedEditorDaemonFromSource(
+  daemon: ManagedEditorDaemon,
+  signal?: AbortSignal,
+): Promise<{ version: number; skipped: boolean }> {
+  if (signal?.aborted) throw new Error('OpenPencil managed daemon reset was cancelled')
+  const timeout = AbortSignal.timeout(RESET_TIMEOUT_MS)
+  const requestSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
+  let response: Response
+  try {
+    response = await fetch(`${daemon.baseUrl}/api/mcp/sync-reset`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: '{}',
+      signal: requestSignal,
+    })
+  } catch {
+    if (signal?.aborted) throw new Error('OpenPencil managed daemon reset was cancelled')
+    if (timeout.aborted) throw new Error('OpenPencil managed daemon reset timed out')
+    throw new Error('OpenPencil managed daemon reset request failed')
+  }
+  let text: string
+  try {
+    text = await response.text()
+  } catch {
+    if (signal?.aborted) throw new Error('OpenPencil managed daemon reset was cancelled')
+    if (timeout.aborted) throw new Error('OpenPencil managed daemon reset timed out')
+    throw new Error('OpenPencil managed daemon reset response failed')
+  }
+  if (Buffer.byteLength(text) > MAX_RESET_RESPONSE_BYTES) {
+    throw new Error('OpenPencil managed daemon reset response exceeded its size limit')
+  }
+  if (response.status !== 200) {
+    throw new Error(`OpenPencil managed daemon reset failed (${response.status})`)
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    throw new Error('OpenPencil managed daemon reset returned invalid JSON')
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('OpenPencil managed daemon reset returned an invalid response')
+  }
+  const result = value as Record<string, unknown>
+  if (
+    result.ok !== true
+    || (result.skipped !== undefined && typeof result.skipped !== 'boolean')
+    || typeof result.version !== 'number'
+    || !Number.isSafeInteger(result.version)
+    || result.version < 0
+  ) {
+    throw new Error('OpenPencil managed daemon did not accept its initial reset')
+  }
+  return { version: result.version, skipped: result.skipped === true }
 }
 
 /** Read an authoritative bounded snapshot without exposing daemon credentials. */

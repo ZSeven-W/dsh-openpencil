@@ -113,6 +113,7 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
     assert.deepEqual([...registeredTools[6].parameters.required].sort(), ['draftId', 'tool'])
     assert.deepEqual([...registeredTools[7].parameters.required].sort(), ['draftId'])
     assert.deepEqual([...registeredTools[8].parameters.required].sort(), ['draftId', 'kind'])
+    assert.equal(typeof registeredTools[8].output.presentationMeta, 'function')
     assert.deepEqual([...registeredTools[9].parameters.required].sort(), ['draftId'])
     assert.deepEqual([...registeredTools[10].parameters.required].sort(), ['draftId'])
     assert.equal(typeof registeredTools[9].output.presentationMeta, 'function')

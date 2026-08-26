@@ -8,18 +8,6 @@ export const DEFAULT_BUNDLE_PATH = resolve(
   root,
   'vendor/openpencil/crates/op-cli/assets/skill-bundle.json',
 )
-export const DEFAULT_FORM_SKILL_PATH = resolve(
-  root,
-  'vendor/openpencil/crates/op-ai-skills/skills/domains/form-ui.md',
-)
-export const DEFAULT_COMPONENT_SKILL_PATH = resolve(
-  root,
-  'vendor/openpencil/crates/op-ai-skills/skills/phases/generation/jian-components.md',
-)
-export const DEFAULT_ANTI_SLOP_SKILL_PATH = resolve(
-  root,
-  'vendor/openpencil/crates/op-ai-skills/skills/phases/generation/anti-slop.md',
-)
 export const DEFAULT_OUTPUT_PATH = resolve(root, 'lib/assets/openpencil-design/SKILL.md')
 
 const UPSTREAM_SKILL_KEY = 'skills/openpencil-design/SKILL.md'
@@ -60,189 +48,49 @@ function validateSingleHeadings(markdown) {
   }
 }
 
-function section(markdown, startHeading, endHeading) {
-  const start = markdown.indexOf(`${startHeading}\n`)
-  const end = markdown.indexOf(`${endHeading}\n`, start + startHeading.length)
-  if (start < 0 || end < 0 || end <= start) {
-    fail(`cannot extract ${startHeading} before ${endHeading}`)
-  }
-  return markdown.slice(start, end).trimEnd()
-}
-
-function adaptSchema(schema) {
-  const nativeTypes = 'frame|rectangle|text|ellipse|line|polygon|path|image|icon_font|group|ref|text_input|text_area|select|switch|checkbox|slider|number_input|progress|tabs|radio_group'
-  const withNativeTypes = schema.replace(
-    'frame|rectangle|text|ellipse|line|polygon|path|image|icon_font|group|ref',
-    nativeTypes,
-  )
-  if (withNativeTypes === schema) fail('upstream PenNode type union sentinel drifted')
-  // Locate boundaries after expanding the type union; offsets from the
-  // original string are no longer valid once the replacement grows it.
-  const iconStart = withNativeTypes.indexOf('### Icons — Two Options\n')
-  const imageStart = withNativeTypes.indexOf('### Image\n', iconStart)
-  if (iconStart < 0 || imageStart < 0) fail('upstream PenNode schema icon/image boundaries drifted')
-
-  const icons = `### Icons
-
-Use \`icon_font\` with a real lowercase kebab-case Lucide glyph. It renders directly in the DSH-managed build and does not need a second resolver pass.
-
-\`\`\`json
-{ "type": "icon_font", "name": "Lock Icon", "iconFontName": "lock",
-  "width": 20, "height": 20,
-  "fill": [{ "type": "solid", "color": "#6B7280" }] }
-\`\`\`
-
-The field is \`iconFontName\`, not \`iconName\` or \`icon\`. Never substitute emoji, initials, or text characters for interface icons.`
-
-  return `${withNativeTypes.slice(0, iconStart)}${icons}\n\n${withNativeTypes.slice(imageStart)}`
-    .replace(
-      'AI image placeholders (resolved by `design:refine`):',
-      'AI image placeholders (only when the managed resolver is available):',
-    )
-}
-
-function commonPatterns() {
-  return `## Common Patterns
-
-These retain the upstream Navbar, Hero, Feature Card, Form Input, and Footer patterns, but express them as the sandboxed QuickJS accepted by \`openpencil_pipeline_batch({script})\` (and by the compatibility \`openpencil_new\` fast path). Within one script, capture every \`I()\` return value and pass that binding as the next parent. In a later semantic batch, adding children to an existing shell may use the exact quoted node id returned by the previous batch/layout result. Never use a quoted name or an invented id.
-
-### Navbar
-
-\`\`\`js
-const nav = I(root, { type: "frame", role: "navbar", width: "fill_container", height: 64, layout: "horizontal", padding: [0, 24], justifyContent: "space_between", alignItems: "center", fill: [{ type: "solid", color: "#FFFDF8" }] });
-I(nav, { type: "text", content: "Northstar", fontFamily: "Space Grotesk", fontSize: 20, fontWeight: 700, lineHeight: 1.2, fill: [{ type: "solid", color: "#17221B" }] });
-const action = I(nav, { type: "frame", role: "button", width: 116, height: 44, layout: "horizontal", justifyContent: "center", alignItems: "center", cornerRadius: 12, fill: [{ type: "solid", color: "#D45D3F" }] });
-I(action, { type: "text", content: "Start project", fontFamily: "Inter", fontSize: 14, fontWeight: 650, lineHeight: 1.3, fill: [{ type: "solid", color: "#FFFFFF" }] });
-\`\`\`
-
-### Hero
-
-\`\`\`js
-const hero = I(root, { type: "frame", role: "hero", width: "fill_container", height: "fit_content", layout: "vertical", padding: [72, 64], gap: 20, alignItems: "start", fill: [{ type: "linear_gradient", angle: 125, stops: [{ offset: 0, color: "#F7F1E7" }, { offset: 1, color: "#E8EFE8" }] }] });
-I(hero, { type: "text", role: "heading", content: "Ideas deserve a point of view", width: 720, textGrowth: "fixed-width", fontFamily: "Space Grotesk", fontSize: 52, fontWeight: 720, lineHeight: 1.08, letterSpacing: -1.2, fill: [{ type: "solid", color: "#17221B" }] });
-I(hero, { type: "text", role: "body-text", content: "A deliberate system for turning a rough brief into a memorable interface.", width: 560, textGrowth: "fixed-width", fontFamily: "Inter", fontSize: 17, fontWeight: 400, lineHeight: 1.55, fill: [{ type: "solid", color: "#526057" }] });
-\`\`\`
-
-### Feature Card
-
-\`\`\`js
-const card = I(grid, { type: "frame", role: "feature-card", width: "fill_container", height: "fit_content", layout: "vertical", padding: 24, gap: 14, cornerRadius: 16, fill: [{ type: "solid", color: "#FFFDF8" }], stroke: { thickness: 1, fill: [{ type: "solid", color: "#DDE3DC" }] }, effects: [{ type: "shadow", offsetX: 0, offsetY: 8, blur: 24, spread: -8, color: "#17221B1A" }] });
-I(card, { type: "icon_font", iconFontName: "sparkles", width: 24, height: 24, fill: [{ type: "solid", color: "#D45D3F" }] });
-I(card, { type: "text", content: "One signature moment", width: "fill_container", textGrowth: "fixed-width", fontFamily: "Space Grotesk", fontSize: 20, fontWeight: 650, lineHeight: 1.25, fill: [{ type: "solid", color: "#17221B" }] });
-\`\`\`
-
-### Form Input
-
-Use native leaves, not rectangle/text imitations. In a stacked form every control is full width: single-line \`text_input\` and \`select\` controls are 44–52 px high, while a multiline \`text_area\` receives an intentional 96–160 px height. Design-system fill, stroke, and corner radius are always explicit.
-
-\`\`\`js
-const form = I(root, { type: "frame", name: "Sign in form", width: "fill_container", height: "fit_content", layout: "vertical", gap: 16 });
-I(form, { type: "text_input", name: "Email", value: "", placeholder: "name@studio.com", leadingIcon: "mail", width: "fill_container", height: 48, fill: [{ type: "solid", color: "#FFFDF8" }], stroke: { thickness: 1, fill: [{ type: "solid", color: "#C8D1C9" }] }, cornerRadius: 12 });
-I(form, { type: "text_input", name: "Password", value: "", placeholder: "Enter your password", secure: true, leadingIcon: "lock", trailingIcon: "eye", width: "fill_container", height: 48, fill: [{ type: "solid", color: "#FFFDF8" }], stroke: { thickness: 1, fill: [{ type: "solid", color: "#C8D1C9" }] }, cornerRadius: 12 });
-I(form, { type: "checkbox", label: "Remember this device", checked: false, width: "fill_container", height: 44, fill: [{ type: "solid", color: "#D45D3F" }], stroke: { thickness: 1, fill: [{ type: "solid", color: "#9EAAA0" }] }, cornerRadius: 6 });
-\`\`\`
-
-For a known component from an available kit, instantiate it instead of redrawing it: \`const submit = K(availableKitId, form, { width: "fill_container", height: 48 });\`. \`availableKitId\` must be a real id supplied by the editor/task context; never invent one. If no kit id is known, build with supported native nodes and semantic \`I()\` calls.
-
-### Footer
-
-\`\`\`js
-const footer = I(root, { type: "frame", role: "footer", width: "fill_container", height: "fit_content", layout: "horizontal", padding: [40, 64], gap: 64, justifyContent: "space_between", fill: [{ type: "solid", color: "#17221B" }] });
-I(footer, { type: "text", content: "Northstar — built with intention.", fontFamily: "Inter", fontSize: 14, lineHeight: 1.5, fill: [{ type: "solid", color: "#DCE5DD" }] });
-\`\`\``
-}
-
-function adaptDesignPrinciples(principles) {
-  const upstream = 'CJK: use `"Noto Sans SC/JP/KR"`, lineHeight >= 1.3, letterSpacing: 0 always.'
-  const portable = 'CJK: default to `"system-ui"` for a portable DSH document, with lineHeight >= 1.3 and letterSpacing: 0. Use Noto Sans, PingFang, Microsoft YaHei, or another named CJK family only when the editor context or user confirms it is installed.'
-  if (!principles.includes(upstream)) fail('upstream CJK typography sentinel drifted')
-  return principles.replace(upstream, portable)
-}
-
-function commonMistakes() {
-  return `## Common Mistakes
-
-| Mistake | Fix |
-|---------|-----|
-| Setting x/y inside layout container | Remove x/y — engine auto-positions |
-| Cards with different width strategies | All siblings use the same sizing strategy |
-| \`fill_container\` child in \`fit_content\` parent | Use fixed width or switch the parent to \`fill_container\` |
-| Pure black text \`#000000\` | Use \`#111111\` or a palette-specific near-black |
-| Heavy drop shadows | Use subtle, palette-tinted elevation |
-| Emoji, initials, or text as icons | Use \`icon_font\` with a real glyph or a known kit component |
-| Lorem ipsum placeholder | Write realistic, concise copy |
-| Fixed height on text | Use \`textGrowth: "fixed-width"\` instead |
-| Unverified named font for CJK | Default to \`system-ui\`; use Noto/PingFang/YaHei only when availability is confirmed |
-| Negative letter spacing on CJK | Keep it at zero |
-| Rectangle/text lookalike input | Emit native \`text_input\`, \`text_area\`, \`select\`, \`switch\`, or \`checkbox\` |
-| Native control with implicit styling or size | Set intentional width/height plus explicit \`fill\`, \`stroke\`, and \`cornerRadius\` |
-| Password input without secure entry | Set \`secure: true\` on the native \`text_input\` |
-| Generic initial badge + white card + saturated CTA | Choose a named visual concept and one signature moment before writing nodes |
-| Expecting finalization to make a weak design attractive | Fix typography, sizing, palette, composition, and iconography in the script itself |`
-}
-
-function dshPrefix() {
+function thinDshAdapter() {
   return `---
 name: openpencil-design
-description: Design production-quality OpenPencil .op interfaces in DSH with the complete native openpencil_pipeline workflow, iterative visual verification, and atomic publication.
+description: Fast DSH adapter for native OpenPencil generation with a live canvas, substantial batches, visual verification, and atomic publication.
 ---
 
 # OpenPencil Design in DSH
 
-Load this skill before beginning a new OpenPencil design. The pipeline begin result includes OpenPencil's complete native design-agent prompt; that prompt is the authoritative, version-matched design contract and must be followed in full.
+This is a thin host adapter, not a second design manual. The compact result of \`openpencil_pipeline_begin\` is the authoritative run contract. It is intentionally small so ordinary design work can begin without injecting a second native manual.
 
-## DSH Workflow
+## Fast Default Path
 
-1. Choose a new workspace-relative \`.op\` filename and call \`openpencil_pipeline_begin({path, brief})\`. It validates Workspace Write and the absent local target but keeps all bytes private. Never put a path, URL, import, export, or spawned-agent request into native draft context.
-2. Read the returned \`designAgentPrompt\`, \`editorState\`, \`styleGuideTags\`, and \`variables\`. Follow the native prompt in full. Use \`openpencil_pipeline_context\` to resolve the correct product guideline, visual style, UI kits/components, and variables. On a blank document, apply one matching built-in design system before visual nodes when available; otherwise configure a compact draft-local token/theme map with the allowlisted \`set_variables\` / \`set_themes\` calls. Re-read variables and the active theme before creating the skeleton.
-3. Translate the brief and resolved native context into one explicit **style fingerprint**: named visual concept, heading/body font pairing, neutral and accent palette, radius scale, elevation treatment, density, and one signature visual moment.
-4. Call \`openpencil_pipeline_batch({script})\` first with only the fixed-size root and empty semantic section shells. Inside sandboxed QuickJS, use \`I(null, node)\`, capture every returned binding, and pass it as the parent of later \`I(parent, node)\` calls. \`K(kitId, parent, overrides)\` is only for a real id returned by context. Do not run \`I\` or \`K\` in DSH's outer code runtime.
-5. Fill one semantic section per subsequent script batch; keep each batch small enough to diagnose (normally at most 25 operations). Use \`I("<existing-shell-id>", node)\` only with the exact id returned by the prior batch/layout result; descendants created in the same script still use captured bindings. Use canonical \`layout\`, \`gap\`, \`padding\`, \`justifyContent\`, \`alignItems\`, \`cornerRadius\`, \`fill\`, \`stroke\`, and \`effects\`. Every batch forces post-processing and returns native quality plus resolved layout; repair its diagnostics immediately with another \`script\` or \`operations\` batch.
-6. Do not design blind. Two intermediate visual checkpoints are mandatory: (a) immediately after the signature visual + headline establish the composition, and (b) after the primary form/task + CTA are present. At each checkpoint call \`openpencil_pipeline_inspect(kind:"screenshot")\` with the root, open the returned safe cache path with \`read_image\`, judge the actual pixels, and repair visible composition, spacing, typography, control, icon, and contrast defects before adding more sections. These previews are model-requested visual inspections, not automatic vision.
-7. Use \`openpencil_pipeline_inspect(kind:"layout")\` and \`kind:"quality"\` before finishing. Confirm every shell is populated, content is complete, layout issues and blocking lint are empty, variables resolve, and the composition meets the native prompt rather than merely passing structural checks. Full layout trees are intentionally on-demand; successful batch results carry only compact layout diagnostics to keep the DSH loop fast.
-8. Call \`openpencil_pipeline_finish\` for the first finalize phase. The tool refuses to finalize if no root preview was taken. Native finalization, composite quality, blocking lint, and layout then run while the target is still absent; informational lint remains visible but is not a publication blocker. If any advisory or diagnostic is returned, keep iterating. If native quality reports intentional image slots and image resolution is available, call the allowlisted \`openpencil_pipeline_context(tool:"enrich_images")\` with only bounded \`timeout_seconds\`/\`root_ids\`, then finalize and inspect the changed version again.
-9. Once the finalized version is clean, take a distinct post-final \`openpencil_pipeline_inspect(kind:"screenshot")\`, open it with \`read_image\`, and judge clipping, overflow, hierarchy, balance, spacing, typography, control proportions, iconography, contrast, and text legibility. Correct every visible defect, then finalize and take a new screenshot because any mutation invalidates the old visual proof. An intermediate screenshot can never satisfy this post-final gate, even when finalization is a no-op.
-10. Call \`openpencil_pipeline_finish\` again only after the exact current finalized version has a visually reviewed screenshot. DSH then applies its JS quality gate, atomically creates the target with \`createIfAbsent\`, and returns one publication presentation that pairs that exact final PNG with the editable document grant and an explicit Edit canvas action. It requests editor auto-open only when the sidebar surface is idle. This remains true through nested PTC/Code Mode hydration. Do not call \`openpencil_render\` merely to recreate the final card. If the user explicitly requests another generated-artifact render, pass \`editable:true, autoOpen:true\` so the preview never loses its sidebar action. On cancellation call \`openpencil_pipeline_abort\`; session/plugin disposal also aborts unpublished drafts.
+1. Start immediately. Choose a new workspace-relative \`.op\` path and call \`openpencil_pipeline_begin({path, brief})\` once. Do not run a shell preflight, create an eight-item task list, spawn helper agents, or inspect plugin/runtime source for an ordinary design request. The live canvas opens from this result; continue building while the user watches it.
+2. Resolve platform from explicit user language. An unqualified page, homepage, dashboard, form, or screen defaults to **web/desktop**. Use a mobile canvas only when the request explicitly says \`mobile\`, \`phone\`, \`iOS\`, \`Android\`, \`移动\`, or \`手机\`.
+3. Preserve the complete begin result as one compact authoritative run contract. Its \`canvas\` and \`buildContract\` fields contain the executable, runtime-matched node and QuickJS rules needed for the first batch. Do not re-read fields already returned by begin, and do not fetch variables, schema, or the full native prompt as a ritual. Only when a genuinely missing named guideline/kit is required, or the user explicitly asks for one, make one targeted \`openpencil_pipeline_context\` call and consume it once.
+4. Make the first \`openpencil_pipeline_batch({script})\` a strict fast-live-canvas checkpoint: create exactly the fixed-size root specified by \`canvas\` plus **4–8 empty named top-level frame shells** directly under it. Use at most **10 \`I(...)\` calls total**. Do not create text, icons, images, paths, controls, components, nested frames, inline children, or any other content, and do not use \`K(...)\` or \`G(...)\`. Return immediately after the empty shells appear; populate them in later batches. The wrapper supplies and verifies the authoritative canvas width. A normal page should still take about **2–4 substantial batches**: fast skeleton, primary content, optional secondary content, and concrete repair. Do not split every card or label into its own batch.
+5. After primary composition, always call \`openpencil_pipeline_inspect({kind:"screenshot"})\` so the user receives an exact PNG preview. Only when the current model supports image input, open it with \`read_image\` and repair visible defects. If one call explicitly reports that image input is unsupported, do not retry and do not inspect source or schema; continue with native quality/finalize gates and state honestly that model visual review was unavailable. Use numeric inspection only for a concrete diagnostic.
+6. Call \`openpencil_pipeline_finish\` to finalize, then always generate its required distinct post-final screenshot user preview. Apply the same optional \`read_image\` rule. A repair requires another finalize and fresh screenshot; otherwise finish again for atomic \`createIfAbsent\` publication.
+7. On cancellation, call \`openpencil_pipeline_abort\`. Do not create a second \`openpencil_render\` card for a pipeline result.
 
-\`openpencil_new\` remains only as a compatibility fast path when the user explicitly asks for a simple one-shot draft. It does not provide the complete context → iterative batches → post-final screenshot gate above and is not the default for quality-sensitive design work.
+## Native Context Is Authoritative
 
-OpenPencil's post-processing/finalization repairs deterministic structural and layout defects. **It is not an aesthetic generator**: it will not invent a visual concept, fix generic typography, size controls intentionally, choose brand colors, or replace fake icons. Those decisions must already be present in the iterative design batches and verified in the post-final screenshot.
+Follow the begin \`buildContract\` and native schema exactly. They provide runtime-matched node and QuickJS rules without the full native manual. Do not invent fonts, themes, platforms, or requirements; the user's brief and current native contract win.
 
-## Fast, Evidence-First Execution
+## Substantial Batch Rules
 
-- Call \`openpencil_pipeline_begin\` directly. It already validates Workspace Write, the parent directory, the \`.op\` extension, and target absence; do not run shell preflights.
-- In PTC/Code Mode, invoke every native tool — including skill loading, task-list updates, pipeline tools, and \`read_image\` — from inside one \`run_code\` program. Do not first attempt the same tool directly. Preserve the first begin result; if a composite program selected only part of it, call pipeline context \`get_design_agent_prompt\` with no arguments to recover the stored brief instead of calling begin again.
-- The begin result already contains the matched native prompt, editor state, style tags, and variables. Normally use only three additional context calls before the skeleton: one product guideline, one \`get_style_guide({tags:[...], platform:"mobile"|"webapp"|"landing-page"|"slides"})\`, and one bounded \`list_ui_kits\` query. Do not fetch the same context twice.
-- Treat the skill, begin result, and native tool results as authoritative. Do not inspect plugin/vendor/runtime source, generated assets, font directories, or lint implementation during an ordinary design run. A tool failure should be reported through its bounded diagnostic and retried only when the contract says it is retryable.
-- Successful batch results deliberately return bindings, native quality, and compact layout diagnostics rather than the whole layout tree. Request full layout only when a diagnostic needs geometry; use the mandatory PNG checkpoints to judge appearance.
-- Repair concrete diagnostics, but do not optimize against informational lint heuristics or reverse-engineer their detector. Informational lint is visible evidence, not a publication blocker.
+- \`script\` runs in the pipeline's sandboxed QuickJS, not in DSH's outer code runtime. Create the root with \`I(null, node)\`, capture every \`I()\` return value, and pass that binding as the parent of descendants created in the same script.
+- Use \`K(kitId, parent, overrides)\` only with a real kit id supplied by native context. In later batches, refer to an existing shell only by the exact quoted node id returned by the pipeline; never invent an id or use a display name as an id.
+- \`padding\` accepts only a number, \`[vertical, horizontal]\`, or \`[top, right, bottom, left]\`; never pass a padding object. Native control \`leadingIcon\` and \`trailingIcon\` fields accept only glyph-name strings such as \`"mail"\` or \`"eye"\`, never objects or icon nodes.
+- Prefer one coherent script per meaningful page region over many tiny calls. OpenPencil post-processing already runs after every batch. The wrapper returns native batch diagnostics and verifies the root canvas contract without automatically running full quality/layout inspections after every step. Repair concrete failures and move on when it is clean.
+- Do not call full layout, quality, style-guide, variables, or editor-state reads between healthy batches. A screenshot is the useful appearance checkpoint; numeric inspection is for targeted debugging.
 
-## Style Fingerprint and Anti-Slop
+## Live Canvas and Visual Proof
 
-- Name the direction before creating nodes (for example, “warm editorial field notes”, not “modern clean UI”). Make the palette, typography, radii, elevation, and density express that direction.
-- Avoid the repeated initial-letter logo, floating white form card, bright purple/blue CTA, and evenly stacked generic modules unless the brief asks for them.
-- Use at most two saturated colors, real product copy, strong negative space, a clear type hierarchy, and one distinctive but restrained visual moment.
-- For CJK, default to OpenPencil's portable \`system-ui\`, line height at least 1.3, and zero letter spacing. Use a named Noto/PingFang/YaHei family only when the editor context or user confirms it is installed.
-- Use real \`icon_font\` glyphs or a known \`K()\` component. Never use emoji, initials, or Unicode symbols as interface icons.
-- Brand providers use the lazy-loaded brand catalog with both fields present: WeChat is \`{type:"icon_font", iconFontFamily:"simple-icons", iconFontName:"wechat"}\` and Apple is \`{type:"icon_font", iconFontFamily:"simple-icons", iconFontName:"apple"}\`. Putting \`simple-icons:…\` entirely in \`iconFontName\`, or using Lucide's fruit \`apple\`, renders the wrong glyph. An equivalent authored SVG \`path\` must carry \`iconId:"simple-icons:wechat"\` or \`iconId:"simple-icons:apple"\` so diagnostics can verify its identity.
+The sidebar canvas should open at begin and stay attached to the same private draft, so each batch becomes visible without waiting for publication. Do not stop to narrate internal planning while the canvas is empty. Create the skeleton first, then keep it moving.
 
-## Native Interactive Controls
+The live canvas is not model vision. Always generate draft and post-final PNG user previews. When image input is supported, check their hierarchy, clipping, spacing, typography, controls, icons, contrast, image treatment, and legibility; otherwise follow the non-retry rule above.
 
-New designs must emit first-class \`text_input\`, \`text_area\`, \`select\`, \`switch\`, \`checkbox\`, \`slider\`, \`number_input\`, \`progress\`, \`tabs\`, and \`radio_group\` nodes. Do not draw frame/rectangle/text lookalikes.
+## Publication Gate
 
-- Every native control declares intentional width and height plus explicit design-system \`fill\`, \`stroke: { thickness, fill: [...] }\`, and \`cornerRadius\`.
-- Every stacked \`text_input\` and \`select\` uses \`width: "fill_container"\` and an explicit 44–52 px height (normally 48). A multiline \`text_area\` is also full width but uses an intentional 96–160 px height.
-- Text inputs/areas include \`value\` and an intentional \`placeholder\`; selects/radio groups include \`options\` and \`value\`; switches/checkboxes include explicit \`checked\`.
-- A password \`text_input\` explicitly sets \`secure: true\`; a trailing eye glyph is presentation, not secure-entry semantics.
-- Buttons are 44–52 px high. Paired controls are true twins: same dimensions, radius, and icon size.
+\`openpencil_pipeline_finish\` owns native finalize, lint, layout, freshness, and atomic publication. Its gate is intentionally two-phase: finalize, always generate a new user screenshot, then finish again; visually inspect only when supported. Any mutation invalidates that proof. Intentional \`emptyShells\` hints such as spacers/dividers remain observational and do not alone block publication; every other native diagnostic still blocks.
 
-## Minimal Executable Shape
-
-\`\`\`js
-const root = I(null, { type: "frame", name: "Account", width: 390, height: 844, layout: "vertical", gap: 24, padding: 20, fill: [{ type: "solid", color: "#F7F1E7" }] });
-const form = I(root, { type: "frame", width: "fill_container", height: "fit_content", layout: "vertical", gap: 16 });
-I(form, { type: "text_input", value: "", placeholder: "name@studio.com", leadingIcon: "mail", width: "fill_container", height: 48, fill: [{ type: "solid", color: "#FFFDF8" }], stroke: { thickness: 1, fill: [{ type: "solid", color: "#C8D1C9" }] }, cornerRadius: 12 });
-\`\`\`
+\`openpencil_new\` remains a compatibility path only when the user explicitly asks for a simple one-shot draft. Ordinary generated designs use the live pipeline above.
 `
 }
 
@@ -257,20 +105,7 @@ export function createDshDesignSkill(upstreamMarkdown) {
   requireSentinel(upstreamMarkdown, 'No emoji as icons.', 'upstream SKILL.md')
   validateSingleHeadings(upstreamMarkdown)
 
-  const schema = adaptSchema(section(upstreamMarkdown, '## PenNode Schema', '## Semantic Roles'))
-  const roles = section(upstreamMarkdown, '## Semantic Roles', '## Layout Rules')
-  const layout = section(upstreamMarkdown, '## Layout Rules', '## Design Principles')
-  const principles = adaptDesignPrinciples(section(upstreamMarkdown, '## Design Principles', '## Layered Workflow'))
-  const output = [
-    dshPrefix().trimEnd(),
-    schema,
-    roles,
-    layout,
-    principles,
-    commonPatterns(),
-    commonMistakes(),
-    '',
-  ].join('\n\n')
+  const output = `${thinDshAdapter().trimEnd()}\n`
 
   for (const required of [
     'openpencil_pipeline_begin',
@@ -279,25 +114,18 @@ export function createDshDesignSkill(upstreamMarkdown) {
     'openpencil_pipeline_inspect',
     'openpencil_pipeline_finish',
     'openpencil_pipeline_abort',
-    'designAgentPrompt',
     'read_image',
     'createIfAbsent',
     'openpencil_new',
     'sandboxed QuickJS',
     'I(null, node)',
     'K(kitId, parent, overrides)',
-    'style fingerprint',
-    'It is not an aesthetic generator',
-    'type: "text_input"',
-    'width: "fill_container"',
-    'height: 48',
-    '### Form Input',
-    '## PenNode Schema',
-    '## Semantic Roles',
-    '## Layout Rules',
-    '## Design Principles',
-    '## Common Patterns',
-    '## Common Mistakes',
+    'compact authoritative run contract',
+    'buildContract',
+    'web/desktop',
+    '2–4 substantial batches',
+    'live canvas',
+    'post-final',
   ]) requireSentinel(output, required, 'generated DSH skill')
 
   const banned = [
@@ -305,6 +133,8 @@ export function createDshDesignSkill(upstreamMarkdown) {
     /design:refine/i,
     /--post-process/i,
     /Quick Reference.*CLI/i,
+    /set_variables|set_themes/i,
+    /Noto Sans|PingFang|YaHei|system-ui/i,
   ]
   for (const pattern of banned) {
     if (pattern.test(output)) fail(`generated DSH skill retained banned upstream workflow ${pattern}`)
@@ -312,31 +142,8 @@ export function createDshDesignSkill(upstreamMarkdown) {
   return output
 }
 
-function validateAuxiliarySkills({ form, components, antiSlop }) {
-  for (const sentinel of [
-    'Inputs: height 44px',
-    'width="fill_container" in forms',
-    'Buttons: height 44-52px',
-    'NEVER use emoji as icons',
-  ]) requireSentinel(form, sentinel, 'form-ui.md')
-  for (const sentinel of [
-    'Emit the native node directly through `I(parent, {...})`',
-    'Every native control MUST explicitly carry `fill`, `stroke`, and',
-    '`cornerRadius`',
-    '`text_input`, `text_area`',
-  ]) requireSentinel(components, sentinel, 'jian-components.md')
-  for (const sentinel of [
-    'ANTI-SLOP RULES',
-    'Creative Variation',
-    'Typography personality shift',
-  ]) requireSentinel(antiSlop, sentinel, 'anti-slop.md')
-}
-
 export async function buildDesignSkill(options = {}) {
   const bundlePath = resolve(options.bundlePath ?? DEFAULT_BUNDLE_PATH)
-  const formPath = resolve(options.formPath ?? DEFAULT_FORM_SKILL_PATH)
-  const componentPath = resolve(options.componentPath ?? DEFAULT_COMPONENT_SKILL_PATH)
-  const antiSlopPath = resolve(options.antiSlopPath ?? DEFAULT_ANTI_SLOP_SKILL_PATH)
   const outputPath = resolve(options.outputPath ?? DEFAULT_OUTPUT_PATH)
   let bundle
   try {
@@ -349,13 +156,6 @@ export async function buildDesignSkill(options = {}) {
   }
   const upstreamMarkdown = bundle?.files?.[UPSTREAM_SKILL_KEY]
   if (typeof upstreamMarkdown !== 'string') fail(`upstream bundle has no ${UPSTREAM_SKILL_KEY}`)
-
-  const [form, components, antiSlop] = await Promise.all([
-    readFile(formPath, 'utf8'),
-    readFile(componentPath, 'utf8'),
-    readFile(antiSlopPath, 'utf8'),
-  ]).catch(error => fail(`cannot read OpenPencil design contracts: ${error instanceof Error ? error.message : String(error)}`))
-  validateAuxiliarySkills({ form, components, antiSlop })
 
   const content = createDshDesignSkill(upstreamMarkdown)
   await mkdir(dirname(outputPath), { recursive: true })

@@ -18,26 +18,17 @@ import {
   registerOpenPencilDesignSkill,
 } from '../lib/design-skill.js'
 
-test('generated skill retains upstream design knowledge and teaches the complete DSH draft pipeline', async () => {
+test('generated skill is a thin, direct adapter over the authoritative native draft context', async () => {
   const onDisk = await readFile(DEFAULT_OUTPUT_PATH, 'utf8')
   assert.equal(OPENPENCIL_DESIGN_SKILL_CONTENT, onDisk)
   assert.equal(OPENPENCIL_DESIGN_SKILL_NAME, 'openpencil-design')
 
   for (const section of [
-    '## DSH Workflow',
-    '## Style Fingerprint and Anti-Slop',
-    '## Native Interactive Controls',
-    '## PenNode Schema',
-    '## Semantic Roles',
-    '## Layout Rules',
-    '## Design Principles',
-    '## Common Patterns',
-    '### Navbar',
-    '### Hero',
-    '### Feature Card',
-    '### Form Input',
-    '### Footer',
-    '## Common Mistakes',
+    '## Fast Default Path',
+    '## Native Context Is Authoritative',
+    '## Substantial Batch Rules',
+    '## Live Canvas and Visual Proof',
+    '## Publication Gate',
   ]) assert.match(onDisk, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 
   for (const tool of [
@@ -48,39 +39,53 @@ test('generated skill retains upstream design knowledge and teaches the complete
     'openpencil_pipeline_finish',
     'openpencil_pipeline_abort',
   ]) assert.match(onDisk, new RegExp(tool))
-  assert.match(onDisk, /complete native design-agent prompt/i)
-  assert.match(onDisk, /skeleton-first|empty semantic section shells/i)
-  assert.match(onDisk, /one semantic section per subsequent script batch/i)
-  assert.match(onDisk, /Every batch forces post-processing/i)
+  assert.match(onDisk, /compact authoritative run contract/i)
+  assert.match(onDisk, /canvas.*buildContract/is)
+  assert.match(onDisk, /runtime-matched node and QuickJS rules/i)
+  assert.match(onDisk, /Do not re-read fields already returned by begin/i)
+  assert.match(onDisk, /do not fetch variables, schema, or the full native prompt as a ritual/i)
+  assert.doesNotMatch(onDisk, /get_design_agent_prompt/i)
+  assert.match(onDisk, /defaults to \*\*web\/desktop\*\*/i)
+  assert.match(onDisk, /only when the request explicitly says.*mobile.*phone.*iOS.*Android.*移动.*手机/is)
+  assert.match(onDisk, /first.*batch.*4–8 empty named top-level frame shells/is)
+  assert.match(onDisk, /at most \*\*10.*I\(\.\.\.\).*calls total/is)
+  assert.match(onDisk, /Do not create text, icons, images, paths, controls, components, nested frames, inline children/is)
+  assert.match(onDisk, /Return immediately after the empty shells appear; populate them in later batches/i)
+  assert.match(onDisk, /padding.*only a number.*\[vertical, horizontal\].*\[top, right, bottom, left\].*never pass a padding object/is)
+  assert.match(onDisk, /leadingIcon.*trailingIcon.*only glyph-name strings.*never objects or icon nodes/is)
+  assert.match(onDisk, /2–4 substantial batches/i)
+  assert.match(onDisk, /Do not split every card or label into its own batch/i)
+  assert.match(onDisk, /wrapper supplies and verifies the authoritative canvas width/i)
+  assert.match(onDisk, /without automatically running full quality\/layout inspections/i)
+  assert.match(onDisk, /live canvas opens from this result/i)
   assert.match(onDisk, /post-final screenshot/i)
   assert.match(onDisk, /read_image/)
+  assert.match(onDisk, /always call.*inspect.*screenshot.*user receives an exact PNG preview/is)
+  assert.match(onDisk, /Only when the current model supports image input.*read_image/is)
+  assert.match(onDisk, /explicitly reports that image input is unsupported.*do not retry.*do not inspect source or schema/is)
+  assert.match(onDisk, /continue with native quality\/finalize gates.*state honestly that model visual review was unavailable/is)
+  assert.match(onDisk, /Intentional.*emptyShells.*observational.*do not alone block publication/is)
+  assert.match(onDisk, /every other native diagnostic still blocks/i)
   assert.match(onDisk, /createIfAbsent/)
-  assert.match(onDisk, /openpencil_new.*compatibility fast path/is)
-  assert.match(onDisk, /not the default for quality-sensitive design work/i)
+  assert.match(onDisk, /openpencil_new.*compatibility path/is)
   assert.match(onDisk, /sandboxed QuickJS/)
   assert.match(onDisk, /I\(null, node\)/)
   assert.match(onDisk, /K\(kitId, parent, overrides\)/)
-  assert.match(onDisk, /style fingerprint/i)
-  assert.match(onDisk, /not an aesthetic generator/i)
-  assert.match(onDisk, /requests editor auto-open only when.*surface is idle/i)
-  assert.match(onDisk, /any mutation invalidates the old visual proof/i)
-  assert.match(onDisk, /type: "text_input"/)
-  assert.match(onDisk, /text_input.*text_area.*select/s)
-  assert.match(onDisk, /width: "fill_container"/)
-  assert.match(onDisk, /44–52 px/)
-  assert.match(onDisk, /text_area.*96–160 px/s)
-  assert.match(onDisk, /explicit design-system `fill`, `stroke: \{ thickness, fill: \[\.\.\.\] \}`, and `cornerRadius`/)
-  assert.match(onDisk, /icon_font.*real glyph/s)
-  assert.match(onDisk, /\n### Icons\n/)
-  assert.match(onDisk, /Display:\s+40-56px/)
-  assert.match(onDisk, /CJK: default to `"system-ui"`/)
-  assert.match(onDisk, /Use a named Noto\/PingFang\/YaHei family only when.*confirms it is installed/s)
-  assert.doesNotMatch(onDisk, /CJK: use `"Noto Sans SC\/JP\/KR"`/)
-  assert.match(onDisk, /Cards in horizontal row: ALL/)
+  assert.match(onDisk, /gate is intentionally two-phase/i)
+  assert.match(onDisk, /Any mutation invalidates that proof/i)
 
   assert.doesNotMatch(onDisk, /\bop\s+(?:start|insert|design|open|save|page|vars|codegen)/i)
   assert.doesNotMatch(onDisk, /design:refine|--post-process|Quick Reference.*CLI/i)
   assert.doesNotMatch(onDisk, /\bMCP\b|standalone MCP server|path icons will NOT resolve/i)
+  assert.doesNotMatch(onDisk, /set_variables|set_themes/i)
+  assert.doesNotMatch(onDisk, /Noto Sans|PingFang|YaHei|system-ui/i)
+  assert.doesNotMatch(onDisk, /designAgentPrompt/i)
+  assert.doesNotMatch(onDisk, /## PenNode Schema|## Common Patterns|### Navbar|### Form Input/i)
+
+  const bytes = Buffer.byteLength(onDisk, 'utf8')
+  const estimatedTokens = Math.ceil([...onDisk].length / 4)
+  assert.ok(bytes <= 7_500, `thin adapter grew to ${bytes} bytes`)
+  assert.ok(estimatedTokens <= 1_600, `thin adapter grew to about ${estimatedTokens} tokens`)
 })
 
 test('build is deterministic and fails closed when the upstream contract drifts', async () => {
@@ -182,17 +187,23 @@ test('optional skill and system-prompt services register and tear down with thei
       content: OPENPENCIL_DESIGN_SKILL_CONTENT,
     },
   )
-  assert.match(harness.registeredSkills[0].description, /openpencil_pipeline/)
-  assert.match(harness.registeredSkills[0].whenToUse, /login and signup/)
+  assert.match(harness.registeredSkills[0].description, /Fast DSH adapter|live canvas/i)
+  assert.match(harness.registeredSkills[0].whenToUse, /ordinary pages/)
 
   assert.equal(harness.promptSections.length, 1)
   assert.equal(harness.promptSections[0], OPENPENCIL_DESIGN_GUIDANCE_SECTION)
   assert.equal(harness.promptSections[0].name, 'openpencil:design-skill-guidance')
   assert.equal(harness.promptSections[0].order, 130)
-  assert.match(harness.promptSections[0].text(), /load the bundled `openpencil-design` skill/)
+  assert.match(harness.promptSections[0].text(), /load `openpencil-design`/)
   assert.match(harness.promptSections[0].text(), /openpencil_pipeline_begin.*openpencil_pipeline_batch/s)
   assert.match(harness.promptSections[0].text(), /post-final.*screenshot/s)
-  assert.match(harness.promptSections[0].text(), /openpencil_new.*compatibility fast path/s)
+  assert.match(harness.promptSections[0].text(), /authoritative run contract/i)
+  assert.match(harness.promptSections[0].text(), /defaults to web\/desktop/i)
+  assert.match(harness.promptSections[0].text(), /without a task list/i)
+  assert.match(harness.promptSections[0].text(), /first batch.*fixed root plus 4-8 empty named top-level frame shells.*at most 10 I calls.*no text, icon, image, control, or nested content/is)
+  assert.match(harness.promptSections[0].text(), /Always generate one useful draft screenshot.*required distinct post-final screenshot/is)
+  assert.match(harness.promptSections[0].text(), /read_image.*only when the current model supports image input.*unsupported-image error.*do not retry or inspect source/is)
+  assert.doesNotMatch(harness.promptSections[0].text(), /task-list updates|set_variables|set_themes/i)
 
   disposeGuidance()
   disposeSkill()

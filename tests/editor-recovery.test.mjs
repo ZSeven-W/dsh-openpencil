@@ -226,7 +226,10 @@ test('daemon recovery reads a bounded snapshot and restores against the current 
     )
     assert.equal(restored, 13)
     assert.equal(calls.length, 2)
-    assert.equal(calls[0].init.headers.authorization, `Bearer ${token}`)
+    assert.equal(calls[0].init.headers.authorization, undefined)
+    assert.equal(calls[0].init.headers['x-openpencil-token'], undefined)
+    assert.equal(calls[1].init.headers.authorization, undefined)
+    assert.equal(calls[1].init.headers['x-openpencil-token'], undefined)
     assert.deepEqual(JSON.parse(calls[1].init.body), {
       document: { version: '1.0', children: [{ id: 'recovered' }] },
       sourceClientId: 'dsh-openpencil-recovery',

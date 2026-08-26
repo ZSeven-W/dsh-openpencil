@@ -16,13 +16,43 @@ const logPath = process.env.FAKE_EDITOR_LOG
 const mcpDelay = Number(process.env.FAKE_EDITOR_MCP_DELAY_MS || 0)
 const documentDelay = Number(process.env.FAKE_EDITOR_DOCUMENT_DELAY_MS || 0)
 let version = 1
+let resetConsumed = false
 const fileIndex = process.argv.indexOf('--file')
 const sourcePath = process.argv[fileIndex + 1]
 let document = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
+function controllerUsesNoCredentials(req) {
+  return req.headers.authorization === undefined
+    && req.headers['x-openpencil-token'] === undefined
+}
 const server = http.createServer((req, res) => {
+  if (req.url === '/api/mcp/sync-reset' && req.method === 'POST') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
+    if (resetConsumed) {
+      fs.appendFileSync(logPath, JSON.stringify({ event: 'sync-reset', skipped: true, version, authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] }) + '\\n')
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ ok: true, skipped: true, version }))
+      return
+    }
+    document = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
+    version += 1
+    resetConsumed = true
+    fs.appendFileSync(logPath, JSON.stringify({ event: 'sync-reset', skipped: false, version, authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] }) + '\\n')
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ ok: true, version }))
+    return
+  }
   if (req.url === '/api/mcp/document' && req.method === 'GET') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
     const snapshot = JSON.stringify({ document, version })
-    fs.appendFileSync(logPath, JSON.stringify({ event: 'document-read-start' }) + '\\n')
+    fs.appendFileSync(logPath, JSON.stringify({ event: 'document-read-start', authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] }) + '\\n')
     setTimeout(() => {
       res.statusCode = 200
       res.setHeader('content-type', 'application/json')
@@ -50,19 +80,29 @@ const server = http.createServer((req, res) => {
     return
   }
   if (req.url === '/api/mcp/version') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
     res.statusCode = 200
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ version }))
     return
   }
   if (req.url === '/mcp' && req.method === 'POST') {
+    if (!controllerUsesNoCredentials(req)) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false }))
+      return
+    }
     let body = ''
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
       const call = JSON.parse(body)
       const tool = call && call.params && call.params.name
       const args = call && call.params && call.params.arguments
-      fs.appendFileSync(logPath, JSON.stringify({ event: 'mcp-start', tool, args }) + '\\n')
+      fs.appendFileSync(logPath, JSON.stringify({ event: 'mcp-start', tool, args, authorization: req.headers.authorization, token: req.headers['x-openpencil-token'] }) + '\\n')
       setTimeout(() => {
         if (tool === 'update_node' && args && typeof args.id === 'string') {
           const children = Array.isArray(document.children) ? document.children : []
@@ -334,6 +374,153 @@ test('editor peer classifier accepts only loopback network addresses', async () 
     '::ffff:128.0.0.1',
     '::ffff:c000:22c',
   ]) assert.equal(isLoopbackRemoteAddress(address), false, String(address))
+})
+
+test('pipeline begin grant opens the existing draft daemon as a live canvas and close only detaches it', async () => {
+  const harness = await createHarness(0)
+  try {
+    const begun = await harness.controller.designDrafts.begin({
+      ownerSessionId: 'session-live-canvas',
+      target: { id: 'live-canvas-target', label: 'Live canvas' },
+      signal: new AbortController().signal,
+    })
+    const grant = harness.controller.grantForDraft(begun.draftId, 'session-live-canvas')
+    assert.ok(grant)
+    const launchResponse = await harness.request(grant.launchUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'session-live-canvas' }),
+    })
+    assert.equal(launchResponse.status, 200, await launchResponse.clone().text())
+    const launch = await launchResponse.json()
+    assert.equal(launch.liveDraft, true)
+    assert.match(launch.iframeUrl, /^http:\/\/127\.0\.0\.1:\d+\/\?embed=vscode$/)
+    assert.notEqual(launch.token, 'fake-daemon-token-123456789')
+    assert.equal(typeof launch.readyUrl, 'string')
+    assert.equal(typeof launch.closeUrl, 'string')
+    const hosts = await waitForHosts(harness.logPath, 1)
+    assert.equal(hosts.length, 1, 'live launch must reuse the draft daemon instead of spawning another host')
+
+    const liveOrigin = new URL(launch.iframeUrl).origin
+    const blockedBrowserPush = await fetch(`${liveOrigin}/api/mcp/document`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${launch.token}`,
+        'x-openpencil-token': launch.token,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ document: { version: '1.0.0', children: [] }, baseVersion: 2 }),
+    })
+    assert.equal(blockedBrowserPush.status, 403)
+    assert.equal((await blockedBrowserPush.json()).code, 'read-only-live-canvas')
+
+    await harness.controller.designDrafts.call(
+      begun.draftId,
+      'session-live-canvas',
+      'batch_design',
+      { script: 'visible before browser ready' },
+    )
+    const nativeCall = (await readMcpCalls(harness.logPath)).at(-1)
+    assert.equal(nativeCall.tool, 'batch_design')
+    assert.equal(nativeCall.authorization, undefined, 'native MCP calls must not send Authorization')
+    assert.equal(nativeCall.token, undefined, 'native MCP calls must not send X-OpenPencil-Token')
+    const liveRead = await fetch(`${liveOrigin}/api/mcp/document`, {
+      headers: {
+        authorization: `Bearer ${launch.token}`,
+        'x-openpencil-token': launch.token,
+      },
+    })
+    assert.equal(liveRead.status, 200)
+    assert.equal((await liveRead.json()).document.children.at(-1).name, 'Mutation from batch_design')
+    const upstreamRead = JSON.parse((await readFile(harness.logPath, 'utf8')).trim().split('\n').findLast(line => line.includes('"event":"document-read-start"')))
+    assert.equal(upstreamRead.authorization, undefined, 'the proxy must strip browser Authorization before native')
+    assert.equal(upstreamRead.token, undefined, 'the proxy must strip its browser capability before native')
+    const nativeReset = JSON.parse((await readFile(harness.logPath, 'utf8')).trim().split('\n').find(line => line.includes('"event":"sync-reset"') && line.includes('"skipped":false')))
+    assert.equal(nativeReset.authorization, undefined, 'native reset must not send Authorization')
+    assert.equal(nativeReset.token, undefined, 'native reset must not send X-OpenPencil-Token')
+    const ready = await harness.request(launch.readyUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: launch.sessionId }),
+    })
+    assert.equal(ready.status, 200)
+    assert.equal((await ready.json()).attached, true)
+
+    const close = await harness.request(launch.closeUrl, { method: 'DELETE' })
+    assert.equal(close.status, 200)
+    assert.equal((await harness.request(launch.closeUrl, { method: 'DELETE' })).status, 200)
+    assert.equal(isAlive(hosts[0].pid), true, 'closing the sidebar must not stop the Agent draft')
+    await harness.controller.designDrafts.call(
+      begun.draftId,
+      'session-live-canvas',
+      'batch_design',
+      { script: 'continues headless after detach' },
+    )
+    const reopenedResponse = await harness.request(grant.launchUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'session-live-canvas' }),
+    })
+    assert.equal(reopenedResponse.status, 200)
+    const reopened = await reopenedResponse.json()
+    assert.equal(
+      (await readFile(harness.logPath, 'utf8')).split('\n').filter(line => line.includes('"sync-reset"') && line.includes('"skipped":false')).length,
+      1,
+      'reopening must reuse the already-consumed reset',
+    )
+    await harness.controller.designDrafts.abort(begun.draftId, 'session-live-canvas')
+    await waitForExit(hosts[0].pid)
+    const staleReady = await harness.request(reopened.readyUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: reopened.sessionId }),
+    })
+    assert.equal(staleReady.status, 410, 'abort must revoke the old live browser authority')
+    assert.equal((await harness.request(reopened.closeUrl, { method: 'DELETE' })).status, 200)
+    assert.equal((await harness.request(reopened.closeUrl, { method: 'DELETE' })).status, 200)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('publishing a draft revokes its live session while the stale close capability stays idempotent', async () => {
+  const harness = await createHarness(0)
+  try {
+    const begun = await harness.controller.designDrafts.begin({
+      ownerSessionId: 'session-live-publish',
+      target: { id: 'live-publish-target' },
+      signal: new AbortController().signal,
+    })
+    const grant = harness.controller.grantForDraft(begun.draftId, 'session-live-publish')
+    assert.ok(grant)
+    const launchResponse = await harness.request(grant.launchUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'session-live-publish' }),
+    })
+    assert.equal(launchResponse.status, 200)
+    const launch = await launchResponse.json()
+    const [host] = await waitForHosts(harness.logPath, 1)
+
+    const finished = await harness.controller.designDrafts.finish(
+      begun.draftId,
+      'session-live-publish',
+      { requireCurrentScreenshot: false, publish: async () => ({ stored: true }) },
+    )
+    assert.deepEqual(finished.published, { stored: true })
+    await waitForExit(host.pid)
+
+    const staleReady = await harness.request(launch.readyUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: launch.sessionId }),
+    })
+    assert.equal(staleReady.status, 410)
+    assert.equal((await harness.request(launch.closeUrl, { method: 'DELETE' })).status, 200)
+    assert.equal((await harness.request(launch.closeUrl, { method: 'DELETE' })).status, 200)
+  } finally {
+    await harness.cleanup()
+  }
 })
 
 test('managed editor rejects a daemon from a different OpenPencil release and reaps it', async () => {

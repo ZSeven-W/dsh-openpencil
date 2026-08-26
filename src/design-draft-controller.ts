@@ -12,9 +12,12 @@ import {
 } from './mcp-client.js'
 import {
   readManagedEditorDaemon,
+  resetManagedEditorDaemonFromSource,
   startManagedEditorDaemon,
+  startManagedEditorReadOnlyProxy,
   stopManagedEditorDaemon,
   type ManagedEditorDaemon,
+  type ManagedEditorReadOnlyProxy,
 } from './managed-editor-daemon.js'
 import type { EditorRuntime } from './editor-runtime.js'
 
@@ -135,6 +138,18 @@ export interface DesignDraftScreenshot {
   metadata: unknown
 }
 
+/** Browser attachment to the exact daemon that owns an unpublished draft. */
+export interface DesignDraftLiveLaunch {
+  draftId: string
+  target: DesignDraftTarget
+  attachId: string
+  baseUrl: string
+  token: string
+  sourcePath: string
+  documentJson: string
+  version: number
+}
+
 export interface DesignDraftFinishOptions<Published> {
   signal?: AbortSignal
   requireCurrentScreenshot?: boolean
@@ -155,6 +170,7 @@ export interface DesignDraftControllerOptions {
   absoluteMs?: number
   now?: () => number
   runtimeUnavailableMessage?: string
+  onDraftEnded?: (draftId: string, ownerSessionId: string) => void
 }
 
 interface DesignDraftSession {
@@ -173,6 +189,12 @@ interface DesignDraftSession {
   lastScreenshotFinalizedVersion?: number
   finalizedVersion?: number
   publishing: boolean
+  bootstrapResetConsumed: boolean
+  liveAttach?: {
+    id: string
+    ready: boolean
+    proxy: ManagedEditorReadOnlyProxy
+  }
 }
 
 export class DesignDraftVisualInspectionRequiredError extends Error {
@@ -284,6 +306,7 @@ export class DesignDraftController {
   readonly #absoluteMs: number
   readonly #now: () => number
   readonly #runtimeUnavailableMessage: string
+  readonly #onDraftEnded: ((draftId: string, ownerSessionId: string) => void) | undefined
   readonly #drafts = new Map<string, DesignDraftSession>()
   readonly #ownerDraft = new Map<string, string>()
   readonly #pendingBegins = new Map<string, AbortController>()
@@ -299,6 +322,7 @@ export class DesignDraftController {
     this.#absoluteMs = options.absoluteMs ?? DEFAULT_ABSOLUTE_MS
     this.#now = options.now ?? Date.now
     this.#runtimeUnavailableMessage = options.runtimeUnavailableMessage ?? 'OpenPencil editor runtime is unavailable'
+    this.#onDraftEnded = options.onDraftEnded
     if (!Number.isSafeInteger(this.#maxDrafts) || this.#maxDrafts < 1 || this.#maxDrafts > 64) {
       throw new TypeError('OpenPencil draft global limit is invalid')
     }
@@ -367,6 +391,7 @@ export class DesignDraftController {
             closed: false,
             retirement: new AbortController(),
             publishing: false,
+            bootstrapResetConsumed: false,
           }
           this.#drafts.set(session.id, session)
           this.#ownerDraft.set(session.ownerSessionId, session.id)
@@ -529,6 +554,109 @@ export class DesignDraftController {
     if (session === undefined) return false
     if (session.ownerSessionId !== ownerSessionId) throw new Error('OpenPencil draft belongs to a different DSH session')
     await this.#retire(session, true)
+    return true
+  }
+
+  /**
+   * Freeze the current daemon document into its private starter file and
+   * consume the daemon's one-shot sync reset before exposing the iframe. The
+   * browser's later bootstrap reset is therefore an idempotent skipped call,
+   * so subsequent Agent writes never wait on (or race) Web/Wasm startup.
+   */
+  async prepareLiveLaunch(
+    draftId: string,
+    ownerSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<DesignDraftLiveLaunch> {
+    const session = this.#session(draftId, ownerSessionId)
+    return this.#enqueue(session, async () => {
+      const operationSignal = signalFor(session, signal)
+      operationSignal.throwIfAborted()
+      this.#clearLiveAttach(session)
+      const document = await readManagedEditorDaemon(session.daemon, operationSignal)
+      operationSignal.throwIfAborted()
+      // The path is a controller-owned 0700 temp directory and never accepts
+      // caller input. The Web shell's bootstrap reset reads this exact file.
+      await writeFile(session.daemon.sourcePath, document.documentJson, { mode: 0o600 })
+      operationSignal.throwIfAborted()
+      let version = document.version
+      if (!session.bootstrapResetConsumed) {
+        let reset: { version: number; skipped: boolean } | undefined
+        let resetFailure: unknown
+        try {
+          reset = await resetManagedEditorDaemonFromSource(session.daemon, operationSignal)
+        } catch (error) {
+          resetFailure = error
+        }
+
+        let confirmed
+        try {
+          confirmed = await readManagedEditorDaemon(session.daemon, operationSignal)
+        } catch (error) {
+          await this.#retire(session, false)
+          throw sanitizeInternalError(resetFailure ?? error, session)
+        }
+        const exactDocument = confirmed.documentJson === document.documentJson
+        const confirmedCommit = reset === undefined
+          ? confirmed.version > document.version
+          : reset.skipped
+            ? true
+            : reset.version > document.version && confirmed.version >= reset.version
+        if (!exactDocument || !confirmedCommit) {
+          await this.#retire(session, false)
+          throw sanitizeInternalError(
+            resetFailure ?? new Error('OpenPencil managed daemon initial reset could not be confirmed'),
+            session,
+          )
+        }
+        session.bootstrapResetConsumed = true
+        version = confirmed.version
+      }
+      operationSignal.throwIfAborted()
+
+      const attachId = randomBytes(24).toString('base64url')
+      let proxy: ManagedEditorReadOnlyProxy | undefined
+      try {
+        proxy = await startManagedEditorReadOnlyProxy(session.daemon, operationSignal)
+        operationSignal.throwIfAborted()
+        session.liveAttach = { id: attachId, ready: false, proxy }
+        this.#touch(session)
+        return {
+          draftId: session.id,
+          target: { ...session.target },
+          attachId,
+          baseUrl: proxy.baseUrl,
+          token: proxy.token,
+          sourcePath: session.daemon.sourcePath,
+          documentJson: document.documentJson,
+          version,
+        }
+      } catch (error) {
+        proxy?.stop()
+        throw sanitizeInternalError(error, session)
+      }
+    })
+  }
+
+  /** Record that the browser bridge mounted; data safety no longer depends on this edge. */
+  markLiveReady(draftId: string, ownerSessionId: string, attachId: string): boolean {
+    const session = this.#session(draftId, ownerSessionId)
+    const pending = session.liveAttach
+    if (pending === undefined || pending.id !== attachId || pending.ready) return false
+    pending.ready = true
+    this.#touch(session)
+    return true
+  }
+
+  /** Detach a sidebar without retiring the Agent-owned draft daemon. */
+  detachLive(draftId: string, ownerSessionId: string, attachId: string): boolean {
+    if (!DRAFT_ID_PATTERN.test(draftId)) return false
+    validOwner(ownerSessionId)
+    const session = this.#drafts.get(draftId)
+    if (session === undefined || session.closed || session.ownerSessionId !== ownerSessionId) return false
+    if (session.liveAttach?.id !== attachId) return false
+    this.#clearLiveAttach(session)
+    this.#touch(session)
     return true
   }
 
@@ -699,6 +827,7 @@ export class DesignDraftController {
       if (session.closed) return
     }
     if (!session.closed) {
+      this.#clearLiveAttach(session)
       session.closed = true
       this.#removeAuthority(session)
       session.retirement.abort(new Error('OpenPencil draft was retired'))
@@ -709,15 +838,25 @@ export class DesignDraftController {
   }
 
   #removeAuthority(session: DesignDraftSession): void {
-    if (this.#drafts.get(session.id) === session) this.#drafts.delete(session.id)
+    const removed = this.#drafts.get(session.id) === session
+    if (removed) this.#drafts.delete(session.id)
     if (this.#ownerDraft.get(session.ownerSessionId) === session.id) this.#ownerDraft.delete(session.ownerSessionId)
     if (session.timer !== undefined) {
       clearTimeout(session.timer)
       delete session.timer
     }
+    if (removed) {
+      try {
+        this.#onDraftEnded?.(session.id, session.ownerSessionId)
+      } catch {
+        // Ending the daemon authority is primary; host-side UI revocation is
+        // additive and must not turn a committed publication into a failure.
+      }
+    }
   }
 
   async #cleanup(session: DesignDraftSession): Promise<void> {
+    this.#clearLiveAttach(session)
     await stopManagedEditorDaemon(session.daemon).catch(() => {})
     await rm(session.tempRoot, { recursive: true, force: true }).catch(() => {})
   }
@@ -773,6 +912,12 @@ export class DesignDraftController {
       version,
       documentJson,
     }
+  }
+
+  #clearLiveAttach(session: DesignDraftSession): void {
+    if (session.liveAttach === undefined) return
+    session.liveAttach.proxy.stop()
+    delete session.liveAttach
   }
 
   async #serializeLifecycle<Result>(task: () => Promise<Result>): Promise<Result> {

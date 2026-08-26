@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -173,6 +173,14 @@ async function createHarness(options = {}) {
       calls.grant.push({ path, sha256 })
       return undefined
     },
+    grantForDraft(draftId, ownerSessionId) {
+      calls.grant.push({ draftId, ownerSessionId })
+      return {
+        enabled: true,
+        launchUrl: '/_dsh/dsh-openpencil/editor/live/launch',
+        refreshUrl: '/_dsh/dsh-openpencil/editor/live/refresh',
+      }
+    },
   }
   const render = new RenderAccessController(randomBytes(32))
   const controller = createDesignDraftToolController(editorHost, {
@@ -185,7 +193,10 @@ async function createHarness(options = {}) {
     },
     async createDocumentSnapshot(text) {
       calls.snapshot.push(text)
-      if (options.snapshotError !== undefined) throw options.snapshotError
+      if (
+        options.snapshotError !== undefined
+        && calls.snapshot.length > (options.snapshotErrorAfter ?? 0)
+      ) throw options.snapshotError
       return createDocumentSnapshotFromText(text)
     },
   })
@@ -193,7 +204,7 @@ async function createHarness(options = {}) {
   const signal = new AbortController().signal
   const session = { id: 'session-from-exec', header: { cwd: workspaceRoot } }
   const exec = { agent: { id: 'session-from-exec', session }, signal }
-  return { calls, controller, draft, exec, fs, policy, processPath, target, tools, workspaceRoot }
+  return { calls, controller, draft, exec, fs, policy, processPath, render, target, tools, workspaceRoot }
 }
 
 async function begin(harness, brief = 'Design a deliberate mobile account screen') {
@@ -209,22 +220,67 @@ test('pipeline begin derives owner from execution, validates an absent local tar
   assert.deepEqual(harness.draft.beginCalls[0].target, {
     id: String(harness.target.targetKey), label: harness.target.displayPath, kind: 'file',
   })
-  assert.deepEqual(harness.draft.calls.slice(0, 4).map(call => [call.owner, call.tool]), [
-    ['session-from-exec', 'get_design_agent_prompt'],
+  assert.deepEqual(harness.draft.calls.slice(0, 2).map(call => [call.owner, call.tool]), [
     ['session-from-exec', 'get_editor_state'],
     ['session-from-exec', 'get_style_guide_tags'],
-    ['session-from-exec', 'get_variables'],
   ])
-  assert.deepEqual(harness.draft.calls[0].args, {
-    userMessage: 'Design a deliberate mobile account screen', verifyProtocol: 'screenshot',
-  })
   assert.equal(result.published, false)
-  assert.equal(result.designAgentPrompt.prompt, 'complete native prompt')
+  assert.equal(result.platform, 'mobile')
+  assert.deepEqual(result.canvas, {
+    platform: 'mobile', width: 390, seedHeight: 844, finalHeight: 'fit_content',
+    fixedViewport: false, rootCount: 1, rootType: 'frame',
+  })
+  assert.equal(result.buildContract.version, 'openpencil-batch-v2')
+  assert.match(result.buildContract.script.create, /I\(null, node\)/)
+  assert.match(result.buildContract.firstBatch.required.join(' '), /4-8 named top-level frame shells/i)
+  assert.match(result.buildContract.firstBatch.required.join(' '), /no more than 10 I/i)
+  assert.match(result.buildContract.firstBatch.forbidden.join(' '), /text.*icon_font.*image.*controls.*non-frame/is)
+  assert.match(result.buildContract.firstBatch.forbidden.join(' '), /nested content/i)
+  assert.match(result.buildContract.node.container, /padding is only a number.*\[vertical,horizontal\].*\[top,right,bottom,left\].*never an object/i)
+  assert.match(result.buildContract.node.controls, /leadingIcon\/trailingIcon.*only a glyph-name string.*never an object or node/i)
+  assert.match(result.next, /first openpencil_pipeline_batch.*4-8 empty named top-level frame shells.*at most 10 I calls.*no text, icon, image, control, or nested content/is)
+  assert.match(harness.tools.openpencil_pipeline_batch.description, /first script.*4-8 empty named top-level frame shells.*at most 10 I calls/is)
+  assert.match(harness.tools.openpencil_pipeline_batch.parameters.properties.script.description, /First call.*4-8 empty named top-level frame shells.*at most 10 I calls/is)
+  assert.equal(result.liveCanvas, true)
+  assert.equal(result.autoOpenEditor, true)
+  assert.equal(result.document.sha256.length, 64)
+  assert.equal('designAgentPrompt' in result, false)
+  assert.equal(harness.calls.snapshot.length, 1)
   assert.equal(harness.calls.write.length, 0, 'begin must keep the target absent')
   assert.equal(harness.calls.observe[0].observation.kind, 'absent')
   const serialized = JSON.stringify(result)
   assert.doesNotMatch(serialized, /must-not-escape|dsh-openpencil-draft-secret/)
   assert.equal('ownerSessionId' in harness.tools.openpencil_pipeline_begin.parameters.properties, false)
+
+  const routeDetach = harness.render.attachRoute()
+  try {
+    const projected = harness.tools.openpencil_pipeline_begin.output.presentationMeta({}, result)
+    const envelope = projected.$dshOpenPencil
+    assert.equal(envelope.autoOpenEditor, true)
+    assert.equal(envelope.draftId, DRAFT_ID)
+    assert.equal(envelope.liveDraft, true)
+    assert.equal(envelope.editor.enabled, true)
+    assert.equal(envelope.document.path, harness.processPath)
+    assert.deepEqual(harness.calls.grant.at(-1), {
+      draftId: DRAFT_ID,
+      ownerSessionId: 'session-from-exec',
+    })
+  } finally {
+    routeDetach()
+  }
+
+  const webHarness = await createHarness()
+  const webResult = await begin(webHarness, 'Design an ecommerce homepage')
+  assert.equal(webResult.platform, 'web')
+  assert.equal(webResult.canvas.width, 1440)
+  assert.equal(webResult.canvas.seedHeight, 900)
+
+  const explicitHarness = await createHarness()
+  const explicitResult = await begin(explicitHarness, 'Design a 1280×1600 ecommerce homepage')
+  assert.deepEqual(explicitResult.canvas, {
+    platform: 'web', width: 1280, seedHeight: 1600, finalHeight: 1600,
+    fixedViewport: true, rootCount: 1, rootType: 'frame',
+  })
 })
 
 test('pipeline begin refuses read-only, existing, non-op, and non-agent calls before starting a daemon', async () => {
@@ -268,25 +324,41 @@ test('context is allowlisted and recursively rejects path, URL, export, import, 
     arguments: { variables: { accent: { type: 'color', value: '#A9642F' } } },
   }, harness.exec)
   assert.equal(variables.tool, 'set_variables')
-  const prompt = await harness.tools.openpencil_pipeline_context.execute({
-    draftId: DRAFT_ID,
-    tool: 'get_design_agent_prompt',
-    arguments: {},
-  }, harness.exec)
-  assert.equal(prompt.tool, 'get_design_agent_prompt')
-  assert.deepEqual(harness.draft.calls.at(-1).args, {
-    userMessage: 'Design a deliberate mobile account screen',
-    verifyProtocol: 'screenshot',
-  })
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_context.execute({
+      draftId: DRAFT_ID, tool: 'set_variables', arguments: { variables: { accent: { type: 'color', value: '#A9642F' } } },
+    }, harness.exec),
+    /already consumed/,
+  )
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_context.execute({
+      draftId: DRAFT_ID,
+      tool: 'get_design_agent_prompt',
+      arguments: {},
+    }, harness.exec),
+    /must be one of|tool is not allowed/,
+  )
   await assert.rejects(
     harness.tools.openpencil_pipeline_context.execute({
       draftId: DRAFT_ID, tool: 'enrich_images', arguments: { timeout_seconds: 30, prompt: 'escape' },
     }, harness.exec),
     /only accepts timeout_seconds and root_ids/,
   )
+  await harness.tools.openpencil_pipeline_context.execute({
+    draftId: DRAFT_ID, tool: 'get_guidelines', arguments: { topic: 'layout' },
+  }, harness.exec)
+  await harness.tools.openpencil_pipeline_context.execute({
+    draftId: DRAFT_ID, tool: 'get_variables', arguments: {},
+  }, harness.exec)
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_context.execute({
+      draftId: DRAFT_ID, tool: 'list_style_guides', arguments: {},
+    }, harness.exec),
+    /context budget exhausted/,
+  )
 })
 
-test('batch forces post-processing and always returns native quality plus resolved layout feedback', async () => {
+test('batch enforces the begin canvas and avoids automatic full quality/layout round trips', async () => {
   const harness = await createHarness()
   await begin(harness)
   const result = await harness.tools.openpencil_pipeline_batch.execute({
@@ -297,13 +369,46 @@ test('batch forces post-processing and always returns native quality plus resolv
   const batch = harness.draft.calls.find(call => call.tool === 'batch_design')
   assert.equal(batch.args.postProcess, true)
   assert.equal(batch.args.canvasWidth, 390)
-  assert.deepEqual(harness.draft.calls.slice(-2).map(call => call.tool), ['get_design_quality', 'snapshot_layout'])
-  assert.deepEqual(result.quality, CLEAN_QUALITY)
-  assert.deepEqual(result.layoutCheck, { version: harness.draft.version, diagnostics: [] })
+  assert.equal(harness.draft.calls.at(-1).tool, 'batch_design')
+  assert.equal(harness.draft.calls.some(call => call.tool === 'get_design_quality'), false)
+  assert.equal(harness.draft.calls.some(call => call.tool === 'snapshot_layout'), false)
+  assert.equal(result.canvasCheck.valid, true)
+  assert.deepEqual(result.diagnostics, [])
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({ draftId: DRAFT_ID, operations: 'U("root",{})', canvasWidth: 1440 }, harness.exec),
+    /must match the 390px begin canvas contract/,
+  )
   await assert.rejects(
     harness.tools.openpencil_pipeline_batch.execute({ draftId: DRAFT_ID, script: 'I(null,{})', operations: 'U("1",{})' }, harness.exec),
     /exactly one/,
   )
+})
+
+test('an unqualified Web brief cannot silently pass with a phone-width root', async () => {
+  const harness = await createHarness()
+  harness.draft.documentJson = JSON.stringify({
+    version: '1.0.0',
+    children: [{ type: 'frame', id: 'root', width: 390, height: 844, children: [] }],
+  })
+  const begun = await begin(harness, 'Design an ecommerce homepage')
+  assert.equal(begun.canvas.width, 1440)
+  const wrong = await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'const root = I(null, {type:"frame", width:390, height:844});',
+  }, harness.exec)
+  assert.equal(harness.draft.calls.at(-1).args.canvasWidth, 1440)
+  assert.equal(wrong.canvasCheck.valid, false)
+  assert.match(wrong.diagnostics.join(' '), /requires root width 1440px/i)
+
+  harness.draft.documentJson = JSON.stringify({
+    version: '1.0.0',
+    children: [{ type: 'frame', id: 'root', width: 1440, height: 900, children: [] }],
+  })
+  const repaired = await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    operations: 'U("root", {"width":1440})',
+  }, harness.exec)
+  assert.equal(repaired.canvasCheck.valid, true)
 })
 
 test('screenshot inspection tolerates an irrelevant maxDepth and exposes one safe content-addressed cache file', async () => {
@@ -317,9 +422,55 @@ test('screenshot inspection tolerates an irrelevant maxDepth and exposes one saf
   assert.match(result.screenshot.path, /dsh-openpencil\/design-draft-inspections\/[a-f0-9]{64}\.png$/)
   assert.equal(result.screenshot.mimeType, 'image/png')
   assert.equal(result.screenshot.bytes, SAFE_PNG.length)
+  assert.equal(result.screenshot.width, 1)
+  assert.equal(result.screenshot.height, 1)
   assert.equal(harness.draft.screenshotCalls[0].owner, 'session-from-exec')
+  assert.match(result.next, /exact user preview/i)
+  assert.match(result.next, /model supports image input.*read_image/is)
+  assert.match(result.next, /unsupported-image error.*do not retry or inspect source/is)
+  assert.match(harness.tools.openpencil_pipeline_inspect.description, /Screenshot always returns.*user preview/is)
+  assert.match(harness.tools.openpencil_pipeline_finish.description, /read_image only when the current model supports image input/is)
   const serialized = JSON.stringify(result)
   assert.doesNotMatch(serialized, /safe-png-bytes|token|managed-draft|draft\.op/)
+
+  assert.equal(typeof harness.tools.openpencil_pipeline_inspect.output.presentationMeta, 'function')
+  const unavailable = harness.tools.openpencil_pipeline_inspect.output.presentationMeta({}, result)
+  assert.equal('$dshOpenPencil' in unavailable, false)
+
+  const detachRoute = harness.render.attachRoute()
+  try {
+    const projected = harness.tools.openpencil_pipeline_inspect.output.presentationMeta({}, result)
+    const envelope = projected.$dshOpenPencil
+    const expectedFilename = `render-stage-${result.screenshot.sha256}.png`
+    assert.equal(envelope.schemaVersion, 2)
+    assert.equal(envelope.image.path, expectedFilename)
+    assert.equal(envelope.image.width, 1)
+    assert.equal(envelope.image.height, 1)
+    assert.deepEqual(envelope.frames, [envelope.image])
+    assert.match(envelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
+    assert.equal(JSON.stringify(envelope).includes(result.screenshot.path), false)
+
+    const token = decodeURIComponent(envelope.image.previewUrl.split('/').at(-1))
+    const payload = harness.render.verify(token)
+    assert.deepEqual(payload, {
+      v: 2,
+      kind: 'image',
+      filename: expectedFilename,
+      bytes: SAFE_PNG.length,
+      sha256: result.screenshot.sha256,
+    })
+    assert.equal('path' in payload, false, 'signed browser capability must not encode a host cache path')
+    const browserCopy = await readFile(join(
+      process.env.DSH_HOME,
+      'cache',
+      'dsh-openpencil',
+      'renders',
+      expectedFilename,
+    ))
+    assert.deepEqual(browserCopy, SAFE_PNG)
+  } finally {
+    detachRoute()
+  }
 })
 
 test('layout inspection flattens the native layout envelope into one direct tree', async () => {
@@ -353,6 +504,7 @@ test('finish requires an early preview and a distinct post-final screenshot befo
   await harness.tools.openpencil_pipeline_inspect.execute({ draftId: DRAFT_ID, kind: 'screenshot' }, harness.exec)
   const third = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
   assert.equal(third.published, true)
+  assert.equal(third.draftId, DRAFT_ID)
   assert.equal(third.sourceTool, 'openpencil_pipeline_finish')
   assert.equal(third.autoOpenEditor, true)
   assert.equal(third.preview.mimeType, 'image/png')
@@ -360,6 +512,14 @@ test('finish requires an early preview and a distinct post-final screenshot befo
   assert.equal(third.preview.height, 1)
   assert.deepEqual(harness.calls.write[0].intent, { kind: 'createIfAbsent' })
   assert.equal(harness.calls.observe.at(-1).observation.kind, 'present')
+  const routeDetach = harness.render.attachRoute()
+  try {
+    const projected = harness.tools.openpencil_pipeline_finish.output.presentationMeta({}, third)
+    assert.equal(projected.$dshOpenPencil.draftId, DRAFT_ID)
+    assert.equal(projected.$dshOpenPencil.liveDraft, false)
+  } finally {
+    routeDetach()
+  }
   await assert.rejects(
     harness.tools.openpencil_pipeline_abort.execute({ draftId: DRAFT_ID }, harness.exec),
     /does not exist|another DSH agent/,
@@ -374,6 +534,7 @@ test('native diagnostics and the post-screenshot JS gate keep the draft private 
   const nativeResult = await nativeBlocked.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, nativeBlocked.exec)
   assert.equal(nativeResult.stage, 'needs_correction')
   assert.equal(nativeResult.canContinue, true)
+  assert.match(nativeResult.diagnostics.join(' '), /nodeId.*7|ratio.*1\.4/i)
   assert.equal(nativeBlocked.draft.finishCalls, 0)
   assert.equal(nativeBlocked.calls.write.length, 0)
 
@@ -401,7 +562,7 @@ test('native diagnostics and the post-screenshot JS gate keep the draft private 
   const jsBlocked = await createHarness()
   jsBlocked.draft.documentJson = JSON.stringify({
     version: '1.0.0',
-    children: [{ type: 'frame', name: 'Login', children: [{
+    children: [{ type: 'frame', name: 'Login', width: 390, height: 844, children: [{
       type: 'frame', name: 'Form', children: [{ type: 'text_input', height: 20 }],
     }] }],
   })
@@ -414,6 +575,35 @@ test('native diagnostics and the post-screenshot JS gate keep the draft private 
   assert.equal(jsResult.canContinue, true)
   assert.match(jsResult.diagnostics.join(' '), /fill_container|height/i)
   assert.equal(jsBlocked.calls.write.length, 0)
+})
+
+test('empty-shell quality hints remain observable but do not block an otherwise clean publication', async () => {
+  const harness = await createHarness()
+  harness.draft.quality = {
+    ...CLEAN_QUALITY,
+    emptyShells: [
+      { nodeId: 'spacer-1', name: 'Intentional Spacer' },
+      { nodeId: 'divider-1', name: 'Intentional Divider' },
+    ],
+  }
+  await begin(harness)
+
+  const quality = await harness.tools.openpencil_pipeline_inspect.execute({
+    draftId: DRAFT_ID,
+    kind: 'quality',
+  }, harness.exec)
+  assert.match(quality.diagnostics.join(' '), /Intentional Spacer/)
+  assert.match(quality.diagnostics.join(' '), /Intentional Divider/)
+
+  await harness.tools.openpencil_pipeline_inspect.execute({ draftId: DRAFT_ID, kind: 'screenshot' }, harness.exec)
+  const finalized = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(finalized.stage, 'needs_visual_inspection')
+  assert.equal(finalized.diagnostics.length, 0)
+
+  await harness.tools.openpencil_pipeline_inspect.execute({ draftId: DRAFT_ID, kind: 'screenshot' }, harness.exec)
+  const published = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(published.published, true)
+  assert.equal(harness.calls.write.length, 1)
 })
 
 test('publication races retain the draft; explicit abort, owner cleanup, and plugin disposal tear it down', async () => {
@@ -438,7 +628,10 @@ test('publication races retain the draft; explicit abort, owner cleanup, and plu
 })
 
 test('publication prepares presentation artifacts before commit and treats post-commit observation as best effort', async () => {
-  const snapshotBlocked = await createHarness({ snapshotError: new Error('snapshot cache unavailable') })
+  const snapshotBlocked = await createHarness({
+    snapshotError: new Error('snapshot cache unavailable'),
+    snapshotErrorAfter: 1,
+  })
   await begin(snapshotBlocked)
   await snapshotBlocked.tools.openpencil_pipeline_inspect.execute({ draftId: DRAFT_ID, kind: 'screenshot' }, snapshotBlocked.exec)
   await snapshotBlocked.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, snapshotBlocked.exec)

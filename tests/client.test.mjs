@@ -31,6 +31,7 @@ function settled(meta) {
 }
 
 const DOCUMENT_SHA256 = 'a'.repeat(64)
+const SCREENSHOT_SHA256 = 'b'.repeat(64)
 
 function canonicalRenderResult(documentSha256 = DOCUMENT_SHA256, extraContent = []) {
   return {
@@ -83,6 +84,32 @@ function controlledPollTimer() {
         return handle
       },
       cancel(handle) { cancelled.push(handle) },
+    },
+  }
+}
+
+function controlledHydrationRetryTimer() {
+  const scheduled = []
+  const cancelled = []
+  return {
+    scheduled,
+    cancelled,
+    timer: {
+      schedule(callback, delayMs) {
+        const handle = { callback, delayMs, cancelled: false }
+        scheduled.push(handle)
+        return handle
+      },
+      cancel(handle) {
+        handle.cancelled = true
+        cancelled.push(handle)
+      },
+    },
+    runNext() {
+      const handle = scheduled.shift()
+      assert.notEqual(handle, undefined, 'expected a scheduled hydration retry')
+      if (!handle.cancelled) handle.callback()
+      return handle
     },
   }
 }
@@ -173,6 +200,63 @@ test('supports schema v2 and legacy source URL aliases', () => {
   assert.equal(grant.document.path, '/designs/legacy.op')
 })
 
+test('parses live and published pipeline identity for controlled workbench handoff', async () => {
+  const liveGrant = client.presentationGrantOfMeta({
+    $dshOpenPencil: {
+      schemaVersion: 2,
+      document: { url: '/document/live' },
+      editor: { enabled: true, launchUrl: '/editor/live' },
+      draftId: 'd'.repeat(32),
+      liveDraft: true,
+    },
+  })
+  const publishedGrant = client.presentationGrantOfMeta({
+    $dshOpenPencil: {
+      schemaVersion: 2,
+      document: { url: '/document/published' },
+      editor: { enabled: true, launchUrl: '/editor/published' },
+      draftId: 'd'.repeat(32),
+      liveDraft: false,
+    },
+  })
+  assert.equal(liveGrant.draftId, 'd'.repeat(32))
+  assert.equal(liveGrant.liveDraft, true)
+  assert.equal(publishedGrant.liveDraft, false)
+
+  const current = { sessionId: 'session-a', grant: liveGrant }
+  const successor = { sessionId: 'session-a', grant: publishedGrant }
+  assert.equal(client.isPublishedSuccessorOfLiveDraft(current, successor), true)
+  let closes = 0
+  assert.equal(await client.closeLiveDraftForPublishedSuccessor(current, successor, {
+    requestClose: async () => { closes += 1; return true },
+  }), true)
+  assert.equal(closes, 1)
+
+  let registerController
+  const delayedClose = client.closeLiveDraftForPublishedSuccessor(
+    current,
+    successor,
+    undefined,
+    () => new Promise(resolve => { registerController = resolve }),
+  )
+  assert.equal(closes, 1, 'a fast finish waits for the mounted live controller instead of consuming the handoff')
+  registerController({ requestClose: async () => { closes += 1; return true } })
+  assert.equal(await delayedClose, true)
+  assert.equal(closes, 2)
+
+  for (const other of [
+    { ...successor, sessionId: 'session-b' },
+    { ...successor, grant: { ...publishedGrant, draftId: 'e'.repeat(32) } },
+    { ...successor, grant: { ...publishedGrant, liveDraft: true } },
+  ]) {
+    assert.equal(client.isPublishedSuccessorOfLiveDraft(current, other), false)
+    assert.equal(await client.closeLiveDraftForPublishedSuccessor(current, other, {
+      requestClose: async () => { closes += 1; return true },
+    }), false)
+  }
+  assert.equal(closes, 2, 'unrelated automatic opens must never close an occupied workbench')
+})
+
 test('accepts an openpencil_new document-only auto-open grant', () => {
   const grant = client.grantOf(settled({
     $dshOpenPencil: {
@@ -195,7 +279,9 @@ test('accepts an openpencil_new document-only auto-open grant', () => {
   assert.equal(grant.editor.launchUrl, '/editor/launch-token')
   assert.equal(grant.autoOpenEditor, true)
   assert.equal(client.openPencilPresentationTitle('openpencil_new', 'en'), 'OpenPencil design')
+  assert.equal(client.openPencilPresentationTitle('openpencil_pipeline_begin', 'en'), 'OpenPencil design')
   assert.equal(client.openPencilPresentationTitle('openpencil_pipeline_finish', 'en'), 'OpenPencil design')
+  assert.equal(client.openPencilPresentationTitle('openpencil_pipeline_inspect', 'en'), 'OpenPencil render')
   assert.equal(client.openPencilPresentationTitle('openpencil_render', 'en'), 'OpenPencil render')
   assert.equal(client.openPencilPresentationTitle('openpencil_new', 'zh'), 'OpenPencil 设计')
   assert.equal(client.shouldArmLiveAutoOpen(false, 101, 100), true, 'a fast settled live result must still auto-open')
@@ -209,6 +295,56 @@ test('a consumed live auto-open call stays consumed across card remounts', () =>
   assert.equal(client.takeLiveAutoOpenCall(key), true)
   client.rememberLiveAutoOpenCall(key)
   assert.equal(client.takeLiveAutoOpenCall(key), false)
+})
+
+test('live auto-open retries false and rejected hosts, then accepts exactly once', async () => {
+  const key = `session-retry:${Date.now()}`
+  let calls = 0
+  client.rememberLiveAutoOpenCall(key)
+
+  assert.equal(await client.attemptLiveAutoOpenCall(key, () => {
+    calls += 1
+    return false
+  }), false)
+  assert.equal(await client.attemptLiveAutoOpenCall(key, async () => {
+    calls += 1
+    throw new Error('host not mounted')
+  }), false)
+  assert.equal(await client.attemptLiveAutoOpenCall(key, async () => {
+    calls += 1
+    return true
+  }), true)
+
+  client.rememberLiveAutoOpenCall(key)
+  assert.equal(await client.attemptLiveAutoOpenCall(key, () => {
+    calls += 1
+    return true
+  }), false)
+  assert.equal(calls, 3, 'only a true host answer permanently accepts the call')
+})
+
+test('live auto-open suppresses duplicate requests while one host answer is pending', async () => {
+  const key = `session-opening:${Date.now()}`
+  let resolveOpen
+  let calls = 0
+  client.rememberLiveAutoOpenCall(key)
+  const pending = client.attemptLiveAutoOpenCall(key, () => {
+    calls += 1
+    return new Promise(resolve => { resolveOpen = resolve })
+  })
+
+  assert.equal(await client.attemptLiveAutoOpenCall(key, () => {
+    calls += 1
+    return true
+  }), false)
+  assert.equal(calls, 1)
+  resolveOpen(false)
+  assert.equal(await pending, false)
+  assert.equal(await client.attemptLiveAutoOpenCall(key, () => {
+    calls += 1
+    return true
+  }), true)
+  assert.equal(calls, 2)
 })
 
 test('extracts only a valid document fingerprint from one canonical text result', () => {
@@ -227,6 +363,12 @@ test('extracts only a valid document fingerprint from one canonical text result'
     isError: false,
     content: [{ type: 'text', text: ' '.repeat(1024 * 1024 + 1) }],
   }), undefined, 'oversized historical results must be rejected before JSON parsing')
+  const screenshotBlock = {
+    kind: 'tool-result',
+    isError: false,
+    content: [{ type: 'text', text: JSON.stringify({ screenshot: { sha256: SCREENSHOT_SHA256 } }) }],
+  }
+  assert.equal(client.documentSha256FromCanonicalResult(screenshotBlock), SCREENSHOT_SHA256)
 })
 
 test('hydrates a nested render grant with an exact same-origin fingerprint request', async () => {
@@ -279,6 +421,134 @@ test('presentation hydration fails closed on HTTP and malformed response data', 
   assert.equal(await client.requestPresentationGrant(request, () => { throw new Error('bad parser') }, {
     fetcher: async () => ({ ok: true, json: async () => hydratedEnvelope() }),
   }), undefined)
+})
+
+test('presentation hydration retries a transient 404 and stops after success', async () => {
+  const clock = controlledHydrationRetryTimer()
+  let calls = 0
+  const request = {
+    sessionId: 'session-eventual',
+    callId: 'call-eventual',
+    documentSha256: DOCUMENT_SHA256,
+  }
+  const pending = client.requestPresentationGrantWithRetry(
+    request,
+    client.presentationGrantOfMeta,
+    {
+      fetcher: async () => {
+        calls += 1
+        return calls === 1
+          ? { ok: false, json: async () => { throw new Error('must not read') } }
+          : { ok: true, json: async () => hydratedEnvelope() }
+      },
+      timer: clock.timer,
+    },
+  )
+  await flushAsync()
+  assert.equal(calls, 1)
+  assert.deepEqual(clock.scheduled.map(handle => handle.delayMs), [100])
+
+  clock.runNext()
+  const grant = await pending
+  assert.equal(calls, 2)
+  assert.equal(grant.document.url, '/_dsh/dsh-openpencil/document/signed')
+  assert.equal(clock.scheduled.length, 0, 'success must not schedule another retry')
+})
+
+test('presentation hydration exhausts its finite retry budget', async () => {
+  const clock = controlledHydrationRetryTimer()
+  let calls = 0
+  const pending = client.requestPresentationGrantWithRetry({
+    sessionId: 'session-missing',
+    callId: 'call-missing',
+    documentSha256: DOCUMENT_SHA256,
+  }, client.presentationGrantOfMeta, {
+    fetcher: async () => {
+      calls += 1
+      return { ok: false, json: async () => { throw new Error('must not read') } }
+    },
+    timer: clock.timer,
+  })
+
+  const observedDelays = []
+  for (const expectedDelay of [100, 250, 500, 1_000]) {
+    await flushAsync()
+    assert.equal(clock.scheduled.length, 1)
+    observedDelays.push(clock.runNext().delayMs)
+    assert.equal(observedDelays.at(-1), expectedDelay)
+  }
+  assert.equal(await pending, undefined)
+  assert.equal(calls, 5, 'one initial exchange plus four retries')
+  assert.deepEqual(observedDelays, [100, 250, 500, 1_000])
+  assert.equal(clock.scheduled.length, 0, 'exhaustion must stop polling')
+})
+
+test('unmount abort cancels a scheduled presentation hydration retry', async () => {
+  const clock = controlledHydrationRetryTimer()
+  const controller = new AbortController()
+  let calls = 0
+  const pending = client.requestPresentationGrantWithRetry({
+    sessionId: 'session-unmount',
+    callId: 'call-unmount',
+    documentSha256: DOCUMENT_SHA256,
+  }, client.presentationGrantOfMeta, {
+    fetcher: async () => {
+      calls += 1
+      return { ok: false, json: async () => { throw new Error('must not read') } }
+    },
+    signal: controller.signal,
+    timer: clock.timer,
+  })
+  await flushAsync()
+  assert.equal(clock.scheduled.length, 1)
+
+  controller.abort()
+  assert.equal(await pending, undefined)
+  assert.equal(clock.cancelled.length, 1)
+  clock.runNext()
+  await flushAsync()
+  assert.equal(calls, 1, 'an unmounted card must not issue another exchange')
+})
+
+test('changing hydration key aborts and cancels the old retry', async () => {
+  const clock = controlledHydrationRetryTimer()
+  const oldController = new AbortController()
+  const calls = []
+  const fetcher = async (_input, init) => {
+    const request = JSON.parse(init.body)
+    calls.push(request)
+    return request.documentSha256 === DOCUMENT_SHA256
+      ? { ok: false, json: async () => { throw new Error('must not read') } }
+      : { ok: true, json: async () => hydratedEnvelope() }
+  }
+  const oldPending = client.requestPresentationGrantWithRetry({
+    sessionId: 'session-key-change',
+    callId: 'call-old',
+    documentSha256: DOCUMENT_SHA256,
+  }, client.presentationGrantOfMeta, {
+    fetcher,
+    signal: oldController.signal,
+    timer: clock.timer,
+  })
+  await flushAsync()
+  assert.equal(clock.scheduled.length, 1)
+
+  oldController.abort()
+  const nextGrant = await client.requestPresentationGrantWithRetry({
+    sessionId: 'session-key-change',
+    callId: 'call-new',
+    documentSha256: SCREENSHOT_SHA256,
+  }, client.presentationGrantOfMeta, {
+    fetcher,
+    timer: clock.timer,
+  })
+  assert.equal(await oldPending, undefined)
+  assert.equal(nextGrant.document.url, '/_dsh/dsh-openpencil/document/signed')
+  assert.equal(clock.cancelled.length, 1)
+  assert.equal(clock.cancelled[0].delayMs, 100)
+  clock.runNext()
+  await flushAsync()
+  assert.deepEqual(calls.map(call => call.callId), ['call-old', 'call-new'])
 })
 
 test('presentation hydration coalesces concurrent requests and isolates subscriber aborts', async () => {
@@ -399,6 +669,22 @@ test('only canonical OpenPencil presentation tools can request hydration', () =>
     callId: 'call-canonical',
     documentSha256: DOCUMENT_SHA256,
   })
+  const screenshotBlock = {
+    kind: 'tool-result',
+    isError: false,
+    content: [{ type: 'text', text: JSON.stringify({ screenshot: { sha256: SCREENSHOT_SHA256 } }) }],
+  }
+  assert.deepEqual(client.presentationHydrationRequestOf({
+    block: screenshotBlock,
+    toolName: 'openpencil_pipeline_inspect',
+    sessionId: 'session-pipeline-inspect',
+    callId: 'call-pipeline-inspect',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-pipeline-inspect',
+    callId: 'call-pipeline-inspect',
+    documentSha256: SCREENSHOT_SHA256,
+  })
   assert.deepEqual(client.presentationHydrationRequestOf({
     block,
     toolName: 'openpencil_new',
@@ -408,6 +694,17 @@ test('only canonical OpenPencil presentation tools can request hydration', () =>
   }), {
     sessionId: 'session-new',
     callId: 'call-new',
+    documentSha256: DOCUMENT_SHA256,
+  })
+  assert.deepEqual(client.presentationHydrationRequestOf({
+    block,
+    toolName: 'openpencil_pipeline_begin',
+    sessionId: 'session-pipeline-begin',
+    callId: 'call-pipeline-begin',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-pipeline-begin',
+    callId: 'call-pipeline-begin',
     documentSha256: DOCUMENT_SHA256,
   })
   assert.deepEqual(client.presentationHydrationRequestOf({
@@ -958,23 +1255,31 @@ test('registers canonical OpenPencil publication/render views and client-only le
 
   assert.equal(client.OPENPENCIL_RENDER_TOOL_NAME, 'openpencil_render')
   assert.equal(client.OPENPENCIL_NEW_TOOL_NAME, 'openpencil_new')
+  assert.equal(client.OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME, 'openpencil_pipeline_begin')
   assert.equal(client.OPENPENCIL_PIPELINE_FINISH_TOOL_NAME, 'openpencil_pipeline_finish')
+  assert.equal(client.OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME, 'openpencil_pipeline_inspect')
   assert.equal(client.LEGACY_DESIGN_RENDER_TOOL_NAME, 'design_render')
   assert.deepEqual(registrations.map(({ definition }) => definition), [
     { name: 'tool.call.toolview', key: 'openpencil_render' },
     { name: 'tool.details.toolview', key: 'openpencil_render' },
     { name: 'tool.call.toolview', key: 'openpencil_new' },
     { name: 'tool.details.toolview', key: 'openpencil_new' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_begin' },
+    { name: 'tool.details.toolview', key: 'openpencil_pipeline_begin' },
     { name: 'tool.call.toolview', key: 'openpencil_pipeline_finish' },
     { name: 'tool.details.toolview', key: 'openpencil_pipeline_finish' },
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'tool.details.toolview', key: 'design_render' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_inspect' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
   assert.equal(registrations[2].component, registrations[0].component, 'new uses the existing auto-open call view')
   assert.equal(registrations[3].component, registrations[1].component, 'new uses the existing editor workbench details view')
-  assert.equal(registrations[4].component, registrations[0].component, 'pipeline finish uses the auto-open call view')
-  assert.equal(registrations[5].component, registrations[1].component, 'pipeline finish uses the editor details view')
+  assert.equal(registrations[4].component, registrations[0].component, 'pipeline begin uses the auto-open call view')
+  assert.equal(registrations[5].component, registrations[1].component, 'pipeline begin uses the editor details view')
+  assert.equal(registrations[6].component, registrations[0].component, 'pipeline finish uses the auto-open call view')
+  assert.equal(registrations[7].component, registrations[1].component, 'pipeline finish uses the editor details view')
+  assert.equal(registrations[10].component, registrations[0].component, 'pipeline inspect reuses the PNG gallery call view')
 })
 
 test('stock rc.2 can leave the optional details slot undeclared', () => {
@@ -999,12 +1304,14 @@ test('stock rc.2 can leave the optional details slot undeclared', () => {
     },
   })
 
-  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview'])
+  assert.deepEqual(pending, ['tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview', 'tool.details.toolview'])
   assert.deepEqual(registrations, [
     { name: 'tool.call.toolview', key: 'openpencil_render' },
     { name: 'tool.call.toolview', key: 'openpencil_new' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_begin' },
     { name: 'tool.call.toolview', key: 'openpencil_pipeline_finish' },
     { name: 'tool.call.toolview', key: 'design_render' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_inspect' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
 })
@@ -1206,6 +1513,27 @@ test('native-style clean unmount keeps the normal guarded close path', () => {
   assert.equal(clientDeletes, 1)
 })
 
+test('live draft unmount always detaches without retaining a pipeline-owned daemon', () => {
+  let clientDeletes = 0
+  assert.equal(
+    client.applyManagedEditorUnmountPolicy({
+      retainServerSession: true,
+      dirty: true,
+      hasLiveLaunch: true,
+      liveDraft: true,
+    }, () => { clientDeletes += 1 }),
+    'closed',
+  )
+  assert.equal(clientDeletes, 1, 'the close capability detaches the panel; it does not stop the draft daemon')
+})
+
+test('live draft canvas has no independent save action', () => {
+  assert.equal(client.managedEditorAllowsSave(undefined), true)
+  assert.equal(client.managedEditorAllowsSave({}), true)
+  assert.equal(client.managedEditorAllowsSave({ liveDraft: false }), true)
+  assert.equal(client.managedEditorAllowsSave({ liveDraft: true }), false)
+})
+
 test('a successful explicit close is not reclassified as a retained dirty unmount', () => {
   let cleanupCalls = 0
   assert.equal(
@@ -1295,6 +1623,8 @@ test('fallback editor workbench reserves a real split dock and fullscreens befor
   assert.equal(client.EDITOR_WORKBENCH_RESIZE_STEP, 32)
   assert.equal(client.editorWorkbenchUsesFullscreen(1479), true)
   assert.equal(client.editorWorkbenchUsesFullscreen(1480), false)
+  assert.equal(client.automaticEditorWorkbenchLayout(1280), 'fullscreen', 'real 1280px DSH view auto-opens as a fullscreen workbench')
+  assert.equal(client.automaticEditorWorkbenchLayout(1480), 'dock')
   assert.deepEqual(client.editorWorkbenchWidthBounds(2048), { min: 640, max: 960, initial: 720 })
   assert.deepEqual(client.editorWorkbenchWidthBounds(1600), { min: 640, max: 760, initial: 720 })
   assert.deepEqual(client.editorWorkbenchWidthBounds(1480), { min: 640, max: 640, initial: 640 })
@@ -1764,6 +2094,114 @@ test('successful editor JSON responses retain the launch contract', async () => 
   assert.equal(launch.sessionId, 'success-session')
   assert.equal(launch.docJson, '{"source":"current"}')
   assert.equal(launch.saveUrl, 'http://127.0.0.1:3080/editor/save/success-session')
+})
+
+test('live draft launch keeps the pipeline daemon authoritative and skips snapshot loading', async () => {
+  const calls = []
+  const prepared = await client.prepareManagedEditor({
+    enabled: true,
+    launchUrl: '/editor/live-launch',
+  }, {
+    path: '/private/draft.op',
+    url: '/render/immutable-document-that-must-not-load',
+  }, {
+    fetcher: async (url, init = {}) => {
+      calls.push({ url, init })
+      return Response.json({
+        sessionId: 'live-session',
+        iframeUrl: 'http://127.0.0.1:49157/?embed=vscode',
+        token: 'daemon-secret',
+        saveUrl: '/editor/live/save',
+        closeUrl: '/editor/live/detach',
+        liveDraft: true,
+        readyUrl: '/editor/live/ready',
+      })
+    },
+  })
+
+  assert.equal(calls.length, 1, 'live boot must not fetch or reopen an immutable document')
+  assert.equal(prepared.documentJson, '')
+  assert.equal(prepared.launch.liveDraft, true)
+  assert.equal(prepared.launch.readyUrl, 'http://127.0.0.1:3080/editor/live/ready')
+})
+
+test('bridge ready attaches a live draft without posting open-document', async () => {
+  const requests = []
+  const posted = []
+  const result = await client.completeManagedEditorBridgeReady({
+    sessionId: 'live-session',
+    iframeUrl: 'http://127.0.0.1:49157/?embed=vscode',
+    token: 'daemon-secret',
+    saveUrl: 'http://127.0.0.1:3080/editor/live/save',
+    closeUrl: 'http://127.0.0.1:3080/editor/live/detach',
+    liveDraft: true,
+    readyUrl: 'http://127.0.0.1:3080/editor/live/ready',
+  }, '{"stale":"snapshot"}', message => { posted.push(message) }, {
+    fetcher: async (url, init) => {
+      requests.push({ url, init })
+      return new Response(null, { status: 204 })
+    },
+  })
+
+  assert.equal(result, 'live-draft-attached')
+  assert.deepEqual(posted, [], 'a stale snapshot must never replace pipeline mutations')
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].url, 'http://127.0.0.1:3080/editor/live/ready')
+  assert.equal(requests[0].init.method, 'POST')
+  assert.equal(requests[0].init.credentials, 'same-origin')
+  assert.deepEqual(JSON.parse(requests[0].init.body), { sessionId: 'live-session' })
+})
+
+test('bridge ready preserves normal managed-editor document opening', async () => {
+  const posted = []
+  let networkCalls = 0
+  const result = await client.completeManagedEditorBridgeReady({
+    sessionId: 'persisted-session',
+    iframeUrl: 'http://127.0.0.1:49158/?embed=vscode',
+    token: 'daemon-secret',
+    saveUrl: 'http://127.0.0.1:3080/editor/save',
+    closeUrl: 'http://127.0.0.1:3080/editor/close',
+  }, '{"current":"document"}', message => { posted.push(message) }, {
+    fetcher: async () => {
+      networkCalls += 1
+      return new Response(null, { status: 500 })
+    },
+  })
+
+  assert.equal(result, 'document-open-requested')
+  assert.deepEqual(posted, [{ type: 'op-bridge/open-document', json: '{"current":"document"}' }])
+  assert.equal(networkCalls, 0)
+})
+
+test('live draft launch requires a ready capability and surfaces attach failure', async () => {
+  await assert.rejects(client.launchManagedEditor({
+    enabled: true,
+    launchUrl: '/editor/live-missing-ready',
+  }, {
+    path: '/private/draft.op',
+    url: '/render/document',
+  }, {
+    fetcher: async () => Response.json({
+      sessionId: 'live-missing-ready',
+      iframeUrl: 'http://127.0.0.1:49159/?embed=vscode',
+      token: 'daemon-secret',
+      saveUrl: '/editor/live/save',
+      closeUrl: '/editor/live/detach',
+      liveDraft: true,
+    }),
+  }), /live draft launch omitted readyUrl/)
+
+  await assert.rejects(client.completeManagedEditorBridgeReady({
+    sessionId: 'live-failed',
+    iframeUrl: 'http://127.0.0.1:49159/?embed=vscode',
+    token: 'daemon-secret',
+    saveUrl: 'http://127.0.0.1:3080/editor/live/save',
+    closeUrl: 'http://127.0.0.1:3080/editor/live/detach',
+    liveDraft: true,
+    readyUrl: 'http://127.0.0.1:3080/editor/live/ready',
+  }, '', () => {}, {
+    fetcher: async () => new Response(null, { status: 409 }),
+  }), /live draft attach failed \(409\)/)
 })
 
 test('refresh conflict is surfaced without launching or reading the historical document', async () => {

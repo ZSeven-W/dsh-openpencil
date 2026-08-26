@@ -132,7 +132,7 @@ export interface EditorRecoveryDocument {
 /** Read the daemon's authoritative in-memory document without exposing its token. */
 export async function readManagedDaemonDocument(
   baseUrl: string,
-  token: string,
+  _token: string,
   fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<ManagedDaemonDocument> {
@@ -140,8 +140,6 @@ export async function readManagedDaemonDocument(
   const timeout = AbortSignal.timeout(5_000)
   const response = await fetcher(new URL('/api/mcp/document', origin).href, {
     headers: {
-      authorization: `Bearer ${token}`,
-      'x-openpencil-token': token,
       accept: 'application/json',
     },
     signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
@@ -163,7 +161,7 @@ export async function readManagedDaemonDocument(
 /** Replace only the live daemon document; persisting to `.op` remains a separate Save. */
 export async function restoreManagedDaemonDocument(
   baseUrl: string,
-  token: string,
+  _token: string,
   recovery: ManagedDaemonDocument,
   fetcher: typeof fetch = fetch,
 ): Promise<number> {
@@ -172,8 +170,6 @@ export async function restoreManagedDaemonDocument(
   const response = await fetcher(new URL('/api/mcp/document', origin).href, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${token}`,
-      'x-openpencil-token': token,
       'content-type': 'application/json',
       accept: 'application/json',
     },

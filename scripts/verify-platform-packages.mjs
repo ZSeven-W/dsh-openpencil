@@ -240,8 +240,7 @@ async function smokeRuntime(platform) {
       if (response.status !== 200) throw new Error(`${platform.id}: ${path} returned ${response.status}`)
       if ((await response.arrayBuffer()).byteLength === 0) throw new Error(`${platform.id}: ${path} returned an empty body`)
     }
-    const headers = { 'X-OpenPencil-Token': handshake.token }
-    const health = await fetchWithTimeout(base + '/api/mcp/server', { headers })
+    const health = await fetchWithTimeout(base + '/api/mcp/server')
     if (health.status !== 200) throw new Error(`${platform.id}: managed health returned ${health.status}`)
     const healthBody = await health.json()
     if (
@@ -256,7 +255,7 @@ async function smokeRuntime(platform) {
     }
     const mcp = await fetchWithTimeout(base + '/mcp', {
       method: 'POST',
-      headers: { ...headers, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
     })
     if (mcp.status !== 200) throw new Error(`${platform.id}: MCP initialize returned ${mcp.status}`)

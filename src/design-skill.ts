@@ -6,13 +6,12 @@ import type { Context } from '@deepseek-ai/cordis'
 export const OPENPENCIL_DESIGN_SKILL_NAME = 'openpencil-design'
 
 export const OPENPENCIL_DESIGN_SKILL_DESCRIPTION =
-  'Create production-quality OpenPencil .op interfaces in DSH with the complete native '
-  + 'openpencil_pipeline_* workflow: context, skeleton-first batches, quality/layout feedback, '
-  + 'post-final visual inspection, and atomic publication.'
+  'Fast DSH adapter for creating production-quality OpenPencil .op interfaces with a live canvas, '
+  + 'a few substantial native batches, visual verification, and atomic publication.'
 
 export const OPENPENCIL_DESIGN_SKILL_WHEN_TO_USE =
-  'Any request to create a new .op design, especially forms, login and signup '
-  + 'screens, mobile UI, dashboards, landing pages, or work that needs a deliberate visual system.'
+  'Any request to create a new .op design, including ordinary pages, dashboards, landing pages, '
+  + 'forms, and explicitly requested mobile interfaces.'
 
 export const OPENPENCIL_DESIGN_SKILL_CONTENT = readFileSync(
   new URL('./assets/openpencil-design/SKILL.md', import.meta.url),
@@ -22,17 +21,15 @@ export const OPENPENCIL_DESIGN_SKILL_CONTENT = readFileSync(
 export const OPENPENCIL_DESIGN_GUIDANCE_SECTION = {
   name: 'openpencil:design-skill-guidance',
   order: 130,
-  text: () => 'For a new OpenPencil design, load the bundled `openpencil-design` skill and use '
-    + '`openpencil_pipeline_begin` → context/style resolution → skeleton-first '
-    + '`openpencil_pipeline_batch` calls → mandatory intermediate screenshot/read_image checkpoints → layout/quality inspection → native finalization → '
-    + 'a post-final `openpencil_pipeline_inspect(kind:"screenshot")` visual read → '
-    + '`openpencil_pipeline_finish`. The begin result carries OpenPencil\'s complete native '
-    + 'design-agent prompt; follow it as the authoritative design contract. Repair every diagnostic '
-    + 'and visible defect before atomic publication. Call begin without shell preflight, keep context '
-    + 'resolution bounded, and do not inspect plugin/vendor/runtime source during ordinary generation. '
-    + 'In PTC/Code Mode invoke skill, pipeline, task-list, and read_image tools inside run_code only. '
-    + '`openpencil_new` is only a compatibility '
-    + 'fast path for an explicitly requested simple one-shot draft, not the default quality pipeline.',
+  text: () => 'For a new OpenPencil design, load `openpencil-design` and call '
+    + '`openpencil_pipeline_begin` once. Its compact canvas and buildContract are the authoritative run contract matched to the native runtime; never '
+    + 'refetch startup context or request the full native prompt during ordinary generation. An unqualified page defaults to '
+    + 'web/desktop, while mobile is chosen only when the user explicitly says mobile, phone, iOS, '
+    + 'Android, 移动, or 手机. Begin immediately without a task list, then use a few substantial '
+    + '`openpencil_pipeline_batch` calls while the live canvas is open. The first batch is strictly the fixed root plus 4-8 empty named top-level frame shells, at most 10 I calls total, with no text, icon, image, control, or nested content; return immediately, then populate those shells. The wrapper verifies the begin canvas width and does not add full quality/layout reads after every healthy batch. Always generate one useful draft screenshot for the user, run '
+    + 'native finalize, and always generate the required distinct post-final screenshot. Use `read_image` only when the current model supports image input; after one explicit unsupported-image error, do not retry or inspect source, and continue with native gates while honestly stating that model visual review was unavailable. Repair if needed, then '
+    + 'finish for atomic publication. Do not repeat context/style lookups or inspect source during '
+    + 'ordinary generation. The current native contract always wins over adapter assumptions.',
 } as const
 
 interface SkillService {

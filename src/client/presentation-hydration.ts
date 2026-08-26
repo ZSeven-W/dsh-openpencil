@@ -2,7 +2,9 @@
 
 import {
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
   OPENPENCIL_RENDER_TOOL_NAME,
 } from '../tool-names.js'
 
@@ -36,6 +38,16 @@ export interface PresentationHydrationOptions {
   signal?: AbortSignal
 }
 
+export interface PresentationHydrationRetryTimer {
+  schedule: (callback: () => void, delayMs: number) => unknown
+  cancel: (handle: unknown) => void
+}
+
+export interface PresentationHydrationRetryOptions extends PresentationHydrationOptions {
+  delaysMs?: readonly number[]
+  timer?: PresentationHydrationRetryTimer
+}
+
 type PresentationMetaParser<Grant> = (meta: unknown) => Grant | undefined
 
 interface PendingEnvelope {
@@ -46,6 +58,11 @@ interface PendingEnvelope {
 }
 
 const pendingByFetcher = new WeakMap<PresentationHydrationFetcher, Map<string, PendingEnvelope>>()
+const DEFAULT_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const
+const defaultRetryTimer: PresentationHydrationRetryTimer = {
+  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancel: handle => { clearTimeout(handle as ReturnType<typeof setTimeout>) },
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -114,7 +131,8 @@ function pendingEnvelope(
 }
 
 /**
- * Read only the immutable document fingerprint from one canonical text result.
+ * Read only one immutable artifact fingerprint from a canonical text result.
+ * Document tools use document.sha256; a stage preview uses screenshot.sha256.
  * Paths, image data, and every other model-visible result field are ignored.
  */
 export function documentSha256FromCanonicalResult(block: unknown): string | undefined {
@@ -130,8 +148,12 @@ export function documentSha256FromCanonicalResult(block: unknown): string | unde
   } catch {
     return undefined
   }
-  if (!isRecord(result) || !isRecord(result.document)) return undefined
-  const fingerprint = result.document.sha256
+  if (!isRecord(result)) return undefined
+  const fingerprint = isRecord(result.document)
+    ? result.document.sha256
+    : isRecord(result.screenshot)
+      ? result.screenshot.sha256
+      : undefined
   return typeof fingerprint === 'string' && /^[a-f0-9]{64}$/iu.test(fingerprint)
     ? fingerprint.toLowerCase()
     : undefined
@@ -146,6 +168,8 @@ export function presentationHydrationRequestOf(
     || (
       candidate.toolName !== OPENPENCIL_RENDER_TOOL_NAME
       && candidate.toolName !== OPENPENCIL_NEW_TOOL_NAME
+      && candidate.toolName !== OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+      && candidate.toolName !== OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME
       && candidate.toolName !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
     )
   ) {
@@ -218,4 +242,50 @@ export function requestPresentationGrant<Grant>(
       }
     }, () => { finish(undefined) })
   })
+}
+
+function waitForPresentationRetry(
+  delayMs: number,
+  signal: AbortSignal | undefined,
+  timer: PresentationHydrationRetryTimer,
+): Promise<boolean> {
+  if (signal?.aborted === true) return Promise.resolve(false)
+  return new Promise(resolve => {
+    let finished = false
+    let handle: unknown
+    const finish = (ready: boolean) => {
+      if (finished) return
+      finished = true
+      signal?.removeEventListener('abort', abort)
+      if (!ready) timer.cancel(handle)
+      resolve(ready)
+    }
+    const abort = () => { finish(false) }
+    signal?.addEventListener('abort', abort, { once: true })
+    handle = timer.schedule(() => { finish(true) }, delayMs)
+  })
+}
+
+/**
+ * Retry a newly settled nested result while SessionStore catches up with the
+ * live observer. The schedule is deliberately short and finite: historical
+ * results that have no recoverable authority are attempted only five times.
+ */
+export async function requestPresentationGrantWithRetry<Grant>(
+  request: PresentationHydrationRequest,
+  parseMeta: PresentationMetaParser<Grant>,
+  options: PresentationHydrationRetryOptions = {},
+): Promise<Grant | undefined> {
+  const delaysMs = options.delaysMs ?? DEFAULT_RETRY_DELAYS_MS
+  const timer = options.timer ?? defaultRetryTimer
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
+    if (options.signal?.aborted === true) return undefined
+    const grant = await requestPresentationGrant(request, parseMeta, options)
+    if (grant !== undefined) return grant
+    if (attempt === delaysMs.length) return undefined
+    if (!await waitForPresentationRetry(delaysMs[attempt] ?? 0, options.signal, timer)) {
+      return undefined
+    }
+  }
+  return undefined
 }
