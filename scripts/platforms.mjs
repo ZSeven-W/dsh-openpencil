@@ -54,10 +54,11 @@ export function platformPackageRoot(platform) {
 export function runtimeKeyPaths(platform) {
   return [
     `bin/${platform.binaryName}`,
-    'web/pkg/op_host_web.js',
-    'web/pkg/op_host_web_bg.wasm',
-    'web/canvaskit/canvaskit.js',
-    'web/canvaskit/canvaskit.wasm',
+    'bin/web-bundle/op_host_web.js',
+    'bin/web-bundle/op_host_web_bg.wasm',
+    'bin/web-bundle/assets/iconify-catalog-core.json',
+    'bin/web-bundle/canvaskit/canvaskit.js',
+    'bin/web-bundle/canvaskit/canvaskit.wasm',
   ]
 }
 

@@ -513,7 +513,10 @@ export class DesignDraftToolController {
         draftId: { type: 'string', required: true },
         kind: { type: 'string', required: true, enum: ['layout', 'quality', 'screenshot'] },
         nodeId: { type: 'string', description: 'Optional node id for screenshot. Omit for the root design.' },
-        maxDepth: { type: 'number', description: 'Layout depth, default 6 and max 12.' },
+        maxDepth: {
+          type: 'number',
+          description: 'Optional layout-only depth, default 6 and max 12. Omit for quality and screenshot inspection.',
+        },
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderJson },
       execute: async (args: { draftId: string; kind: 'layout' | 'quality' | 'screenshot'; nodeId?: string; maxDepth?: number }, exec) => {
@@ -549,7 +552,6 @@ export class DesignDraftToolController {
             diagnostics: issueValues({ quality: quality.value, lint: lint.value }),
           } as Record<string, JsonValue>
         }
-        if (args.maxDepth !== undefined) throw new Error(`${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME}: maxDepth is only valid for layout inspection`)
         const screenshot = await drafts.screenshot(args.draftId, owner, {
           ...(args.nodeId === undefined || args.nodeId.trim() === '' ? {} : { nodeId: args.nodeId }),
           signal: exec.signal,

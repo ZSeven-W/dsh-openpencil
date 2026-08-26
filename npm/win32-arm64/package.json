@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/dsh-openpencil-win32-arm64",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.6",
   "description": "Atomic OpenPencil editor runtime for dsh-openpencil on Windows arm64.",
   "license": "MIT",
   "repository": {
@@ -20,7 +20,6 @@
   "preferUnplugged": true,
   "files": [
     "bin",
-    "web",
     "openpencil-runtime.json",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"

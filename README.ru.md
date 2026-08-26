@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Текущий релиз плагина: <code>0.1.0-rc.5</code> · Проверено вплоть до DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Текущий релиз плагина: <code>0.1.0-rc.6</code> · Проверено вплоть до DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -114,7 +114,7 @@ npm install -g @deepseek-ai/dsh@latest
 Затем добавьте плагин в профиль и запустите веб-приложение:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 dsh web
 ```
 
@@ -131,7 +131,7 @@ dsh web
 Не хотите ставить DSH глобально? Выполните те же два шага через `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 

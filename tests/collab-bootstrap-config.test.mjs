@@ -81,7 +81,7 @@ test('every non-Cargo release child scrubs build-only URLs and handshake parsing
   ]) {
     const childCount = [...source.matchAll(/\bspawn(?:Sync)?\(/gu)].length
     const scrubbedEnvCount = [...source.matchAll(
-      /env:\s*(?:\{\s*\.\.\.)?withoutCollabBootstrapBuildEnv\(process\.env\)/gu,
+      /env:\s*(?:\{\s*\.\.\.)?(?:withoutEditorDiscoveryEnv\()?withoutCollabBootstrapBuildEnv\(process\.env\)/gu,
     )].length
     assert.equal(childCount, expectedChildren, `${label}: unexpected child-process surface`)
     assert.equal(scrubbedEnvCount, childCount, `${label}: every child must receive a scrubbed environment`)

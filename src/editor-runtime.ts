@@ -29,6 +29,8 @@ export interface EditorRuntime {
   source: EditorRuntimeSource
 }
 
+export type EditorRuntimeLayout = 'canonical' | 'legacy'
+
 export interface EditorRuntimePlatform {
   id: string
   os: string
@@ -260,14 +262,19 @@ export function editorRuntimePlatformKey(
   return `${platform}-${arch}`
 }
 
-/** The five files that make a staged runtime minimally bootable. */
-export function editorRuntimeRequiredFiles(binaryName: string): readonly string[] {
+/** The five files that make one atomic staged runtime minimally bootable. */
+export function editorRuntimeRequiredFiles(
+  binaryName: string,
+  layout: EditorRuntimeLayout = 'canonical',
+): readonly string[] {
+  const webRoot = layout === 'canonical' ? 'bin/web-bundle' : 'web/pkg'
+  const canvasKitRoot = layout === 'canonical' ? `${webRoot}/canvaskit` : 'web/canvaskit'
   return Object.freeze([
     `bin/${binaryName}`,
-    'web/pkg/op_host_web.js',
-    'web/pkg/op_host_web_bg.wasm',
-    'web/canvaskit/canvaskit.js',
-    'web/canvaskit/canvaskit.wasm',
+    `${webRoot}/op_host_web.js`,
+    `${webRoot}/op_host_web_bg.wasm`,
+    `${canvasKitRoot}/canvaskit.js`,
+    `${canvasKitRoot}/canvaskit.wasm`,
   ])
 }
 
@@ -328,11 +335,99 @@ function sha256(path: string, io: RuntimeIo): string {
   }
 }
 
+interface RuntimeLayoutPaths {
+  kind: EditorRuntimeLayout
+  webBundleDir: string
+  canvasKitDir: string
+  requiredFiles: readonly string[]
+}
+
+function runtimeLayoutPaths(
+  root: string,
+  binaryName: string,
+  kind: EditorRuntimeLayout,
+): RuntimeLayoutPaths {
+  const webBundleDir = kind === 'canonical'
+    ? join(root, 'bin', 'web-bundle')
+    : join(root, 'web', 'pkg')
+  return {
+    kind,
+    webBundleDir,
+    canvasKitDir: kind === 'canonical'
+      ? join(webBundleDir, 'canvaskit')
+      : join(root, 'web', 'canvaskit'),
+    requiredFiles: editorRuntimeRequiredFiles(binaryName, kind),
+  }
+}
+
+function layoutHasEvidence(
+  layout: RuntimeLayoutPaths,
+  manifest: EditorRuntimeManifest,
+  io: RuntimeIo,
+): boolean {
+  if (isDirectory(layout.webBundleDir, io) || isDirectory(layout.canvasKitDir, io)) return true
+  const assetPaths = new Set(layout.requiredFiles.slice(1))
+  return Object.keys(manifest.files).some(path => assetPaths.has(path))
+}
+
+function layoutPayloadIsComplete(root: string, layout: RuntimeLayoutPaths, io: RuntimeIo): boolean {
+  return (
+    isDirectory(layout.webBundleDir, io)
+    && isDirectory(layout.canvasKitDir, io)
+    && layout.requiredFiles.slice(1).every(relativePath => (
+      isFile(join(root, ...relativePath.split('/')), io)
+    ))
+  )
+}
+
+function selectRuntimeLayout(
+  root: string,
+  binaryName: string,
+  manifest: EditorRuntimeManifest,
+  io: RuntimeIo,
+  forcedLayout?: EditorRuntimeLayout,
+): RuntimeLayoutPaths {
+  const canonical = runtimeLayoutPaths(root, binaryName, 'canonical')
+  const legacy = runtimeLayoutPaths(root, binaryName, 'legacy')
+  if (layoutPayloadIsComplete(root, canonical, io) && layoutPayloadIsComplete(root, legacy, io)) {
+    throw new EditorRuntimeUnavailableError(
+      'invalid-runtime',
+      `OpenPencil runtime under ${root} contains both canonical and legacy web layouts; remove the legacy web directory so daemon discovery and injected paths cannot diverge`,
+    )
+  }
+  const layout = forcedLayout === 'canonical'
+    ? canonical
+    : forcedLayout === 'legacy'
+      ? legacy
+      : layoutHasEvidence(canonical, manifest, io)
+        ? canonical
+        : layoutHasEvidence(legacy, manifest, io)
+          ? legacy
+          : undefined
+  if (layout === undefined) {
+    throw new EditorRuntimeUnavailableError(
+      'invalid-runtime',
+      `OpenPencil runtime under ${root} has neither the canonical bin/web-bundle layout nor the legacy web/{pkg,canvaskit} layout`,
+    )
+  }
+  if (!isDirectory(layout.webBundleDir, io) || !isDirectory(layout.canvasKitDir, io)) {
+    const description = layout.kind === 'canonical'
+      ? 'bin/web-bundle with its canvaskit subdirectory'
+      : 'web/pkg and web/canvaskit directories'
+    throw new EditorRuntimeUnavailableError(
+      'invalid-runtime',
+      `OpenPencil runtime under ${root} must contain the complete ${description}`,
+    )
+  }
+  return layout
+}
+
 function validateRuntimeRoot(
   root: string,
   source: EditorRuntimeSource,
   expected: RuntimeExpectation,
   io: RuntimeIo,
+  forcedLayout?: EditorRuntimeLayout,
 ): EditorRuntime {
   const manifestPath = join(root, 'openpencil-runtime.json')
   if (!isFile(manifestPath, io)) {
@@ -341,15 +436,6 @@ function validateRuntimeRoot(
       `OpenPencil ${source} runtime is missing ${manifestPath}`,
     )
   }
-  const webBundleDir = join(root, 'web', 'pkg')
-  const canvasKitDir = join(root, 'web', 'canvaskit')
-  if (!isDirectory(webBundleDir, io) || !isDirectory(canvasKitDir, io)) {
-    throw new EditorRuntimeUnavailableError(
-      'invalid-runtime',
-      `OpenPencil ${source} runtime must contain web/pkg and web/canvaskit directories under ${root}`,
-    )
-  }
-
   let manifest: EditorRuntimeManifest
   try {
     manifest = parseEditorRuntimeManifest(readJson(manifestPath, io, 'runtime manifest'), {
@@ -370,8 +456,14 @@ function validateRuntimeRoot(
     throw error
   }
 
-  const requiredFiles = editorRuntimeRequiredFiles(expected.platform.binaryName)
-  for (const relativePath of requiredFiles) {
+  const layout = selectRuntimeLayout(
+    root,
+    expected.platform.binaryName,
+    manifest,
+    io,
+    forcedLayout,
+  )
+  for (const relativePath of layout.requiredFiles) {
     if (manifest.files[relativePath] === undefined) {
       throw new EditorRuntimeUnavailableError(
         'invalid-runtime',
@@ -408,8 +500,8 @@ function validateRuntimeRoot(
   }
   return Object.freeze({
     binary,
-    webBundleDir,
-    canvasKitDir,
+    webBundleDir: layout.webBundleDir,
+    canvasKitDir: layout.canvasKitDir,
     openPencilVersion: expected.version,
     revision: expected.revision,
     source,
@@ -445,29 +537,27 @@ function overridePaths(
 function overrideRoot(
   paths: { binary: string; webBundleDir: string; canvasKitDir: string },
   platform: EditorRuntimePlatform,
-): string {
+): { root: string; layout: EditorRuntimeLayout } {
   const root = dirname(dirname(paths.binary))
-  const expected = {
-    binary: join(root, 'bin', platform.binaryName),
-    webBundleDir: join(root, 'web', 'pkg'),
-    canvasKitDir: join(root, 'web', 'canvaskit'),
+  const expectedBinary = join(root, 'bin', platform.binaryName)
+  if (paths.binary === expectedBinary) {
+    for (const layout of ['canonical', 'legacy'] as const) {
+      const expected = runtimeLayoutPaths(root, platform.binaryName, layout)
+      if (
+        paths.webBundleDir === expected.webBundleDir
+        && paths.canvasKitDir === expected.canvasKitDir
+      ) return { root, layout }
+    }
   }
-  if (
-    paths.binary !== expected.binary
-    || paths.webBundleDir !== expected.webBundleDir
-    || paths.canvasKitDir !== expected.canvasKitDir
-  ) {
-    throw new EditorRuntimeUnavailableError(
-      'invalid-override',
-      'OpenPencil editor runtime overrides must identify one atomic runtime root with bin/ and web/{pkg,canvaskit}',
-      [
-        `binary: ${paths.binary}`,
-        `web bundle: ${paths.webBundleDir}`,
-        `CanvasKit: ${paths.canvasKitDir}`,
-      ],
-    )
-  }
-  return root
+  throw new EditorRuntimeUnavailableError(
+    'invalid-override',
+    'OpenPencil editor runtime overrides must identify one atomic runtime root using either bin/web-bundle/{canvaskit} or legacy web/{pkg,canvaskit}',
+    [
+      `binary: ${paths.binary}`,
+      `web bundle: ${paths.webBundleDir}`,
+      `CanvasKit: ${paths.canvasKitDir}`,
+    ],
+  )
 }
 
 function runtimeIo(options: ResolveEditorRuntimeOptions): RuntimeIo {
@@ -514,8 +604,8 @@ export function resolveEditorRuntime(options: ResolveEditorRuntimeOptions = {}):
   }
 
   if (override !== undefined) {
-    const root = overrideRoot(override, platform)
-    return validateRuntimeRoot(root, 'override', expected, io)
+    const selected = overrideRoot(override, platform)
+    return validateRuntimeRoot(selected.root, 'override', expected, io, selected.layout)
   }
 
   const resolvePackageJson = options.resolvePackageJson

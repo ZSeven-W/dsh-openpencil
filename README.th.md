@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · เวอร์ชันปลั๊กอินปัจจุบัน: <code>0.1.0-rc.5</code> · ทดสอบถึง DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · เวอร์ชันปลั๊กอินปัจจุบัน: <code>0.1.0-rc.6</code> · ทดสอบถึง DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -114,7 +114,7 @@ npm install -g @deepseek-ai/dsh@latest
 จากนั้นเพิ่มปลั๊กอินเข้าโปรไฟล์แล้วเริ่มเว็บแอป:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 dsh web
 ```
 
@@ -131,7 +131,7 @@ dependency แบบ `link:` ทำให้ผลการ build ครั้�
 ไม่อยากติดตั้ง DSH แบบ global? รันสองขั้นตอนเดียวกันผ่าน `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 

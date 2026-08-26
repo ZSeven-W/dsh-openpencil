@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 현재 플러그인 릴리스: <code>0.1.0-rc.5</code> · DSH <code>0.1.1-rc.2</code>까지 테스트됨</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 현재 플러그인 릴리스: <code>0.1.0-rc.6</code> · DSH <code>0.1.1-rc.2</code>까지 테스트됨</sub>
 </p>
 
 <p align="center">
@@ -114,7 +114,7 @@ npm install -g @deepseek-ai/dsh@latest
 그다음 플러그인을 프로필에 추가하고 웹 앱을 실행합니다:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 dsh web
 ```
 
@@ -131,7 +131,7 @@ dsh web
 DSH를 전역 설치하고 싶지 않다면 같은 두 단계를 `pnpm dlx`로 실행하세요:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 

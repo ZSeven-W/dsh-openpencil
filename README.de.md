@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.5</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Aktuelle Plugin-Version: <code>0.1.0-rc.6</code> · Bis einschließlich DSH <code>0.1.1-rc.2</code> getestet</sub>
 </p>
 
 <p align="center">
@@ -114,7 +114,7 @@ npm install -g @deepseek-ai/dsh@latest
 Füge dann das Plugin einem Profil hinzu und starte die Web-App:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 dsh web
 ```
 
@@ -131,7 +131,7 @@ Die `link:`-Abhängigkeit macht spätere Neubauten direkt aus diesem Checkout si
 Lieber ohne globale DSH-Installation? Führe dieselben zwei Schritte über `pnpm dlx` aus:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 

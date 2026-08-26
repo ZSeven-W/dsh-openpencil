@@ -49,9 +49,11 @@ async function main() {
   }
 
   const binaryDestination = join(packageRoot, 'bin', platform.binaryName)
-  const pkgDestination = join(packageRoot, 'web', 'pkg')
-  const canvasKitDestination = join(packageRoot, 'web', 'canvaskit')
+  const pkgDestination = join(packageRoot, 'bin', 'web-bundle')
+  const canvasKitDestination = join(pkgDestination, 'canvaskit')
   await rm(join(packageRoot, 'bin'), { recursive: true, force: true })
+  // Delete the legacy layout so generated packages never retain a second
+  // copy of the web runtime beside the daemon-native deploy layout.
   await rm(join(packageRoot, 'web'), { recursive: true, force: true })
   await rm(join(packageRoot, runtimeManifestName), { force: true })
   await mkdir(dirname(binaryDestination), { recursive: true })
@@ -102,7 +104,7 @@ export async function resolveWebBundleSource(vendorRoot, explicitPkg) {
 }
 
 export async function collectRuntimePayloadPaths(packageRoot) {
-  const roots = [join(packageRoot, 'bin'), join(packageRoot, 'web')]
+  const roots = [join(packageRoot, 'bin')]
   const files = (await Promise.all(roots.map(walkRegularFiles))).flat()
   return files
     .map(path => relative(packageRoot, path).split(sep).join('/'))

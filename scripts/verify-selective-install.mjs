@@ -63,8 +63,8 @@ async function verifySelection(platform, dependencies, root) {
     const packageRoot = await realpath(join(directory, 'node_modules', '@zseven-w', expected))
     const expectedRuntime = {
       binary: join(packageRoot, 'bin', platform.binaryName),
-      webBundleDir: join(packageRoot, 'web', 'pkg'),
-      canvasKitDir: join(packageRoot, 'web', 'canvaskit'),
+      webBundleDir: join(packageRoot, 'bin', 'web-bundle'),
+      canvasKitDir: join(packageRoot, 'bin', 'web-bundle', 'canvaskit'),
       openPencilVersion: openPencil.version,
       revision: openPencil.revision,
       source: 'optional-package',

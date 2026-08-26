@@ -48,12 +48,15 @@ function sha256(bytes) {
 
 async function stageRuntime(root, options = {}) {
   const binaryName = options.binaryName ?? PLATFORM.binaryName
+  const layout = options.layout ?? 'canonical'
+  const webRoot = layout === 'canonical' ? 'bin/web-bundle' : 'web/pkg'
+  const canvasKitRoot = layout === 'canonical' ? `${webRoot}/canvaskit` : 'web/canvaskit'
   const contents = {
     [`bin/${binaryName}`]: Buffer.from('fake OpenPencil daemon'),
-    'web/pkg/op_host_web.js': Buffer.from('export default "OpenPencil"'),
-    'web/pkg/op_host_web_bg.wasm': Buffer.from([0, 97, 115, 109, 1]),
-    'web/canvaskit/canvaskit.js': Buffer.from('globalThis.CanvasKitInit = () => {}'),
-    'web/canvaskit/canvaskit.wasm': Buffer.from([0, 97, 115, 109, 2]),
+    [`${webRoot}/op_host_web.js`]: Buffer.from('export default "OpenPencil"'),
+    [`${webRoot}/op_host_web_bg.wasm`]: Buffer.from([0, 97, 115, 109, 1]),
+    [`${canvasKitRoot}/canvaskit.js`]: Buffer.from('globalThis.CanvasKitInit = () => {}'),
+    [`${canvasKitRoot}/canvaskit.wasm`]: Buffer.from([0, 97, 115, 109, 2]),
     ...(options.contents ?? {}),
   }
   await Promise.all(Object.entries(contents).map(async ([relativePath, bytes]) => {
@@ -136,12 +139,12 @@ test('staging manifests every native and web payload file, including executable 
   try {
     await Promise.all([
       'bin/op-host-web-server',
-      'web/pkg/op_host_web_bg.wasm',
-      'web/pkg/op_host_web.js',
-      'web/pkg/snippets/bindings/bridge.js',
-      'web/pkg/assets/templates/example.op',
-      'web/canvaskit/canvaskit.js',
-      'web/canvaskit/canvaskit.wasm',
+      'bin/web-bundle/op_host_web_bg.wasm',
+      'bin/web-bundle/op_host_web.js',
+      'bin/web-bundle/snippets/bindings/bridge.js',
+      'bin/web-bundle/assets/templates/example.op',
+      'bin/web-bundle/canvaskit/canvaskit.js',
+      'bin/web-bundle/canvaskit/canvaskit.wasm',
     ].map(async relativePath => {
       const path = join(root, ...relativePath.split('/'))
       await mkdir(dirname(path), { recursive: true })
@@ -149,12 +152,12 @@ test('staging manifests every native and web payload file, including executable 
     }))
     assert.deepEqual(await collectRuntimePayloadPaths(root), [
       'bin/op-host-web-server',
-      'web/canvaskit/canvaskit.js',
-      'web/canvaskit/canvaskit.wasm',
-      'web/pkg/assets/templates/example.op',
-      'web/pkg/op_host_web_bg.wasm',
-      'web/pkg/op_host_web.js',
-      'web/pkg/snippets/bindings/bridge.js',
+      'bin/web-bundle/assets/templates/example.op',
+      'bin/web-bundle/canvaskit/canvaskit.js',
+      'bin/web-bundle/canvaskit/canvaskit.wasm',
+      'bin/web-bundle/op_host_web_bg.wasm',
+      'bin/web-bundle/op_host_web.js',
+      'bin/web-bundle/snippets/bindings/bridge.js',
     ])
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -197,7 +200,7 @@ test('pure catalog and manifest parsers bind package identity to one OpenPencil 
   )
 })
 
-test('resolves and verifies the current optional platform package before development staging', async () => {
+test('resolves and verifies the canonical optional platform package before development staging', async () => {
   const root = await tempRoot('runtime-optional')
   const packageRoot = join(root, 'optional-runtime')
   const chmodCalls = []
@@ -212,13 +215,64 @@ test('resolves and verifies the current optional platform package before develop
     }))
     assert.deepEqual(runtime, {
       binary: join(packageRoot, 'bin', PLATFORM.binaryName),
-      webBundleDir: join(packageRoot, 'web', 'pkg'),
-      canvasKitDir: join(packageRoot, 'web', 'canvaskit'),
+      webBundleDir: join(packageRoot, 'bin', 'web-bundle'),
+      canvasKitDir: join(packageRoot, 'bin', 'web-bundle', 'canvaskit'),
       openPencilVersion: OPENPENCIL_VERSION,
       revision: OPENPENCIL_REVISION,
       source: 'optional-package',
     })
     assert.deepEqual(chmodCalls, [[runtime.binary, 0o755]])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('continues to resolve and fully verify the published legacy platform layout', async () => {
+  const root = await tempRoot('runtime-legacy')
+  const packageRoot = join(root, 'legacy-runtime')
+  try {
+    await stageRuntime(packageRoot, { layout: 'legacy' })
+    const runtime = resolveEditorRuntime(resolutionOptions(root, {
+      resolvePackageJson: () => join(packageRoot, 'package.json'),
+    }))
+    assert.equal(runtime.webBundleDir, join(packageRoot, 'web', 'pkg'))
+    assert.equal(runtime.canvasKitDir, join(packageRoot, 'web', 'canvaskit'))
+    assert.equal(runtime.source, 'optional-package')
+
+    await writeFile(join(packageRoot, 'web', 'pkg', 'op_host_web.js'), 'tampered legacy bundle')
+    assert.throws(
+      () => resolveEditorRuntime(resolutionOptions(root, {
+        resolvePackageJson: () => join(packageRoot, 'package.json'),
+      })),
+      /SHA-256 mismatch/,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('fails closed when canonical and legacy web payloads coexist', async () => {
+  const root = await tempRoot('runtime-layout-conflict')
+  const packageRoot = join(root, 'optional-runtime')
+  try {
+    await stageRuntime(packageRoot, {
+      contents: {
+        'web/pkg/op_host_web.js': Buffer.from('legacy JavaScript'),
+        'web/pkg/op_host_web_bg.wasm': Buffer.from('legacy Wasm'),
+        'web/canvaskit/canvaskit.js': Buffer.from('legacy CanvasKit JavaScript'),
+        'web/canvaskit/canvaskit.wasm': Buffer.from('legacy CanvasKit Wasm'),
+      },
+    })
+    assert.throws(
+      () => resolveEditorRuntime(resolutionOptions(root, {
+        resolvePackageJson: () => join(packageRoot, 'package.json'),
+      })),
+      error => (
+        error instanceof EditorRuntimeUnavailableError
+        && error.code === 'invalid-runtime'
+        && /contains both canonical and legacy web layouts/.test(error.message)
+      ),
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -234,22 +288,22 @@ test('falls back only to the atomic npm/<platform> development package', async (
     }))
     assert.equal(runtime.source, 'development-package')
     assert.equal(runtime.binary, join(developmentRoot, 'bin', PLATFORM.binaryName))
-    assert.equal(runtime.webBundleDir, join(developmentRoot, 'web', 'pkg'))
-    assert.equal(runtime.canvasKitDir, join(developmentRoot, 'web', 'canvaskit'))
+    assert.equal(runtime.webBundleDir, join(developmentRoot, 'bin', 'web-bundle'))
+    assert.equal(runtime.canvasKitDir, join(developmentRoot, 'bin', 'web-bundle', 'canvaskit'))
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('accepts only a complete override describing one standard runtime root', async () => {
+test('accepts complete canonical and legacy overrides, but rejects mixed layouts', async () => {
   const root = await tempRoot('runtime-override')
   const runtimeRoot = join(root, 'explicit-runtime')
   try {
     await stageRuntime(runtimeRoot)
     const env = {
       DSH_OPENPENCIL_EDITOR_BINARY: join(runtimeRoot, 'bin', PLATFORM.binaryName),
-      DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(runtimeRoot, 'web', 'pkg'),
-      DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'web', 'canvaskit'),
+      DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(runtimeRoot, 'bin', 'web-bundle'),
+      DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'bin', 'web-bundle', 'canvaskit'),
     }
     const runtime = resolveEditorRuntime(resolutionOptions(root, {
       env,
@@ -265,13 +319,25 @@ test('accepts only a complete override describing one standard runtime root', as
       error => error instanceof EditorRuntimeUnavailableError && error.code === 'partial-override',
     )
 
-    const otherRoot = join(root, 'other-runtime')
-    await stageRuntime(otherRoot)
+    const legacyRoot = join(root, 'legacy-runtime')
+    await stageRuntime(legacyRoot, { layout: 'legacy' })
+    const legacyEnv = {
+      DSH_OPENPENCIL_EDITOR_BINARY: join(legacyRoot, 'bin', PLATFORM.binaryName),
+      DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(legacyRoot, 'web', 'pkg'),
+      DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(legacyRoot, 'web', 'canvaskit'),
+    }
+    const legacyRuntime = resolveEditorRuntime(resolutionOptions(root, {
+      env: legacyEnv,
+      resolvePackageJson() { throw new Error('override must win') },
+    }))
+    assert.equal(legacyRuntime.webBundleDir, legacyEnv.DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR)
+    assert.equal(legacyRuntime.canvasKitDir, legacyEnv.DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR)
+
     assert.throws(
       () => resolveEditorRuntime(resolutionOptions(root, {
         env: {
           ...env,
-          DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(otherRoot, 'web', 'pkg'),
+          DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'web', 'canvaskit'),
         },
       })),
       error => error instanceof EditorRuntimeUnavailableError && error.code === 'invalid-override',
@@ -287,7 +353,7 @@ test('rejects a corrupt optional package instead of hiding it behind a developme
   const developmentRoot = join(root, 'npm', PLATFORM.id)
   try {
     await Promise.all([stageRuntime(packageRoot), stageRuntime(developmentRoot)])
-    await writeFile(join(packageRoot, 'web', 'pkg', 'op_host_web.js'), 'tampered')
+    await writeFile(join(packageRoot, 'bin', 'web-bundle', 'op_host_web.js'), 'tampered')
     assert.throws(
       () => resolveEditorRuntime(resolutionOptions(root, {
         resolvePackageJson: () => join(packageRoot, 'package.json'),
@@ -334,13 +400,13 @@ test('rejects manifest platform, version, revision, and required-file drift', as
     const packageRoot = join(root, 'optional-runtime')
     try {
       const { manifest } = await stageRuntime(packageRoot)
-      delete manifest.files['web/canvaskit/canvaskit.wasm']
+      delete manifest.files['bin/web-bundle/canvaskit/canvaskit.wasm']
       await writeFile(join(packageRoot, 'openpencil-runtime.json'), JSON.stringify(manifest))
       assert.throws(
         () => resolveEditorRuntime(resolutionOptions(root, {
           resolvePackageJson: () => join(packageRoot, 'package.json'),
         })),
-        /missing SHA-256 for web\/canvaskit\/canvaskit\.wasm/,
+        /missing SHA-256 for bin\/web-bundle\/canvaskit\/canvaskit\.wasm/,
       )
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -388,9 +454,9 @@ test('declared extra files are also integrity checked and unsafe paths are refus
   const packageRoot = join(root, 'optional-runtime')
   try {
     await stageRuntime(packageRoot, {
-      contents: { 'web/pkg/assets/catalog.json': Buffer.from('{"ok":true}') },
+      contents: { 'bin/web-bundle/assets/catalog.json': Buffer.from('{"ok":true}') },
     })
-    await writeFile(join(packageRoot, 'web', 'pkg', 'assets', 'catalog.json'), '{"ok":false}')
+    await writeFile(join(packageRoot, 'bin', 'web-bundle', 'assets', 'catalog.json'), '{"ok":false}')
     assert.throws(
       () => resolveEditorRuntime(resolutionOptions(root, {
         resolvePackageJson: () => join(packageRoot, 'package.json'),

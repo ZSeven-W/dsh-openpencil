@@ -306,10 +306,14 @@ test('batch forces post-processing and always returns native quality plus resolv
   )
 })
 
-test('screenshot inspection exposes one safe content-addressed cache file, never image bytes or daemon internals', async () => {
+test('screenshot inspection tolerates an irrelevant maxDepth and exposes one safe content-addressed cache file', async () => {
   const harness = await createHarness()
   await begin(harness)
-  const result = await harness.tools.openpencil_pipeline_inspect.execute({ draftId: DRAFT_ID, kind: 'screenshot' }, harness.exec)
+  const result = await harness.tools.openpencil_pipeline_inspect.execute({
+    draftId: DRAFT_ID,
+    kind: 'screenshot',
+    maxDepth: 8,
+  }, harness.exec)
   assert.match(result.screenshot.path, /dsh-openpencil\/design-draft-inspections\/[a-f0-9]{64}\.png$/)
   assert.equal(result.screenshot.mimeType, 'image/png')
   assert.equal(result.screenshot.bytes, SAFE_PNG.length)

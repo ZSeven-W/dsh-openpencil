@@ -2,7 +2,8 @@ name: Release npm packages
 
 # A release contains one JavaScript plugin package plus six platform-selective
 # native packages. The editor wasm/CanvasKit payload is built once from the
-# pinned OpenPencil submodule, then copied beside each platform daemon.
+# pinned OpenPencil submodule, then staged into each daemon's native
+# bin/web-bundle deploy layout.
 #
 # npm authentication boundaries:
 # 1. Trusted publishing (OIDC), enabled by id-token: write, covers every new
@@ -198,8 +199,8 @@ jobs:
           pnpm run test:host-api
           pnpm run test:mcp
 
-      # Match OpenPencil's platform VSIX layout: only the served pkg and
-      # CanvasKit runtime are transferred to the six native jobs.
+      # This is only the cross-job transfer layout. Each native job stages the
+      # files into bin/web-bundle, matching the daemon's own deploy lookup.
       - name: Assemble editor web artifact
         shell: bash
         run: |
@@ -305,7 +306,7 @@ jobs:
       - name: Build plugin against the packaged runtime
         run: pnpm run build
 
-      - name: Verify and smoke the real packaged daemon
+      - name: Verify and smoke the self-discovering packaged daemon
         env:
           OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN: ${{ secrets.OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN }}
           OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL: ${{ secrets.OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL }}

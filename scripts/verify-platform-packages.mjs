@@ -88,7 +88,7 @@ async function verifyPlatformMetadata(platform) {
   if (manifest.engines?.node !== rootManifest.engines?.node) throw new Error(`${platform.id}: Node engine must match root package`)
   assertList(
     [...(manifest.files ?? [])].sort(),
-    ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'bin', runtimeManifestName, 'web'].sort(),
+    ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'bin', runtimeManifestName].sort(),
     `${platform.id}: files`,
   )
   if (manifest.dependencies !== undefined || manifest.optionalDependencies !== undefined) {
@@ -124,7 +124,7 @@ async function verifyStagedRuntime(platform, bootstrap) {
   const topLevel = (await readdir(packageRoot)).sort()
   assertList(
     topLevel,
-    ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'bin', runtimeManifestName, 'package.json', 'web'].sort(),
+    ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'bin', runtimeManifestName, 'package.json'].sort(),
     `${platform.id}: package roots`,
   )
   const binaryPath = join(packageRoot, 'bin', platform.binaryName)
@@ -143,7 +143,7 @@ async function verifyStagedRuntime(platform, bootstrap) {
     }
   }
 
-  const webFiles = await walkFiles(join(packageRoot, 'web'))
+  const webFiles = await walkFiles(join(packageRoot, 'bin', 'web-bundle'))
   const forbidden = webFiles.filter(path => path.endsWith('.d.ts') || path.endsWith('.opt.wasm'))
   if (forbidden.length > 0) throw new Error(`${platform.id}: redundant web artifacts were staged: ${forbidden.join(', ')}`)
   for (const path of runtimeKeyPaths(platform).slice(1)) {
@@ -161,10 +161,8 @@ async function verifyStagedRuntime(platform, bootstrap) {
   for (const [key, value] of Object.entries(expectedMetadata)) {
     if (manifest[key] !== value) throw new Error(`${platform.id}: runtime manifest ${key} drifted`)
   }
-  const payloadFiles = [
-    ...await walkFiles(join(packageRoot, 'bin')),
-    ...await walkFiles(join(packageRoot, 'web')),
-  ].map(path => relative(packageRoot, path).split(sep).join('/'))
+  const payloadFiles = (await walkFiles(join(packageRoot, 'bin')))
+    .map(path => relative(packageRoot, path).split(sep).join('/'))
   assertList(Object.keys(manifest.files ?? {}).sort(), payloadFiles.sort(), `${platform.id}: manifest files`)
   for (const path of runtimeKeyPaths(platform)) {
     if (manifest.files[path] === undefined) throw new Error(`${platform.id}: runtime manifest is missing ${path}`)
@@ -216,11 +214,7 @@ async function smokeRuntime(platform) {
     'dsh-openpencil://package-smoke',
   ], {
     cwd: packageRoot,
-    env: {
-      ...withoutCollabBootstrapBuildEnv(process.env),
-      OPENPENCIL_WEB_BUNDLE_DIR: join(packageRoot, 'web', 'pkg'),
-      OPENPENCIL_CANVASKIT_DIR: join(packageRoot, 'web', 'canvaskit'),
-    },
+    env: withoutEditorDiscoveryEnv(withoutCollabBootstrapBuildEnv(process.env)),
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   let stderr = ''
@@ -238,6 +232,7 @@ async function smokeRuntime(platform) {
       '/',
       '/pkg/op_host_web.js',
       '/pkg/op_host_web_bg.wasm',
+      '/pkg/assets/iconify-catalog-core.json',
       '/canvaskit/canvaskit.js',
       '/canvaskit/canvaskit.wasm',
     ]) {
@@ -281,6 +276,19 @@ async function smokeRuntime(platform) {
       : new AggregateError([smokeFailure, exitFailure], `${platform.id}: runtime smoke and managed shutdown both failed`)
   }
   if (smokeFailure !== undefined) throw smokeFailure
+}
+
+function withoutEditorDiscoveryEnv(source) {
+  const env = { ...source }
+  // The package must work exactly like an installed user invokes its daemon:
+  // no plugin-provided source or asset override may mask a broken deploy layout.
+  for (const name of [
+    'OPENPENCIL_WEB_BUNDLE_DIR',
+    'OPENPENCIL_CANVASKIT_DIR',
+    'OPENPENCIL_SOURCE_ROOT',
+    'DSH_OPENPENCIL_SOURCE_ROOT',
+  ]) delete env[name]
+  return env
 }
 
 function pack(packagePath, dryRun, destination) {

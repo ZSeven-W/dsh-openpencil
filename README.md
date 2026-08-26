@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.5</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.6</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
 </p>
 
 <p align="center">
@@ -114,9 +114,11 @@ npm install -g @deepseek-ai/dsh@latest
 Then add the plugin to a profile and start the web app:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 dsh web
 ```
+
+The plugin is still on a prerelease line, so install it from the npm `next` tag. The npm `latest` tag currently points to the older `0.1.0-rc.1` package.
 
 For local development, build the checkout, link its absolute path into the Web profile, and then restart DSH:
 
@@ -131,7 +133,7 @@ The `link:` dependency exposes subsequent rebuilds from this checkout, but DSH m
 Prefer not to install DSH globally? Run the same two steps through `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
@@ -185,7 +187,7 @@ Editable sessions use OpenPencil's managed web host — the same architecture us
 
 Startup uses a slow-mount-safe listening handshake: readiness probes begin only after the bundled host announces its bound address. No desktop OpenPencil installation is required.
 
-Published installations provide six native package targets: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, and `win32-x64`; both Linux packages target glibc. The root package declares every platform package under exact-version `optionalDependencies`, allowing npm to select the matching package by OS and CPU. Each platform package stages `op-host-web-server`, the editor web bundle, and CanvasKit as one matching atomic runtime. The managed editor therefore does not depend on `/Applications/OpenPencil.app`, `openpencil-desktop` on `PATH`, or an OpenPencil source checkout.
+Published installations provide six native package targets: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, and `win32-x64`; both Linux packages target glibc. The root package declares every platform package under exact-version `optionalDependencies`, allowing npm to select the matching package by OS and CPU. Each platform package stages `op-host-web-server`, the editor web bundle, and CanvasKit as one matching atomic runtime. New packages use the daemon's native deploy layout: the executable lives in `bin/`, the wasm-bindgen bundle in `bin/web-bundle/`, and CanvasKit in `bin/web-bundle/canvaskit/`. Release smoke tests start that executable with both asset-discovery environment variables removed, so the package must boot on its own. The managed editor therefore does not depend on `/Applications/OpenPencil.app`, `openpencil-desktop` on `PATH`, or an OpenPencil source checkout.
 
 If DSH reloads or unloads the plugin while the canvas is dirty, the host keeps an opaque local recovery draft for up to seven days. Reopening the same source asks before restoring it into the live canvas; recovery never overwrites the `.op` file until the user explicitly saves.
 
@@ -217,6 +219,14 @@ Explicit runtime overrides are accepted only as one complete, matching set:
 - `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` for the CanvasKit assets.
 
 Providing only part of the set is invalid; the plugin does not combine custom paths with packaged runtime assets.
+
+The older `0.1.0-rc.5` platform packages used the legacy `web/pkg` plus `web/canvaskit` layout. When starting one of those daemons directly rather than through the plugin, pass both native asset variables together:
+
+```sh
+OPENPENCIL_WEB_BUNDLE_DIR="<runtime-root>/web/pkg" \
+OPENPENCIL_CANVASKIT_DIR="<runtime-root>/web/canvaskit" \
+"<runtime-root>/bin/op-host-web-server" --serve-web
+```
 
 Saves use an optimistic source hash, an atomic replace, and a successor capability. If the source changes outside the editor, the plugin reports a conflict instead of overwriting it.
 

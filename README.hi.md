@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · वर्तमान प्लगइन रिलीज़: <code>0.1.0-rc.5</code> · DSH <code>0.1.1-rc.2</code> तक परीक्षित</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · वर्तमान प्लगइन रिलीज़: <code>0.1.0-rc.6</code> · DSH <code>0.1.1-rc.2</code> तक परीक्षित</sub>
 </p>
 
 <p align="center">
@@ -114,7 +114,7 @@ npm install -g @deepseek-ai/dsh@latest
 फिर प्लगइन को किसी प्रोफ़ाइल में जोड़ें और वेब ऐप शुरू करें:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 dsh web
 ```
 
@@ -131,7 +131,7 @@ dsh web
 DSH को ग्लोबली इंस्टॉल नहीं करना चाहते? वही दो चरण `pnpm dlx` से चलाएँ:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
