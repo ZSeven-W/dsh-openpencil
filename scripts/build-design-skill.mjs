@@ -62,6 +62,8 @@ For an ordinary new design, perform exactly this state machine:
 
 \`openpencil_pipeline_begin\` -> first \`openpencil_pipeline_batch\` -> second \`openpencil_pipeline_batch\` -> \`openpencil_pipeline_finish\`
 
+Only when the user explicitly asks for the high-fidelity App-identical engine, begin takes engine:"app-agent" and the transaction becomes begin -> one \`openpencil_pipeline_agent_run\` -> finish (no generation batches; the daemon runs the App builtin design-agent loop).
+
 1. Call \`openpencil_pipeline_begin({brief})\` exactly once and immediately. It creates the only root and opens the private live canvas. Omit \`path\` unless the user explicitly named a file: the plugin chooses a concrete collision-resistant \`.op\` filename; preserve an explicitly named path exactly. Explicit mobile wording overrides web/desktop. Once begin returns, its path, \`rootNodeId\`, platform, canvas, palette, and \`buildContract\` are locked for this transaction. Never reinterpret the request into another platform, switch paths, or rebuild another draft.
 2. On a successful begin, issue the bounded first direct I/K QuickJS batch immediately. On a successful first batch, issue the second and final direct I/K batch immediately. On a successful second batch, call finish immediately. Advance without narration: do not put reasoning, progress, comparison, critique, inspection, or another tool call between successful pipeline calls.
 3. A thrown error or any result with \`canContinue:false\` ends the transaction. Report the error once. Do not retry, inspect, context-read, abort, rename, start over, or create a replacement draft.
@@ -99,7 +101,7 @@ When no logo asset is supplied, use a text-only brand. Do not invent a letter ba
 
 ## Publication Gate
 
-Call finish exactly once after the second generation batch. A result with \`published:true\` is terminal success: return it and stop. A finish result with \`canContinue:true\` continues by doing exactly what its \`next\` field says: \`stage:"needs_preview"\` and \`stage:"needs_refinalization"\` each mean calling finish exactly once more with nothing in between. A repair round additionally requires all of the following at once:
+Call finish exactly once after the second generation batch. A result with \`published:true\` is terminal success: return it and stop. A finish result with \`canContinue:true\` continues by doing exactly what its \`next\` field says: \`stage:"needs_preview"\` and \`stage:"needs_refinalization"\` each mean calling finish exactly once more with nothing in between. \`stage:"needs_visual_review"\` is the single see-then-fix round after a clean gate: review the returned layout digest and checklist against the final preview, then either call finish once more unchanged to accept and publish, or send exactly ONE bounded correction batch (I/K/U only, at most 16 calls and 6 KiB, never rebuilding Header or Hero) followed by finish — the gates re-validate the corrected page. A repair round additionally requires all of the following at once:
 
 - \`stage:"needs_correction"\`
 - \`canContinue:true\`
@@ -128,6 +130,7 @@ export function createDshDesignSkill(upstreamMarkdown) {
   for (const required of [
     'openpencil_pipeline_begin',
     'openpencil_pipeline_batch',
+    'openpencil_pipeline_agent_run',
     'openpencil_pipeline_finish',
     'createIfAbsent',
     'Strict Default Transaction',
@@ -161,6 +164,7 @@ export function createDshDesignSkill(upstreamMarkdown) {
     'fontFamily',
     'Inter, system-ui, sans-serif',
     'stage:"needs_correction"',
+    'stage:"needs_visual_review"',
     'repairTargets',
     'checks.dsh.repairTargetSummary.omitted === 0',
     'operation:"U"',

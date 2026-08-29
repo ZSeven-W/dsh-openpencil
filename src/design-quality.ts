@@ -34,7 +34,7 @@ type Axis = 'width' | 'height'
 export interface GeneratedDesignQualityRepairTarget {
   nodeId: string
   operation: 'U'
-  rule: 'typography' | 'form-control' | 'icon-size' | 'icon-glyph' | 'flow-size' | 'touch-target' | 'canvas-contract'
+  rule: 'typography' | 'form-control' | 'icon-size' | 'icon-glyph' | 'contrast' | 'flow-size' | 'touch-target' | 'canvas-contract'
   patch: {
     fontFamily?: typeof PORTABLE_FONT_STACK
     fontSize?: 16
@@ -47,6 +47,7 @@ export interface GeneratedDesignQualityRepairTarget {
     visible?: false
     content?: string
     iconFontName?: string
+    fill?: [{ type: 'solid'; color: string }]
   }
 }
 
@@ -376,6 +377,10 @@ class RepairTargetCollector {
 
   addIconGlyph(node: JsonObject, patch: GeneratedDesignQualityRepairTarget['patch']): void {
     this.#add(node, 'icon-glyph', patch)
+  }
+
+  addContrast(node: JsonObject, patch: GeneratedDesignQualityRepairTarget['patch']): void {
+    this.#add(node, 'contrast', patch)
   }
 
   addFlowSize(node: JsonObject, patch: GeneratedDesignQualityRepairTarget['patch']): void {
@@ -802,6 +807,20 @@ function composite(foreground: Rgba, background: Rgba): Rgba {
     b: (foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha,
     a: alpha,
   }
+}
+
+/** The nearest ancestor whose own opaque solid fill paints the backdrop. */
+function ancestorBackgroundOwner(record: NodeRecord): NodeRecord | undefined {
+  let current = record.parent
+  let scanned = 0
+  while (current !== undefined && scanned < MAX_ANCESTOR_SCAN) {
+    const fill = nodeFill(current.node)
+    if (fill.kind === 'uncertain') return undefined
+    if (fill.kind === 'solid' && fill.color.a >= 1 - Number.EPSILON) return current
+    current = current.parent
+    scanned += 1
+  }
+  return undefined
 }
 
 function ancestorBackground(record: NodeRecord): Rgba | undefined {
@@ -2828,7 +2847,37 @@ function inspectTypography(
   }
 }
 
-function inspectContrast(records: NodeRecord[], collector: IssueCollector): void {
+/**
+ * Scale a bright backdrop toward black until pure white text passes the
+ * required ratio, preserving its hue. Returns the hex, or undefined for
+ * inputs that never converge (already near-black).
+ */
+function darkenUntilWhitePasses(background: Rgba, required: number): string | undefined {
+  const white = { r: 1, g: 1, b: 1, a: 1 }
+  let factor = 1
+  for (let step = 0; step < 24; step += 1) {
+    const candidate = { r: background.r * factor, g: background.g * factor, b: background.b * factor, a: 1 }
+    if (contrastRatio(white, candidate) >= required) {
+      const to255 = (value: number) => Math.max(0, Math.min(255, Math.round(value * 255)))
+      const hex = (value: number) => to255(value).toString(16).padStart(2, '0').toUpperCase()
+      return `#${hex(candidate.r)}${hex(candidate.g)}${hex(candidate.b)}`
+    }
+    factor *= 0.92
+  }
+  return undefined
+}
+
+/** Deterministic AA rescue colors: near-black ink and pure white. */
+const CONTRAST_REPAIR_CANDIDATES: Array<{ hex: string; color: Rgba }> = [
+  { hex: '#1C1917', color: parseHexColor('#1C1917') as Rgba },
+  { hex: '#FFFFFF', color: parseHexColor('#FFFFFF') as Rgba },
+]
+
+function inspectContrast(
+  records: NodeRecord[],
+  collector: IssueCollector,
+  repairTargets?: RepairTargetCollector,
+): void {
   for (const record of records) {
     if (record.type !== 'text') continue
     if (Array.isArray(record.node.content)) continue
@@ -2841,12 +2890,60 @@ function inspectContrast(records: NodeRecord[], collector: IssueCollector): void
       : composite(foregroundFill.color, background)
     const required = isLargeText(record.node) ? 3 : 4.5
     if (contrastRatio(foreground, background) + Number.EPSILON < required) {
+      // A failing solid-on-solid pair rescues deterministically. White-ish
+      // text on a bright saturated backdrop (the model-invented accent
+      // behind a CTA label) darkens the BACKGROUND owner instead of the
+      // text: native finalization repaints accent-button labels white, so a
+      // text recolor there is silently reverted on the next finish. Other
+      // pairs recolor the text to ink/white, whichever passes.
+      let repaired = false
+      if (repairTargets !== undefined) {
+        const owner = ancestorBackgroundOwner(record)
+        // Darkening is reserved for a saturated compact control surface (a
+        // CTA/badge the model painted too bright). A neutral or page-scale
+        // backdrop must never be repainted — white-on-white falls through
+        // to the text recolor instead.
+        const saturation = Math.max(background.r, background.g, background.b)
+          - Math.min(background.r, background.g, background.b)
+        const ownerWidth = owner === undefined ? undefined : finiteNumber(owner.node.width)
+        const ownerHeight = owner === undefined ? undefined : finiteNumber(owner.node.height)
+        const compactSurface = owner !== undefined && (
+          HITBOX_ROLES.has(normalizedSemanticPart(owner.node.role))
+          || (ownerWidth !== undefined && ownerHeight !== undefined
+            && ownerWidth <= 480 && ownerHeight <= 160)
+        )
+        if (luminance(foreground) > 0.5 && saturation > 0.15 && compactSurface && owner !== undefined) {
+          const darkened = darkenUntilWhitePasses(background, required)
+          if (darkened !== undefined) {
+            repairTargets.addCanvasContract(owner.node, { fill: [{ type: 'solid', color: darkened }] })
+            repaired = true
+          }
+        }
+        if (!repaired) {
+          let rescue: string | undefined
+          let bestRatio = 0
+          for (const candidate of CONTRAST_REPAIR_CANDIDATES) {
+            const ratio = contrastRatio(candidate.color, background)
+            if (ratio >= required && ratio > bestRatio) {
+              rescue = candidate.hex
+              bestRatio = ratio
+            }
+          }
+          if (rescue !== undefined) {
+            repairTargets.addContrast(record.node, { fill: [{ type: 'solid', color: rescue }] })
+            repaired = true
+          }
+        }
+      }
       collector.add(
         'text-contrast',
         record.path,
         record.type,
-        'text does not meet WCAG AA contrast for its authored size and weight.',
+        repaired
+          ? 'text does not meet WCAG AA contrast; apply its exact recolor repair target.'
+          : 'text does not meet WCAG AA contrast for its authored size and weight.',
         4,
+        repaired,
       )
     }
   }
@@ -2942,7 +3039,7 @@ function inspectGeneratedDesignQualityReportInternal(
     inspectTypography(tree.roots, tree.records, collector, repairTargets)
     inspectIconSizing(tree.records, collector, repairTargets)
     inspectIconGlyphCatalog(tree.records, collector, repairTargets)
-    inspectContrast(tree.records, collector)
+    inspectContrast(tree.records, collector, repairTargets)
   }
   return {
     diagnostics: collector.issues,

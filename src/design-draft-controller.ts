@@ -27,6 +27,11 @@ const DEFAULT_ABSOLUTE_MS = 2 * 60 * 60 * 1000
 const DEFAULT_MAX_DRAFTS = 8
 const DEFAULT_ENRICH_TIMEOUT_MS = 130_000
 const MAX_ENRICH_TIMEOUT_MS = 150_000
+// The daemon design-agent loop is one long blocking MCP call. Its ceiling
+// must stay under the MCP client's hard 5-minute request cap (with margin
+// for the daemon to settle its own timeout before the HTTP layer fires).
+const MAX_AGENT_RUN_TIMEOUT_MS = 285_000
+const DEFAULT_AGENT_RUN_TIMEOUT_MS = 255_000
 const MAX_ORDINARY_TIMEOUT_MS = 30_000
 const MAX_ARGUMENT_BYTES = 512 * 1024
 const EMPTY_DOCUMENT_JSON = '{\n  "version": "1.0.0",\n  "children": []\n}\n'
@@ -74,7 +79,7 @@ const MUST_CHANGE_TOOLS = new Set([
   'design_refine',
   'update_node',
 ])
-const MAY_NOOP_TOOLS = new Set(['finalize_design', 'enrich_images'])
+const MAY_NOOP_TOOLS = new Set(['finalize_design', 'enrich_images', 'run_design_agent'])
 const FORBIDDEN_ARGUMENT_NAME = /(?:path|url|export|import|spawn)/i
 
 export type DesignDraftToolMode = 'read' | 'must-change' | 'may-noop'
@@ -848,7 +853,21 @@ export class DesignDraftController {
       throw new Error(`OpenPencil MCP ${tool} arguments are too large`)
     }
     let timeoutMs = options.timeoutMs
-    if (tool === 'enrich_images') {
+    if (tool === 'run_design_agent') {
+      const requestedSeconds = args.timeout_seconds
+      if (requestedSeconds !== undefined && (
+        typeof requestedSeconds !== 'number'
+        || !Number.isFinite(requestedSeconds)
+        || requestedSeconds < 30
+        || requestedSeconds > 270
+      )) throw new Error('OpenPencil run_design_agent timeout_seconds is invalid')
+      timeoutMs ??= requestedSeconds === undefined
+        ? DEFAULT_AGENT_RUN_TIMEOUT_MS
+        : Math.min(MAX_AGENT_RUN_TIMEOUT_MS, Math.ceil(requestedSeconds * 1_000) + 15_000)
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_AGENT_RUN_TIMEOUT_MS) {
+        throw new Error('OpenPencil run_design_agent timeout is invalid')
+      }
+    } else if (tool === 'enrich_images') {
       const requestedSeconds = args.timeout_seconds
       if (requestedSeconds !== undefined && (
         typeof requestedSeconds !== 'number'

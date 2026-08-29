@@ -98,7 +98,8 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
 
     assert.deepEqual(inject, ['tools', 'sessions', 'fs', 'sandboxPolicy'])
     assert.deepEqual(injectedServices, [['skills'], ['systemPrompt'], ['webServer']])
-    assert.equal(registeredTools.length, 11)
+    // 12 = 5 legacy/compat tools + 7 pipeline tools (begin/context/batch/agent_run/inspect/finish/abort).
+    assert.equal(registeredTools.length, 12)
     assert.deepEqual(registeredTools.map(tool => tool.name), [
       'openpencil_render',
       'openpencil_selection',
@@ -108,6 +109,7 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
       'openpencil_pipeline_begin',
       'openpencil_pipeline_context',
       'openpencil_pipeline_batch',
+      'openpencil_pipeline_agent_run',
       'openpencil_pipeline_inspect',
       'openpencil_pipeline_finish',
       'openpencil_pipeline_abort',
@@ -131,11 +133,13 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
     assert.deepEqual([...registeredTools[5].parameters.required].sort(), ['brief'])
     assert.deepEqual([...registeredTools[6].parameters.required].sort(), ['draftId', 'tool'])
     assert.deepEqual([...registeredTools[7].parameters.required].sort(), ['draftId', 'script'])
-    assert.deepEqual([...registeredTools[8].parameters.required].sort(), ['draftId', 'kind'])
+    assert.deepEqual([...registeredTools[8].parameters.required].sort(), ['draftId'])
     assert.equal(typeof registeredTools[8].output.presentationMeta, 'function')
-    assert.deepEqual([...registeredTools[9].parameters.required].sort(), ['draftId'])
-    assert.deepEqual([...registeredTools[10].parameters.required].sort(), ['draftId'])
+    assert.deepEqual([...registeredTools[9].parameters.required].sort(), ['draftId', 'kind'])
     assert.equal(typeof registeredTools[9].output.presentationMeta, 'function')
+    assert.deepEqual([...registeredTools[10].parameters.required].sort(), ['draftId'])
+    assert.deepEqual([...registeredTools[11].parameters.required].sort(), ['draftId'])
+    assert.equal(typeof registeredTools[10].output.presentationMeta, 'function')
     assert.deepEqual(emittedEvents, [], 'registration alone must not claim a filesystem observation')
     const agentRequestEvents = eventListeners.filter(event => event.name === 'agent/request')
     assert.equal(agentRequestEvents.length, 1, 'plugin must install one scoped request waterfall')

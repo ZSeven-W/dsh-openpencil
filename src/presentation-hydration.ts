@@ -38,6 +38,7 @@ import {
 } from './renderer.js'
 import {
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_AGENT_RUN_TOOL_NAME,
   OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
   OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
@@ -86,8 +87,10 @@ interface HydratablePendingPipelineResult {
   draftId: string
   path: string
   published: false
-  stage: 'needs_preview'
-  reason: 'preview_unavailable'
+  stage: 'needs_preview' | 'needs_visual_review'
+  reason?: 'preview_unavailable'
+  digest?: string[]
+  checklist?: string[]
   version: number
   diagnostics: unknown[]
   canContinue: true
@@ -365,6 +368,17 @@ const PENDING_PIPELINE_RESULT_KEYS = new Set([
   'draftId', 'path', 'published', 'stage', 'version', 'diagnostics', 'canContinue',
   'next', 'reason', 'screenshot', 'finalization',
 ])
+const VISUAL_REVIEW_RESULT_KEYS = new Set([
+  'draftId', 'path', 'published', 'stage', 'version', 'diagnostics', 'canContinue',
+  'next', 'digest', 'checklist', 'screenshot', 'finalization',
+])
+const MAX_VISUAL_REVIEW_LINES = 40
+function isBoundedStringArray(value: unknown, maxItems: number, maxLength: number): boolean {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.length <= maxItems
+    && value.every(item => typeof item === 'string' && item.length > 0 && item.length <= maxLength)
+}
 const PENDING_FINALIZATION_KEYS = new Set([
   'version', 'changed', 'documentChanged', 'reused', 'documentSha256', 'note',
 ])
@@ -388,7 +402,13 @@ function isHydratableInspectionScreenshot(value: unknown): value is HydratableIn
 
 /** Accept a post-finalization wait only when it carries an immutable root screenshot. */
 function parseHydratablePendingPipelineResult(value: unknown): HydratablePendingPipelineResult | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, PENDING_PIPELINE_RESULT_KEYS)) return undefined
+  if (!isRecord(value)) return undefined
+  const visualReview = value.stage === 'needs_visual_review'
+  if (!hasExactKeys(value, visualReview ? VISUAL_REVIEW_RESULT_KEYS : PENDING_PIPELINE_RESULT_KEYS)) return undefined
+  if (visualReview && (
+    !isBoundedStringArray(value.digest, MAX_VISUAL_REVIEW_LINES, 200)
+    || !isBoundedStringArray(value.checklist, MAX_VISUAL_REVIEW_LINES, 300)
+  )) return undefined
   const finalization = value.finalization
   if (
     typeof value.draftId !== 'string'
@@ -397,8 +417,7 @@ function parseHydratablePendingPipelineResult(value: unknown): HydratablePending
     || !isAbsolute(value.path)
     || !value.path.toLowerCase().endsWith('.op')
     || value.published !== false
-    || value.stage !== 'needs_preview'
-    || value.reason !== 'preview_unavailable'
+    || (visualReview ? false : value.stage !== 'needs_preview' || value.reason !== 'preview_unavailable')
     || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
     || !Array.isArray(value.diagnostics)
     || value.diagnostics.length > 64
@@ -469,6 +488,8 @@ const COMPACT_BUILD_CONTRACT_V7_KEYS = new Set([
 ])
 const COMPACT_BUILD_CONTRACT_V8_KEYS = new Set([
   ...COMPACT_BUILD_CONTRACT_V7_KEYS, 'quality',
+  // Optional App-alignment payload: matched domain-skill digests.
+  'domainGuidance',
 ])
 const COMPACT_BUILD_CONTRACT_V8_QUALITY_KEYS = new Set([
   'textDefaults', 'contrast',
@@ -638,11 +659,35 @@ export function parseHydratableBatchResult(value: unknown): HydratableBatchResul
   return value as unknown as HydratableBatchResult
 }
 
+const AGENT_RUN_RESULT_KEYS = new Set([
+  'draftId', 'version', 'changed', 'agentRun', 'screenshot', 'previewUnavailable',
+  'canContinue', 'next',
+])
+
+/** Accept a landed app-agent run only when it carries a concrete PNG artifact. */
+export function parseHydratableAgentRunResult(value: unknown): HydratableBatchResult | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, AGENT_RUN_RESULT_KEYS)) return undefined
+  if (
+    typeof value.draftId !== 'string'
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
+    || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
+    || value.changed !== true
+    || !isRecord(value.agentRun)
+    || Object.keys(value.agentRun).length > 8
+    || !isHydratableInspectionScreenshot(value.screenshot)
+    || (value.previewUnavailable !== undefined && value.previewUnavailable !== true)
+    || value.canContinue !== true
+    || !isSafeString(value.next)
+  ) return undefined
+  return value as unknown as HydratableBatchResult
+}
+
 function parseHydratableResult(toolName: unknown, value: unknown): HydratableResult | undefined {
   if (toolName === OPENPENCIL_RENDER_TOOL_NAME) return parseHydratableRenderResult(value)
   if (toolName === OPENPENCIL_NEW_TOOL_NAME) return parseHydratableNewResult(value)
   if (toolName === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME) return parseHydratableBeginResult(value)
   if (toolName === OPENPENCIL_PIPELINE_BATCH_TOOL_NAME) return parseHydratableBatchResult(value)
+  if (toolName === OPENPENCIL_PIPELINE_AGENT_RUN_TOOL_NAME) return parseHydratableAgentRunResult(value)
   if (toolName === OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME) return parseHydratableInspectionResult(value)
   if (toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME) return parseHydratablePipelineResult(value)
   return undefined

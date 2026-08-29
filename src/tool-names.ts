@@ -7,6 +7,7 @@ export const OPENPENCIL_EDIT_TOOL_NAME = 'openpencil_edit' as const
 export const OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME = 'openpencil_pipeline_begin' as const
 export const OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME = 'openpencil_pipeline_context' as const
 export const OPENPENCIL_PIPELINE_BATCH_TOOL_NAME = 'openpencil_pipeline_batch' as const
+export const OPENPENCIL_PIPELINE_AGENT_RUN_TOOL_NAME = 'openpencil_pipeline_agent_run' as const
 export const OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME = 'openpencil_pipeline_inspect' as const
 export const OPENPENCIL_PIPELINE_FINISH_TOOL_NAME = 'openpencil_pipeline_finish' as const
 export const OPENPENCIL_PIPELINE_ABORT_TOOL_NAME = 'openpencil_pipeline_abort' as const
@@ -16,6 +17,7 @@ export const OPENPENCIL_PIPELINE_TOOL_NAMES = [
   OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME,
   OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
+  OPENPENCIL_PIPELINE_AGENT_RUN_TOOL_NAME,
   OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_PIPELINE_ABORT_TOOL_NAME,

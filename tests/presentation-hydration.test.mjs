@@ -10,6 +10,7 @@ import {
   PRESENTATION_HYDRATION_ROUTE,
   PresentationHydrationController,
   parseHydratableBatchResult,
+  parseHydratableAgentRunResult,
   parseHydratableBeginResult,
   parseHydratableInspectionResult,
   parseHydratableNewResult,
@@ -299,6 +300,18 @@ function batchResult(overrides = {}) {
     diagnostics: [],
     canContinue: true,
     next: 'Continue with the final generation script.',
+    ...overrides,
+  }
+}
+
+function visualReviewResult(overrides = {}) {
+  const { reason: _reason, ...base } = pendingPipelineResult()
+  return {
+    ...base,
+    stage: 'needs_visual_review',
+    digest: ['page 390x? with 3 visible regions (top to bottom):', 'footer: present as the final region.'],
+    checklist: ['Vertical rhythm: section spacing is even.', 'Footer: the page ends with the complete footer band.'],
+    next: 'Review the digest against every checklist item, then call finish once more.',
     ...overrides,
   }
 }
@@ -689,6 +702,52 @@ test('nested pipeline batch hydrates its committed PNG and rejects an artifact-f
       documentSha256: IMAGE_SHA,
     })
     assert.equal(absent.status, 404)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('nested needs_visual_review hydrates its exact checkpointed preview', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = visualReviewResult()
+    const callId = 'outer:code:pipeline-finish-review'
+    observe(harness.hydration, 'session-pipeline-finish-review', callId, result, 'openpencil_pipeline_finish')
+    sessions.set('session-pipeline-finish-review', {
+      events: [historicalEvent(callId, result, undefined, 'openpencil_pipeline_finish')],
+    })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-finish-review',
+      callId,
+      documentSha256: IMAGE_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.equal(envelope.schemaVersion, 2)
+    assert.equal(envelope.image.path, `render-stage-${IMAGE_SHA}.png`)
+    assert.match(envelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('needs_visual_review with an oversized digest is not hydratable', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = visualReviewResult({ digest: Array.from({ length: 41 }, () => 'line') })
+    const callId = 'outer:code:pipeline-finish-review-bad'
+    observe(harness.hydration, 'session-review-bad', callId, result, 'openpencil_pipeline_finish')
+    sessions.set('session-review-bad', {
+      events: [historicalEvent(callId, result, undefined, 'openpencil_pipeline_finish')],
+    })
+    const response = await harness.request({
+      sessionId: 'session-review-bad',
+      callId,
+      documentSha256: IMAGE_SHA,
+    })
+    assert.notEqual(response.status, 200)
   } finally {
     await harness.cleanup()
   }
@@ -1137,6 +1196,36 @@ test('strict batch parser requires one exact PNG artifact', () => {
   }), undefined)
   assert.equal(parseHydratableBatchResult({ ...result, generationScriptLimit: 8 }), undefined)
   assert.equal(parseHydratableBatchResult({ ...result, unexpected: true }), undefined)
+})
+
+function agentRunResult(overrides = {}) {
+  return {
+    draftId: DRAFT_ID,
+    version: 4,
+    changed: true,
+    agentRun: {
+      toolCalls: 9,
+      stopReason: 'end_turn',
+      landedRoots: 1,
+      finalize: { committedScreens: 1, unfilledScreens: 0, qualityChecks: 3, qualityRepairs: 2, qualityNotes: 0 },
+    },
+    screenshot: inspectionResult().screenshot,
+    canContinue: true,
+    next: 'Call finish exactly once now.',
+    ...overrides,
+  }
+}
+
+test('strict agent-run parser requires one landed loop plus its exact PNG artifact', () => {
+  const result = agentRunResult()
+  assert.ok(parseHydratableAgentRunResult(result))
+  assert.equal(parseHydratableAgentRunResult({ ...result, changed: false }), undefined)
+  assert.equal(parseHydratableAgentRunResult({ ...result, screenshot: undefined, previewUnavailable: true }), undefined)
+  assert.equal(parseHydratableAgentRunResult({
+    ...result,
+    screenshot: { ...result.screenshot, path: '/tmp/leaked.png' },
+  }), undefined)
+  assert.equal(parseHydratableAgentRunResult({ ...result, unexpected: true }), undefined)
 })
 
 test('strict begin parser binds a compact unpublished live-draft contract', () => {

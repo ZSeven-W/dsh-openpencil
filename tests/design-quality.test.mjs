@@ -1453,6 +1453,39 @@ test('collapses every media wrapper when distinct repeated product cards reuse a
   assert.deepEqual(inspectGeneratedDesignQualityReport(documentWith([distinctIcons])).diagnostics, [])
 })
 
+test('contrast failures emit deterministic recolor repairs when ink or white rescues the pair', () => {
+  const page = {
+    id: 'page', type: 'frame', width: 1200, height: 'fit_content', layout: 'vertical',
+    fill: solid('#FFFFFF'),
+    children: [{
+      id: 'hero', type: 'frame', width: 'fill_container', height: 200, layout: 'vertical',
+      fill: solid('#FF5A1F'),
+      children: [{
+        id: 'headline', type: 'text', content: '一杯暖意', fontSize: 16, lineHeight: 1.5,
+        fontFamily: 'Inter, system-ui, sans-serif', fill: solid('#FFFFFF'),
+      }],
+    }, {
+      id: 'ghost', type: 'text', content: '看不见的字', fontSize: 16, lineHeight: 1.5,
+      fontFamily: 'Inter, system-ui, sans-serif', fill: solid('#FFFFFF'),
+    }],
+  }
+  const report = inspectGeneratedDesignQualityReport(documentWith([page]))
+  const headline = report.repairTargets.find(target => target.nodeId === 'headline')
+  assert.deepEqual(headline?.patch, { fill: [{ type: 'solid', color: '#1C1917' }] })
+  const ghost = report.repairTargets.find(target => target.nodeId === 'ghost')
+  assert.deepEqual(ghost?.patch, { fill: [{ type: 'solid', color: '#1C1917' }] })
+  assert.equal(report.unrepairableDiagnosticCount, 0)
+
+  // A mid-gray backdrop defeats both rescue candidates and stays terminal.
+  const gray = structuredClone(page)
+  gray.children[0].fill = solid('#7A7A7A')
+  gray.children[0].children[0].fill = solid('#8A8A8A')
+  gray.children.pop()
+  const terminal = inspectGeneratedDesignQualityReport(documentWith([gray]))
+  assert.ok(terminal.unrepairableDiagnosticCount >= 1)
+  assert.ok(!terminal.repairTargets.some(target => target.nodeId === 'headline'))
+})
+
 function categoryCard(id, label, iconFontName, options = {}) {
   const children = []
   if (options.visual !== false) {

@@ -139,6 +139,22 @@ class FakeDraftController {
       this.version += 1
       changed = true
       this.screenshotVersion = undefined
+    } else if (tool === 'run_design_agent') {
+      if (this.agentRunError !== undefined) throw this.agentRunError
+      value = this.agentRunValue ?? {
+        toolCalls: 9,
+        stopReason: 'end_turn',
+        landedRoots: 1,
+        finalize: { committedScreens: 1, unfilledScreens: 0, qualityChecks: 3, qualityRepairs: 2, qualityNotes: 0 },
+      }
+      if (this.agentRunChanged !== false) {
+        if (typeof this.agentRunDocumentTransform === 'function') {
+          this.documentJson = this.agentRunDocumentTransform(this.documentJson)
+        }
+        this.version += 1
+        changed = true
+        this.screenshotVersion = undefined
+      }
     } else if (tool === 'finalize_design') {
       if (this.finalizeError !== undefined) throw this.finalizeError
       value = this.finalizeValue
@@ -317,8 +333,15 @@ async function createHarness(options = {}) {
   return { calls, controller, draft, exec, fs, policy, processPath, render, target, tools, workspaceRoot }
 }
 
-async function begin(harness, brief = 'Design a deliberate mobile account screen') {
-  return harness.tools.openpencil_pipeline_begin.execute({ path: 'design.op', brief }, harness.exec)
+async function begin(harness, brief = 'Design a deliberate mobile account screen', options = {}) {
+  // Established finish-path tests predate the see-then-fix round and assert
+  // direct publication; they opt out here while the dedicated visual-review
+  // tests below exercise the default-on behavior explicitly.
+  const skipVisualReview = options.skipVisualReview ?? true
+  return harness.tools.openpencil_pipeline_begin.execute(
+    { path: 'design.op', brief, ...(skipVisualReview ? { skip_visual_review: true } : {}) },
+    harness.exec,
+  )
 }
 
 async function completeGeneration(harness) {
@@ -448,7 +471,10 @@ test('pipeline begin derives owner from execution, validates an absent local tar
     harness.tools.openpencil_pipeline_batch.parameters.properties.script.description,
   ].join('\n')
   assert.doesNotMatch(modelSurface, /\boperations\b|\bDSL\b/i, 'the v12 model contract must expose only QuickJS script mode')
-  assert.ok(Buffer.byteLength(serialized, 'utf8') < 8 * 1024, `pipeline_begin compact JSON must stay below 8 KiB, got ${Buffer.byteLength(serialized, 'utf8')} bytes`)
+  // App-alignment deliberately grew this result: the begin contract now
+  // carries a matched style-guide continuation plus 1-2 domain-skill
+  // digests (the same knowledge OpenPencil's built-in agent loads).
+  assert.ok(Buffer.byteLength(serialized, 'utf8') < 12 * 1024, `pipeline_begin compact JSON must stay below 12 KiB, got ${Buffer.byteLength(serialized, 'utf8')} bytes`)
   assert.equal('ownerSessionId' in harness.tools.openpencil_pipeline_begin.parameters.properties, false)
   assert.equal(harness.tools.openpencil_pipeline_begin.parameters.properties.path.required, undefined)
   assert.match(harness.tools.openpencil_pipeline_begin.parameters.properties.path.description, /Optional.*Omit it unless.*explicitly named.*plugin creates.*concrete collision-resistant filename.*explicit target must not exist.*preserved exactly/is)
@@ -498,6 +524,101 @@ test('pipeline begin derives owner from execution, validates an absent local tar
     platform: 'web', width: 1280, seedHeight: 1600, finalHeight: 1600,
     fixedViewport: true, rootCount: 1, rootType: 'frame',
   })
+})
+
+test('begin matches the brief onto App style guides and domain skills deterministically', async () => {
+  // A Chinese mobile food brief resolves the App's warm food guide, and the
+  // contract carries the mobile-app + CJK domain digests.
+  const coffee = await createHarness()
+  const coffeeResult = await begin(coffee, '画一个移动端咖啡外卖 App 首页,中文文案')
+  assert.equal(coffeeResult.platform, 'mobile')
+  assert.equal(coffeeResult.continuationStyle.styleGuide, 'warm-food-mobile-light')
+  assert.equal(coffeeResult.styleGuideTags.name, 'warm-food-mobile-light')
+  assert.ok(coffeeResult.styleGuideTags.tags.includes('food'))
+  assert.match(coffeeResult.continuationStyle.palette.page, /^#[0-9A-F]{6}$/i)
+  assert.equal(coffeeResult.continuationStyle.typography.fontFamily, 'Inter, system-ui, sans-serif')
+  const coffeeGuidance = coffeeResult.buildContract.domainGuidance
+  assert.ok(coffeeGuidance['mobile-app'].length > 200, 'mobile briefs carry the mobile-app architecture digest')
+  assert.match(coffeeGuidance['mobile-app'], /status bar/i)
+  assert.ok(coffeeGuidance['cjk-typography'].length > 200, 'CJK briefs carry the CJK typography digest')
+  assert.match(coffeeGuidance['cjk-typography'], /lineHeight/)
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(coffeeGuidance)) <= 2560,
+    'domain guidance stays within its injection budget',
+  )
+
+  // A commerce-web brief keeps the untouched builtin direction: exact
+  // builtin palette, no guide override, no surprise recipe change.
+  const shop = await createHarness()
+  const shopResult = await begin(shop, 'Design an ecommerce homepage')
+  assert.equal(shopResult.continuationStyle.styleGuide, 'ecommerce-modern-light')
+  assert.equal(shopResult.continuationStyle.palette.accent, '#C2410C')
+  assert.equal(shopResult.styleGuideTags.name, 'ecommerce-modern-light')
+
+  // A brief with no category signal falls back to the editorial default.
+  const plain = await createHarness()
+  const plainResult = await begin(plain, 'Design a deliberate account screen for web')
+  assert.equal(plainResult.continuationStyle.styleGuide, 'dsh-editorial-warm')
+  assert.equal(plainResult.styleGuideTags.name, 'dsh-editorial-warm')
+})
+
+test('begin ships a landing scaffold and stays deterministic per brief', async () => {
+  const landing = await createHarness()
+  const landingResult = await begin(landing, '为 Nimbus 设计一个 SaaS 产品官网落地页,中文文案')
+  assert.equal(landingResult.platform, 'web')
+  assert.equal(landingResult.continuationStyle.styleGuide, 'saas-modern-light')
+  const guidance = landingResult.buildContract.domainGuidance
+  assert.ok(guidance['cjk-typography'] !== undefined)
+  const scaffolded = Object.values(guidance).some(digest => /Proven section skeleton/.test(digest))
+  assert.equal(typeof guidance === 'object', true)
+  // Determinism: the same brief yields byte-identical knowledge fields.
+  const again = await createHarness()
+  const againResult = await begin(again, '为 Nimbus 设计一个 SaaS 产品官网落地页,中文文案')
+  assert.deepEqual(againResult.continuationStyle, landingResult.continuationStyle)
+  assert.deepEqual(againResult.buildContract.domainGuidance, guidance)
+  assert.equal(scaffolded || guidance['landing-page'] === undefined, true)
+})
+
+test('the canonical I(null) page wrapper heals to the existing root and bare Inter normalizes', async () => {
+  const harness = await createHarness()
+  await begin(harness)
+  await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'const page = I(null, {type:"frame", name:"Home", width:390, height:844, layout:"vertical"});\n'
+      + 'const header = I(page, {type:"frame", name:"Header", width:"fill_container", height:64});\n'
+      + 'I(header, {type:"text", name:"Brand", content:"MELLOW", fontFamily:"Inter", fontSize:20, lineHeight:1.2});',
+  }, harness.exec)
+  const sent = harness.draft.calls.filter(call => call.tool === 'batch_design').at(-1).args.script
+  assert.match(sent, /const page = "root";/)
+  assert.doesNotMatch(sent, /I\(\s*null/)
+  assert.match(sent, /fontFamily:"Inter, system-ui, sans-serif"/)
+  assert.doesNotMatch(sent, /fontFamily:"Inter"/)
+
+  // A non-canonical I(null, ...) still rejects with the exact rewrite.
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: 'I("n1", {type:"frame", name:"A"}); const extra = I(null, {type:"frame", name:"B"});',
+    }, harness.exec),
+    /page root already exists.*replace const page = I\(null, \{\.\.\.\}\) with const page = "root"/s,
+  )
+})
+
+test('a duplicate begin names the live draft and the exact next step instead of a dead end', async () => {
+  const harness = await createHarness()
+  await begin(harness)
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_begin.execute({ path: 'other.op', brief: 'another brief' }, harness.exec),
+    /already has the active OpenPencil draft ".+".*generation scripts committed: 0\/2.*Do not begin again.*send batch 1/s,
+  )
+  await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'I("n1", {type:"frame", name:"Header"});',
+  }, harness.exec)
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_begin.execute({ path: 'other.op', brief: 'another brief' }, harness.exec),
+    /generation scripts committed: 1\/2.*second and final batch/s,
+  )
 })
 
 test('pipeline begin refuses read-only, existing, non-op, and non-agent calls before starting a daemon', async () => {
@@ -644,7 +765,7 @@ test('batch enforces the begin canvas and avoids automatic full quality/layout r
   )
   await assert.rejects(
     harness.tools.openpencil_pipeline_batch.execute({ draftId: DRAFT_ID, script: 'I(null,{type:"frame"})' }, harness.exec),
-    /I\(null.*forbidden/i,
+    /page root already exists.*replace const page = I\(null/is,
   )
 
   const callsBeforeBindingMutation = harness.draft.calls.length
@@ -1936,4 +2057,253 @@ test('publication rejects a post-final PNG whose cached bytes changed after its 
   assert.equal(blocked.canContinue, false)
   assert.match(blocked.diagnostics[0], /preview changed after its exact PNG integrity checkpoint/)
   assert.equal(harness.calls.write.length, 0)
+})
+
+const CLEAN_PUBLISHABLE_DOCUMENT = JSON.stringify({
+  version: '1.0.0',
+  children: [{ type: 'frame', id: 'root', width: 390, height: 'fit_content', children: [] }],
+})
+
+async function reachVisualReview(harness) {
+  await begin(harness, 'Design a mobile learning dashboard', { skipVisualReview: false })
+  await completeGeneration(harness)
+  harness.draft.documentJson = CLEAN_PUBLISHABLE_DOCUMENT
+  const review = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(review.stage, 'needs_visual_review')
+  return review
+}
+
+test('a clean finish yields one visual review round whose acceptance publishes', async () => {
+  const harness = await createHarness()
+  const review = await reachVisualReview(harness)
+  assert.equal(review.published, false)
+  assert.equal(review.canContinue, true)
+  assert.ok(Array.isArray(review.digest) && review.digest.length > 0, 'digest lines ride the review result')
+  assert.match(review.digest.join('\n'), /visible regions|footer/i)
+  assert.ok(Array.isArray(review.checklist) && review.checklist.length >= 5)
+  assert.ok(review.screenshot !== undefined, 'the exact post-final preview artifact rides the review result')
+  assert.match(review.next, /finish exactly once more.*ONE bounded correction batch.*I\/K\/U only.*16 calls.*6 KiB.*Header or Hero/is)
+  assert.equal(harness.draft.finishCalls, 0, 'nothing publishes during the review round')
+
+  const published = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(published.published, true)
+  assert.equal(harness.calls.write.length, 1)
+})
+
+test('skip_visual_review publishes directly after a clean gate', async () => {
+  const harness = await createHarness()
+  await begin(harness, 'Design a mobile learning dashboard')
+  await completeGeneration(harness)
+  harness.draft.documentJson = CLEAN_PUBLISHABLE_DOCUMENT
+  const published = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(published.published, true)
+})
+
+test('the visual review round authorizes exactly one bounded I/K/U correction batch', async () => {
+  const harness = await createHarness()
+  await reachVisualReview(harness)
+
+  const corrected = await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'U("root", {height:"fit_content"}); const extra = I("root", {type:"frame", width:"fill_container", height:"fit_content"});',
+  }, harness.exec)
+  assert.equal(corrected.changed, true)
+  assert.equal(corrected.generationScriptCount, 2, 'a visual correction batch is not a generation script')
+
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: 'U("root", {height:"fit_content"});',
+    }, harness.exec),
+    /call finish before any repair script/i,
+    'the single visual correction authorization is consumed',
+  )
+
+  const published = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(published.published, true, 'the corrected page re-validates and publishes without a second review')
+})
+
+test('visual review correction batches enforce their bounds before touching the canvas', async () => {
+  const harness = await createHarness()
+  await reachVisualReview(harness)
+  const batchCallsBefore = harness.draft.calls.filter(call => call.tool === 'batch_design').length
+
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: 'D("root");',
+    }, harness.exec),
+    /C\/D\/M\/R\/G mutations are not authorized/i,
+  )
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: Array.from({ length: 17 }, (_, index) => `U("n${index}", {minHeight:44});`).join('\n'),
+    }, harness.exec),
+    /limited to 16 I\/K\/U calls/i,
+  )
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: `U("root", {name:"pad"}); // ${'x'.repeat(7 * 1024)}`,
+    }, harness.exec),
+    /limited to 6144 bytes/i,
+  )
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: 'const header = I("root", {type:"frame", name:"Header"});',
+    }, harness.exec),
+    /must not rebuild Header or Hero/i,
+  )
+  assert.equal(
+    harness.draft.calls.filter(call => call.tool === 'batch_design').length,
+    batchCallsBefore,
+    'rejected correction scripts never reach the canvas',
+  )
+
+  const corrected = await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'U("root", {height:"fit_content"});',
+  }, harness.exec)
+  assert.equal(corrected.changed, true, 'a rejected script does not consume the authorization')
+})
+
+test('gate work introduced by the visual correction runs repair rounds without a second review', async () => {
+  const harness = await createHarness()
+  await reachVisualReview(harness)
+
+  const authored = JSON.parse(CLEAN_PUBLISHABLE_DOCUMENT)
+  authored.children[0].children = [{
+    type: 'frame', id: 'rail', width: 'fill_container', height: 'fit_content',
+    layout: 'vertical', padding: [0, 24], children: [{ type: 'text', id: 'copy-1', content: 'Review me' }],
+  }]
+  harness.draft.documentJson = JSON.stringify(authored)
+  await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'const copy = I("rail", {type:"text", content:"Review me"});',
+  }, harness.exec)
+
+  const blocked = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(blocked.stage, 'needs_correction', 'the corrected page re-enters the quality gate, not the review')
+  const repairedDocument = JSON.parse(harness.draft.documentJson)
+  repairedDocument.children[0].children[0].children[0] = {
+    type: 'text', id: 'copy-1', content: 'Review me',
+    fontFamily: 'Inter, system-ui, sans-serif', fontSize: 16, lineHeight: 1.5,
+  }
+  harness.draft.documentJson = JSON.stringify(repairedDocument)
+  await harness.tools.openpencil_pipeline_batch.execute({
+    draftId: DRAFT_ID,
+    script: 'U("copy-1", {fontFamily:"Inter, system-ui, sans-serif",fontSize:16,lineHeight:1.5});',
+  }, harness.exec)
+  const published = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(published.published, true)
+})
+
+test('the app-agent engine runs begin -> one agent run -> finish -> published', async () => {
+  const harness = await createHarness()
+  const begun = await harness.tools.openpencil_pipeline_begin.execute(
+    { path: 'design.op', brief: 'Design a deliberate mobile account screen', engine: 'app-agent' },
+    harness.exec,
+  )
+  assert.match(begun.next, /openpencil_pipeline_agent_run exactly once.*Never send generation batch scripts/is)
+
+  harness.draft.agentRunDocumentTransform = () => CLEAN_PUBLISHABLE_DOCUMENT
+  const run = await harness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(run.changed, true)
+  assert.equal(run.canContinue, true)
+  assert.equal(run.agentRun.stopReason, 'end_turn')
+  assert.equal(run.agentRun.landedRoots, 1)
+  assert.equal(run.agentRun.finalize.committedScreens, 1)
+  assert.ok(run.screenshot !== undefined, 'the live preview artifact rides the agent-run result')
+  assert.match(run.next, /finish exactly once/i)
+  const call = harness.draft.calls.filter(entry => entry.tool === 'run_design_agent').at(-1)
+  assert.equal(call.args.brief, 'Design a deliberate mobile account screen')
+  assert.equal(call.args.timeout_seconds, 240)
+  assert.equal(call.args.max_turns, 12)
+
+  const published = await harness.tools.openpencil_pipeline_finish.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(published.published, true, 'app-agent drafts publish through the ordinary finish gate')
+  assert.equal(harness.calls.write.length, 1)
+})
+
+test('the app-agent engine refuses generation scripts and a second agent run', async () => {
+  const harness = await createHarness()
+  await harness.tools.openpencil_pipeline_begin.execute(
+    { path: 'design.op', brief: 'Design a deliberate mobile account screen', engine: 'app-agent' },
+    harness.exec,
+  )
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_batch.execute({
+      draftId: DRAFT_ID,
+      script: 'const hero = I("root", {type:"frame"});',
+    }, harness.exec),
+    /app-agent engine; call openpencil_pipeline_agent_run once/i,
+  )
+  harness.draft.agentRunDocumentTransform = () => CLEAN_PUBLISHABLE_DOCUMENT
+  await harness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID }, harness.exec)
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID }, harness.exec),
+    /single agent run was already used.*openpencil_pipeline_finish/is,
+  )
+})
+
+test('script drafts refuse the agent run and app-agent brief size/timeout bounds hold', async () => {
+  const harness = await createHarness()
+  await begin(harness)
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID }, harness.exec),
+    /script engine; follow begin\.next/i,
+  )
+  const agentHarness = await createHarness()
+  await agentHarness.tools.openpencil_pipeline_begin.execute(
+    { path: 'design.op', brief: 'brief', engine: 'app-agent' },
+    agentHarness.exec,
+  )
+  for (const timeout_seconds of [0, 29, 271]) {
+    await assert.rejects(
+      agentHarness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID, timeout_seconds }, agentHarness.exec),
+      /timeout_seconds must be a number between 30 and 270/,
+    )
+  }
+  for (const max_turns of [3, 29, 1.5]) {
+    await assert.rejects(
+      agentHarness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID, max_turns }, agentHarness.exec),
+      /max_turns must be an integer between 4 and 28/,
+    )
+  }
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_begin.execute(
+      { path: 'other.op', brief: 'brief', engine: 'desktop' },
+      harness.exec,
+    ),
+    /engine/i,
+  )
+})
+
+test('a missing daemon provider surfaces terminal configuration guidance without consuming retries', async () => {
+  const harness = await createHarness()
+  await harness.tools.openpencil_pipeline_begin.execute(
+    { path: 'design.op', brief: 'brief', engine: 'app-agent' },
+    harness.exec,
+  )
+  harness.draft.agentRunError = new Error('run_design_agent: no builtin agent provider is configured')
+  await assert.rejects(
+    harness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID }, harness.exec),
+    /no builtin agent provider is configured.*Configure one in the OpenPencil agent settings.*do not retry/is,
+  )
+})
+
+test('an agent run that lands nothing is terminal and blocks publication scripts', async () => {
+  const harness = await createHarness()
+  await harness.tools.openpencil_pipeline_begin.execute(
+    { path: 'design.op', brief: 'brief', engine: 'app-agent' },
+    harness.exec,
+  )
+  harness.draft.agentRunChanged = false
+  harness.draft.agentRunValue = { toolCalls: 2, stopReason: 'timeout', landedRoots: 0, loopError: 'loop timed out before landing' }
+  const blocked = await harness.tools.openpencil_pipeline_agent_run.execute({ draftId: DRAFT_ID }, harness.exec)
+  assert.equal(blocked.stage, 'blocked_agent_run')
+  assert.equal(blocked.canContinue, false)
+  assert.deepEqual(blocked.diagnostics, ['loop timed out before landing'])
 })

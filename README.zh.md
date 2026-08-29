@@ -156,6 +156,14 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | `openpencil_selection` | 读取实时编辑器画布中当前选中的确切节点。 |
 
 ## 智能体设计工作流
+### 设计回合的模型档位
+
+生成质量与驱动流水线回合的模型直接相关。两批次契约在快档模型上可以工作,
+但排版判断、文案质量与契约遵从度在更强或开启推理的模型上有显著提升。
+以设计为主的 profile 建议在 `agent-default-model` 中使用非 flash 档
+(例如 `deepseek-v4` 并开启 `reasoningEffort`,替代 `deepseek-v4-flash`);
+仅聊天为主、设计只是附带能力的 profile 可保留快档。
+
 
 桌面电商 Hero 的几何结构会在第二批前验证：右侧每个视觉子节点和叠加形状都必须留在 Hero 的固定内宽高中。超大视觉会连同第一批原子回滚，不再撑大 live canvas 或流入最终发布。Generation receipt 只暴露已提交的节点映射与预览；原生诊断延后到 finish 聚合，由它一次给出精确修复事务，不再诱发生成中途的猜测循环。
 

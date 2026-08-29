@@ -64,8 +64,8 @@ test('generated skill is a thin, direct adapter over the authoritative native dr
   const bytes = Buffer.byteLength(onDisk, 'utf8')
   const estimatedTokens = Math.ceil([...onDisk].length / 4)
   assert.deepEqual(onDisk.match(/^\d+\./gm), ['1.', '2.', '3.'])
-  assert.ok(bytes <= 8_500, `thin adapter grew to ${bytes} bytes`)
-  assert.ok(estimatedTokens <= 2_150, `thin adapter grew to about ${estimatedTokens} tokens`)
+  assert.ok(bytes <= 9_200, `thin adapter grew to ${bytes} bytes`)
+  assert.ok(estimatedTokens <= 2_300, `thin adapter grew to about ${estimatedTokens} tokens`)
 })
 
 test('readmes document the bounded first preview and compact native text defaults', async () => {

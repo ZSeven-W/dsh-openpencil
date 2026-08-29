@@ -156,6 +156,16 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | `openpencil_selection` | Reads the exact nodes selected in the live editor canvas. |
 
 ## Agent Design Workflow
+### Model tier for design turns
+
+Generation quality tracks the model driving the pipeline turns. The two-batch
+contract works on fast tiers, but layout judgment, copywriting, and contract
+adherence improve markedly on a stronger or reasoning-enabled model. For
+design-heavy profiles, prefer a non-flash tier (for example
+`deepseek-v4` with `reasoningEffort` enabled over `deepseek-v4-flash`) in the
+profile's `agent-default-model`; keep the fast tier for chat-only profiles
+where design output is incidental.
+
 
 Desktop commerce Hero geometry is validated before batch two: every right-side visual child and layered shape must stay inside the fixed Hero inner width and height. An oversized visual is rolled back with the entire first batch instead of inflating the live canvas or reaching final publication. Generation receipts expose only committed node mappings and previews; native diagnostics are deferred to finish so they produce one exact repair transaction instead of a speculative mid-generation loop.
 

@@ -1002,7 +1002,7 @@ export function ManagedOpenPencilEditor({
             style={liveDraft ? { ...panelStyles.iframe, pointerEvents: 'none' } : panelStyles.iframe}
             src={iframeSrcRef.current}
             title={copy.editorTitle(title)}
-            allow="clipboard-read; clipboard-write"
+            allow="clipboard-read; clipboard-write; local-fonts"
             aria-disabled={liveDraft || undefined}
             tabIndex={!liveDraft && (phase === 'ready' || phase === 'saving') ? 0 : -1}
           />
