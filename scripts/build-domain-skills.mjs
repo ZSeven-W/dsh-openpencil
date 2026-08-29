@@ -10,7 +10,7 @@ export const DEFAULT_SKILLS_DIR = resolve(
 )
 export const DEFAULT_TEMPLATES_DIR = resolve(
   root,
-  'vendor/openpencil/crates/op-host-web/pkg/assets/scene_templates',
+  'vendor/openpencil/crates/op-editor-core/assets/scene_templates',
 )
 export const DEFAULT_OUTPUT_PATH = resolve(root, 'lib/assets/openpencil-design/domain-skills.json')
 
