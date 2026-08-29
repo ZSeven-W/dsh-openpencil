@@ -97,7 +97,7 @@ DSH OpenPencil เชื่อมต่อ [DeepSeek Harness](https://github.com
 
 ### 🎯 เวิร์กโฟลว์ครบวงจรเดียว
 
-"ความต้องการ → draft ส่วนตัว → semantic batches → ตรวจและแก้ PNG แบบแม่นยำ → เผยแพร่แบบ atomic หลังผ่าน quality gates" — วงจรที่ครบถ้วนภายใน DSH
+"ความต้องการ → private live canvas ใน sidebar → semantic batches สองชุดพร้อม exact PNG สำหรับผู้ใช้ → deterministic quality gates ของ native/DSH → เผยแพร่แบบ atomic" — วงจรที่ครบถ้วนภายใน DSH
 
 </td>
 </tr>
@@ -142,11 +142,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | เครื่องมือ | หน้าที่ |
 | --- | --- |
 | `openpencil_new` | เส้นทางด่วนที่เข้ากันได้สำหรับงานง่าย: รันสคริปต์ QuickJS `batch_design` แบบ transactional หนึ่งชุด เผยแพร่เมื่อ target ยังไม่มีเท่านั้น และคืน presentation ที่แก้ไขได้ สำหรับงาน production ควรใช้ pipeline เต็มรูปแบบด้านล่าง |
-| `openpencil_pipeline_begin` | เริ่ม draft ส่วนตัวที่เป็นของเซสชันสำหรับพาธ `.op` ใหม่ซึ่งสัมพันธ์กับ workspace โดยไฟล์ target ยังไม่ถูกเผยแพร่และไม่ถูกแตะต้อง |
-| `openpencil_pipeline_context` | โหลด dynamic design-agent prompt แบบ native พร้อม guidelines, style guides, variables/themes และ metadata หรือ script references ของ UI kits ที่เกี่ยวข้อง |
-| `openpencil_pipeline_batch` | ใช้ semantic QuickJS batches กับ draft ตามลำดับ โดยสร้าง skeleton ก่อน แล้วจึงเพิ่มและปรับแต่งแต่ละส่วน |
-| `openpencil_pipeline_inspect` | รันการตรวจ native quality หรือ resolved layout หรือสร้าง PNG แบบแม่นยำให้โมเดลเปิดด้วย image reading และตรวจด้วยสายตา |
-| `openpencil_pipeline_finish` | รัน native finalization, lint, layout, ความใหม่ของ screenshot และ DSH quality gates จากนั้นเผยแพร่แบบ atomic ด้วย `createIfAbsent` และคืน presentation ที่แก้ไขได้ |
+| `openpencil_pipeline_begin` | เริ่ม draft ส่วนตัวของเซสชันพร้อม root เพียงตัวเดียว เปิด live canvas เดียวกันใน sidebar ทันที และคง target `.op` ไว้โดยยังไม่เผยแพร่ |
+| `openpencil_pipeline_context` | โหลด guideline, style, theme หรือรายละเอียด UI kit แบบจำกัดเพียงหนึ่งรายการเมื่อ begin contract ขาดจริงเท่านั้น ไม่ใช่ startup refresh loop |
+| `openpencil_pipeline_batch` | รันสคริปต์สร้างแบบ QuickJS โดยตรงได้สูงสุดสองชุด แต่ละ transaction ที่สำเร็จเพียงพยายามแสดง exact PNG ให้ผู้ใช้ เมื่อเครื่องมือคืนผลให้ทำตาม `next` ทันที |
+| `openpencil_pipeline_inspect` | ให้ manual diagnostic เฉพาะเมื่อผู้ใช้ร้องขออย่างชัดเจน การสร้างตามปกติจะไม่ใช้เป็นขั้นตอน preview หรือให้โมเดลตรวจภาพ |
+| `openpencil_pipeline_finish` | รัน deterministic gates ของ native และ DSH เรนเดอร์ exact PNG หลัง finalization และเผยแพร่แบบ atomic ด้วย `createIfAbsent` อนุญาต U-only repair หนึ่งครั้งและ finish ครั้งสุดท้ายเฉพาะเมื่อผลเป็น `needs_correction`, `canContinue: true`, มี `repairTargets` ครบและไม่ว่าง และ `omitted: 0`; ผลอื่นที่ยังไม่เผยแพร่ถือเป็น terminal |
 | `openpencil_pipeline_abort` | ทิ้ง draft ที่ยังไม่เผยแพร่โดยไม่สร้างไฟล์ target |
 | `openpencil_create` | ใช้โปรแกรม `batch_design` แบบ transactional เพื่อสร้างหรือจัดโครงสร้างโหนดใหม่บนแคนวาสสดที่มีอยู่ |
 | `openpencil_edit` | แก้ไขโหนดที่ระบุชัดเจนหรือโหนดเดียวที่ผู้ใช้เลือก |
@@ -155,11 +155,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## เวิร์กโฟลว์การออกแบบของ Agent
 
-สำหรับงาน production ให้ใช้ `openpencil_pipeline_begin` → `openpencil_pipeline_context` → เรียก `openpencil_pipeline_batch` และ `openpencil_pipeline_inspect` ซ้ำ → `openpencil_pipeline_finish` โดย draft daemon เป็นส่วนตัวของเซสชัน DSH เจ้าของ และพาธ workspace ที่ขอจะยังไม่มีอยู่จนกว่าการเผยแพร่จะสำเร็จ screenshot ของ private draft ระหว่างทางจะไม่เปิด editable sidebar เพื่อป้องกัน user edit แข่งกับ batch ของ Agent โดยจะให้สิทธิ์แก้ไขหลังเผยแพร่เท่านั้น
+สำหรับการสร้างตามปกติให้ใช้เส้นทางสั้นแบบตายตัว: `openpencil_pipeline_begin` → `openpencil_pipeline_batch` แบบ QuickJS โดยตรงสองครั้ง → `openpencil_pipeline_finish` หนึ่งครั้ง Begin สร้าง root เพียงตัวเดียวและเปิด private live canvas ใน sidebar ทันที โดยพาธ workspace ที่ขอจะยังไม่มีอยู่จนกว่าการเผยแพร่จะสำเร็จ หลัง begin หรือ batch สำเร็จแต่ละครั้ง ให้เรียกขั้นตอนถัดไปทันทีโดยไม่มีคำบรรยาย การวางแผน การเปรียบเทียบ การตรวจสอบ หรือเครื่องมือที่ไม่เกี่ยวข้อง ค่าเริ่มต้นคือใช้ image เพียงหนึ่งรายการทั้ง design และแต่ละ Hero/Product/Art/Media frame มี primary visual เพียงหนึ่งอย่าง ห้ามวาง image คู่กับ placeholder icon
 
-Context ไม่ใช่ template แบบคงที่ แต่รวม native dynamic design-agent prompt ของ OpenPencil เข้ากับ guidelines, style guides, variables/themes และ UI kits ที่เกี่ยวข้อง ให้สร้าง structural skeleton ก่อน แล้วเพิ่มเนื้อหาและปรับแต่งเป็น semantic section batches เพื่อความเร็ว batch ที่สำเร็จจะคืนเพียง compact layout diagnostics ส่วน resolved layout แบบเต็มให้ขอผ่าน `openpencil_pipeline_inspect` เมื่อจำเป็น อย่างน้อยให้เรียก `openpencil_pipeline_inspect` ด้วย `kind: "screenshot"` หลังสร้าง signature/heading และเรียกอีกครั้งหลังทำ primary task หรือ form พร้อม CTA เสร็จ ในแต่ละ milestone โมเดลต้องเปิด exact PNG ด้วย image reading แก้การตัดขอบ การล้น ลำดับชั้น ระยะห่าง สัดส่วน คอนทราสต์ และความอ่านง่ายที่เห็น แล้วทำซ้ำตามจำเป็น การตรวจด้วยสายตาไม่ได้เกิดขึ้นอัตโนมัติ
+batch ที่สำเร็จทั้งสองชุดจะพยายามแสดง exact PNG preview ให้ผู้ใช้ เมื่อเครื่องมือคืนผลให้ทำตาม `next` ทันที หาก `next` รายงาน `previewUnavailable` แสดงว่าสคริปต์ commit ลง live canvas แล้ว ห้ามรัน batch ซ้ำ และห้ามเรียก `openpencil_pipeline_inspect` หรือ `read_image` โดย `openpencil_pipeline_inspect` ใช้เฉพาะ diagnostic ที่ผู้ใช้ร้องขออย่างชัดเจน
 
-ขั้นตอน finish รัน native finalization, lint และ layout checks ของ OpenPencil รวมถึง DSH quality gate การตรวจแบบ deterministic เหล่านี้ไม่ได้สร้างรสนิยมหรือความสวยงาม หลัง finalization ต้องถ่าย exact screenshot ใหม่อีกภาพแยกต่างหากและให้โมเดลตรวจด้วยสายตา screenshot ของ milestone ระหว่างทางไม่สามารถผ่าน post-final freshness gate นี้ได้ จากนั้น finish call สุดท้ายจึงสร้าง target แบบ atomic ด้วย `createIfAbsent` หาก gate ล้มเหลวหรือเรียก `openpencil_pipeline_abort` target จะยังไม่มีอยู่ ผลลัพธ์การสร้างที่เผยแพร่ทุกชิ้นเป็น presentation เดียวที่มีทั้ง exact final PNG preview และ editable grant ที่ผูกกับเอกสาร โดย auto-open sidebar เฉพาะเมื่อว่าง ไม่แทนที่ editor ของเซสชันอื่น และมี **แก้ไขแคนวาส** เสมอสำหรับการสลับอย่างชัดเจน แม้ผลลัพธ์ `openpencil_pipeline_finish` จะถูกเรียกซ้อนผ่าน PTC/Code Mode ก็ต้องคง presentation เดิมและห้ามลดรูปเป็น JSON ธรรมดาหรือการ์ด read-only การ์ดประวัติหรือ hydrate แล้วจะไม่ auto-open
+Finish รัน native finalization, lint, contrast และ layout checks ของ OpenPencil พร้อม deterministic quality gates ของ DSH แล้วเรนเดอร์ exact final PNG และเผยแพร่ target แบบ atomic ใน healthy call เดียว อนุญาต repair เฉพาะเมื่อผลมี `stage: "needs_correction"`, `canContinue: true`, `repairTargets` ที่ครบและไม่ว่างพร้อม `omitted: 0` และทุก target มี `operation: "U"`, `nodeId` ที่ตรงและไม่ว่าง และ `patch` ที่ไม่ว่าง ให้นำ target ทั้งหมดไปใช้พร้อมกันใน U-only batch เพียงหนึ่งครั้ง แล้วเรียก finish ครั้งสุดท้ายอีกหนึ่งครั้งโดยไม่มีคำบรรยาย ผลอื่นที่ยังไม่เผยแพร่ error หรือ `canContinue: false` ถือเป็น terminal: รายงานครั้งเดียวและห้าม retry, inspect, อ่าน image/context, abort หรือสร้าง draft ใหม่ หาก gate ล้มเหลวหรือเรียก `openpencil_pipeline_abort` จะไม่สร้าง target exact final PNG และ live editor ใน published result เป็น authoritative อยู่แล้ว ให้คืนผลและจบทันที sidebar จะ auto-open เฉพาะเมื่อ idle และยังมี **แก้ไขแคนวาส** สำหรับสลับอย่างชัดเจนเสมอ
 
 ภายใน DSH service เดิมที่ยังทำงานอยู่ เมื่อเปลี่ยน browser หรือ reload จะสามารถกู้ strictly parsed durable publication จาก `openpencil_new` หรือ `openpencil_pipeline_finish` กลับมาเป็น exact PNG พร้อม action **แก้ไขแคนวาส** ที่ชัดเจน การ์ดประวัติจะไม่ auto-open sidebar ผู้ใช้ต้องคลิก action นี้เอง `openpencil_render` แบบประวัติทั่วไปยังคง read-only และ connection ที่ไม่ใช่ loopback จะไม่ได้รับ editor grant
 

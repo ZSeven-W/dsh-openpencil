@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import {
   PRESENTATION_HYDRATION_ROUTE,
   PresentationHydrationController,
+  parseHydratableBatchResult,
   parseHydratableBeginResult,
   parseHydratableInspectionResult,
   parseHydratableNewResult,
@@ -139,16 +140,42 @@ function beginResult(overrides = {}) {
       fixedViewport: false, rootCount: 1, rootType: 'frame',
     },
     buildContract: {
-      version: 'openpencil-batch-v2',
-      canvas: { width: 1440 },
-      script: { create: 'const root = I(null, node)' },
-      firstBatch: {
-        required: ['root plus 4-8 empty named top-level frame shells'],
-        forbidden: ['nested content'],
+      version: 'openpencil-script-v12',
+      canvas: {
+        width: 1440,
+        rootHeight: 'fit_content',
+        rule: 'Keep the existing root at height:"fit_content".',
       },
-      operations: 'Use exact ids for later edits.',
-      node: { types: ['frame'] },
+      script: {
+        runtime: 'sandboxed QuickJS',
+        create: 'Use I(parent,node) against the exact rootNodeId; I(null,...) is invalid.',
+        repeat: 'Use arrays and loops.',
+      },
+      generation: {
+        first: 'Create the first visible viewport in at most 32 I/K calls and 8 KiB.',
+        second: 'Create every remaining region, then finish.',
+        limit: 'Exactly two generation scripts.',
+      },
+      continuationStyle: { rule: 'Use only the values returned beside this contract.' },
+      quality: {
+        textDefaults: 'Generated text explicitly uses portable Inter, system-ui, sans-serif / 16 / 1.5.',
+        contrast: 'Use AA text pairs from the returned palette.',
+      },
+      repair: 'After finish authorizes repairTargets, use one bounded QuickJS U(nodeId, patch) script.',
+      node: {
+        parents: 'Only frame and group may contain children.',
+        container: 'Use valid width and height sizing.',
+        text: 'Set explicit typography.',
+        paint: 'Use solid paints.',
+        icon: 'Use icon_font.',
+        control: 'Use native controls.',
+      },
       layoutRules: ['one root'],
+    },
+    rootNodeId: 'root',
+    continuationStyle: {
+      version: 'openpencil-continuation-style-v1',
+      palette: { page: '#F4F0E8', ink: '#17191D' },
     },
     editorState: { activePageId: 'page-1' },
     styleGuideTags: { tags: ['editorial'] },
@@ -170,15 +197,70 @@ function beginResult(overrides = {}) {
   }
 }
 
-function legacyBeginResult(overrides = {}) {
+function legacyBeginResult(version = 'openpencil-batch-v1', overrides = {}) {
   const current = beginResult()
-  const { firstBatch: _firstBatch, ...legacyBuildContract } = current.buildContract
+  const {
+    repair: _repair,
+    quality: _quality,
+    ...v6BuildContract
+  } = current.buildContract
+  if ([
+    'openpencil-script-v8',
+    'openpencil-script-v9',
+    'openpencil-script-v10',
+    'openpencil-script-v11',
+  ].includes(version)) {
+    return {
+      ...current,
+      buildContract: { ...current.buildContract, version },
+      ...overrides,
+    }
+  }
+  if (version === 'openpencil-script-v7') {
+    return {
+      ...current,
+      buildContract: {
+        ...v6BuildContract,
+        version,
+        repair: current.buildContract.repair,
+      },
+      ...overrides,
+    }
+  }
+  if (version === 'openpencil-script-v6') {
+    return {
+      ...current,
+      buildContract: {
+        ...v6BuildContract,
+        version,
+        operations: 'Only after finish authorizes concrete repairTargets.',
+      },
+      ...overrides,
+    }
+  }
+
+  const { rootNodeId: _rootNodeId, continuationStyle: _continuationStyle, ...legacyCurrent } = current
+  const {
+    generation: _generation,
+    continuationStyle: _buildContinuationStyle,
+    ...v1WithoutOperations
+  } = v6BuildContract
+  const v1BuildContract = {
+    ...v1WithoutOperations,
+    operations: 'Use exact ids for later edits.',
+  }
+  const firstBatch = {
+    required: ['root plus coherent above-the-fold content'],
+    forbidden: ['empty-shell-only canvas'],
+  }
+  const legacyBuildContract = version === 'openpencil-batch-v1'
+    ? { ...v1BuildContract, version }
+    : version === 'openpencil-batch-v5'
+      ? { ...v1BuildContract, version, firstBatch, continuationStyle: { required: 'reuse style' } }
+      : { ...v1BuildContract, version, firstBatch }
   return {
-    ...current,
-    buildContract: {
-      ...legacyBuildContract,
-      version: 'openpencil-batch-v1',
-    },
+    ...legacyCurrent,
+    buildContract: legacyBuildContract,
     ...overrides,
   }
 }
@@ -197,7 +279,50 @@ function inspectionResult(overrides = {}) {
       width: 390,
       height: 844,
     },
-    next: 'Open the exact PNG and repair visible defects.',
+    next: 'The exact user preview is attached; no model image inspection is required.',
+    ...overrides,
+  }
+}
+
+function batchResult(overrides = {}) {
+  return {
+    draftId: DRAFT_ID,
+    version: 2,
+    changed: true,
+    generationScriptCount: 1,
+    generationScriptLimit: 2,
+    rootNodeId: 'root',
+    batch: { applied: true },
+    canvas: { platform: 'mobile', width: 390 },
+    canvasCheck: { valid: true, diagnostics: [] },
+    screenshot: inspectionResult().screenshot,
+    diagnostics: [],
+    canContinue: true,
+    next: 'Continue with the final generation script.',
+    ...overrides,
+  }
+}
+
+function pendingPipelineResult(overrides = {}) {
+  return {
+    draftId: DRAFT_ID,
+    path: '/tmp/generated.op',
+    published: false,
+    stage: 'needs_preview',
+    reason: 'preview_unavailable',
+    version: 2,
+    finalization: {
+      version: 2,
+      changed: true,
+      documentChanged: true,
+      reused: true,
+      documentSha256: DOCUMENT_SHA,
+      note: 'Finalization is checkpointed; this is informational only.',
+    },
+    screenshot: inspectionResult().screenshot,
+    diagnostics: [],
+    canContinue: true,
+    next: 'Call finish once more to publish this exact preview.',
     ...overrides,
   }
 }
@@ -427,7 +552,7 @@ test('nested pipeline_finish restores the same live document grant and idle auto
   }
 })
 
-test('nested pipeline_begin restores an owner-bound live draft grant and never revives it from history alone', async () => {
+test('nested v12 pipeline_begin restores an owner-bound live draft grant and never revives it from history alone', async () => {
   const sessions = new Map()
   const harness = await createHarness({ sessions })
   try {
@@ -516,6 +641,72 @@ test('nested pipeline screenshot hydrates a visible stage image without exposing
       callId,
       // Legacy field name now carries the canonical artifact fingerprint for
       // either a document or a stage image.
+      documentSha256: IMAGE_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.equal(envelope.schemaVersion, 2)
+    assert.equal(envelope.image.path, `render-stage-${IMAGE_SHA}.png`)
+    assert.match(envelope.image.previewUrl, /^\/_dsh\/dsh-openpencil\/render\//)
+    assert.equal(JSON.stringify(envelope).includes('design-draft-inspections'), false)
+    assert.equal('document' in envelope, false)
+    assert.equal('editor' in envelope, false)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('nested pipeline batch hydrates its committed PNG and rejects an artifact-free batch', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = batchResult()
+    const callId = 'outer:code:pipeline-batch'
+    observe(harness.hydration, 'session-pipeline-batch', callId, result, 'openpencil_pipeline_batch')
+    sessions.set('session-pipeline-batch', {
+      events: [historicalEvent(callId, result, undefined, 'openpencil_pipeline_batch')],
+    })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-batch',
+      callId,
+      documentSha256: IMAGE_SHA,
+    })
+    assert.equal(response.status, 200)
+    const envelope = (await response.json()).$dshOpenPencil
+    assert.equal(envelope.image.path, `render-stage-${IMAGE_SHA}.png`)
+    assert.equal('document' in envelope, false)
+    assert.equal('editor' in envelope, false)
+
+    const noArtifact = batchResult({ screenshot: undefined, previewUnavailable: true })
+    const noArtifactCallId = 'outer:code:pipeline-batch-no-artifact'
+    observe(harness.hydration, 'session-pipeline-batch', noArtifactCallId, noArtifact, 'openpencil_pipeline_batch')
+    sessions.get('session-pipeline-batch').events.push(
+      historicalEvent(noArtifactCallId, noArtifact, undefined, 'openpencil_pipeline_batch'),
+    )
+    const absent = await harness.request({
+      sessionId: 'session-pipeline-batch',
+      callId: noArtifactCallId,
+      documentSha256: IMAGE_SHA,
+    })
+    assert.equal(absent.status, 404)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('nested pending pipeline_finish hydrates its exact checkpointed preview', async () => {
+  const sessions = new Map()
+  const harness = await createHarness({ sessions })
+  try {
+    const result = pendingPipelineResult()
+    const callId = 'outer:code:pipeline-finish-pending'
+    observe(harness.hydration, 'session-pipeline-finish-pending', callId, result, 'openpencil_pipeline_finish')
+    sessions.set('session-pipeline-finish-pending', {
+      events: [historicalEvent(callId, result, undefined, 'openpencil_pipeline_finish')],
+    })
+    const response = await harness.request({
+      sessionId: 'session-pipeline-finish-pending',
+      callId,
       documentSha256: IMAGE_SHA,
     })
     assert.equal(response.status, 200)
@@ -909,7 +1100,7 @@ test('strict new-result parser binds the source and immutable document fingerpri
   assert.equal(parseHydratableNewResult({ ...result, image: {} }), undefined)
 })
 
-test('strict pipeline-result parser requires the published document-only contract', () => {
+test('strict pipeline-result parser accepts only a publication or its exact checkpointed preview wait', () => {
   const result = pipelineResult()
   assert.ok(parseHydratablePipelineResult(result))
   assert.equal(parseHydratablePipelineResult({ ...result, draftId: 'short' }), undefined)
@@ -917,18 +1108,92 @@ test('strict pipeline-result parser requires the published document-only contrac
   assert.equal(parseHydratablePipelineResult({ ...result, published: false }), undefined)
   assert.equal(parseHydratablePipelineResult({ ...result, result: { applied: true } }), undefined)
   assert.equal(parseHydratablePipelineResult({ ...result, autoOpenEditor: false }), undefined)
+
+  const pending = pendingPipelineResult()
+  assert.ok(parseHydratablePipelineResult(pending))
+  assert.equal(parseHydratablePipelineResult({ ...pending, stage: 'needs_correction' }), undefined)
+  assert.equal(parseHydratablePipelineResult({
+    ...pending,
+    finalization: { ...pending.finalization, result: { repairRecords: ['large', 'private', 'payload'] } },
+  }), undefined)
+  assert.equal(parseHydratablePipelineResult({
+    ...pending,
+    finalization: { ...pending.finalization, version: 3 },
+  }), undefined)
+  assert.equal(parseHydratablePipelineResult({
+    ...pending,
+    screenshot: { ...pending.screenshot, path: '/tmp/leaked.png' },
+  }), undefined)
+  assert.equal(parseHydratablePipelineResult({ ...pending, unexpected: true }), undefined)
+})
+
+test('strict batch parser requires one exact PNG artifact', () => {
+  const result = batchResult()
+  assert.ok(parseHydratableBatchResult(result))
+  assert.equal(parseHydratableBatchResult({ ...result, screenshot: undefined, previewUnavailable: true }), undefined)
+  assert.equal(parseHydratableBatchResult({
+    ...result,
+    screenshot: { ...result.screenshot, path: '/tmp/leaked.png' },
+  }), undefined)
+  assert.equal(parseHydratableBatchResult({ ...result, generationScriptLimit: 8 }), undefined)
+  assert.equal(parseHydratableBatchResult({ ...result, unexpected: true }), undefined)
 })
 
 test('strict begin parser binds a compact unpublished live-draft contract', () => {
   const result = beginResult()
-  assert.ok(parseHydratableBeginResult(result))
-  assert.ok(parseHydratableBeginResult(legacyBeginResult()))
+  const current = parseHydratableBeginResult(result)
+  assert.ok(current)
+  assert.equal(current.buildContract.version, 'openpencil-script-v12')
+  assert.equal(current.rootNodeId, 'root')
+  assert.deepEqual(current.continuationStyle, result.continuationStyle)
+  for (const version of [
+    'openpencil-batch-v1',
+    'openpencil-batch-v2',
+    'openpencil-batch-v3',
+    'openpencil-batch-v4',
+    'openpencil-batch-v5',
+    'openpencil-script-v6',
+    'openpencil-script-v7',
+    'openpencil-script-v8',
+    'openpencil-script-v9',
+    'openpencil-script-v10',
+    'openpencil-script-v11',
+  ]) {
+    assert.ok(parseHydratableBeginResult(legacyBeginResult(version)), `${version} remains replay-compatible`)
+  }
   assert.equal(parseHydratableBeginResult({ ...result, draftId: 'short' }), undefined)
   assert.equal(parseHydratableBeginResult({ ...result, liveCanvas: false }), undefined)
   assert.equal(parseHydratableBeginResult({ ...result, platform: 'tablet' }), undefined)
   assert.equal(parseHydratableBeginResult({ ...result, canvas: { ...result.canvas, width: 390 } }), undefined)
-  const { firstBatch: _firstBatch, ...withoutFirstBatch } = result.buildContract
-  assert.equal(parseHydratableBeginResult({ ...result, buildContract: withoutFirstBatch }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, rootNodeId: 'bad root id' }), undefined)
+  assert.equal(parseHydratableBeginResult({ ...result, continuationStyle: [] }), undefined)
+  const { generation: _generation, ...withoutGeneration } = result.buildContract
+  assert.equal(parseHydratableBeginResult({ ...result, buildContract: withoutGeneration }), undefined)
+  const { repair: _repair, ...withoutRepair } = result.buildContract
+  assert.equal(parseHydratableBeginResult({ ...result, buildContract: withoutRepair }), undefined)
+  const { quality: _quality, ...withoutQuality } = result.buildContract
+  assert.equal(parseHydratableBeginResult({ ...result, buildContract: withoutQuality }), undefined)
+  assert.equal(parseHydratableBeginResult({
+    ...result,
+    buildContract: {
+      ...result.buildContract,
+      quality: { ...result.buildContract.quality, unexpected: true },
+    },
+  }), undefined)
+  assert.equal(parseHydratableBeginResult({
+    ...result,
+    buildContract: {
+      ...result.buildContract,
+      quality: { textDefaults: result.buildContract.quality.textDefaults },
+    },
+  }), undefined)
+  assert.equal(parseHydratableBeginResult({
+    ...result,
+    buildContract: {
+      ...withoutRepair,
+      operations: 'Legacy DSL field is forbidden in the v8 contract.',
+    },
+  }), undefined)
   assert.equal(parseHydratableBeginResult({
     ...result,
     buildContract: { ...result.buildContract, unexpected: true },

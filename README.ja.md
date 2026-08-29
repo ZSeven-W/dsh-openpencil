@@ -97,7 +97,7 @@ DSH OpenPencil は [DeepSeek Harness](https://github.com/deepseek-ai/DSH) と [O
 
 ### 🎯 ひとつの完全なワークフロー
 
-「要件 → プライベートドラフト → 意味単位のバッチ → 正確な PNG の目視確認と修正 → 品質ゲート後のアトミック公開」— DSH 内で完結するひとつのループです。
+「要件 → サイドバーの private live canvas → 正確な PNG をユーザーへ示す2つの意味単位バッチ → ネイティブ／DSH の決定論的品質ゲート → アトミック公開」— DSH 内で完結するひとつのループです。
 
 </td>
 </tr>
@@ -142,11 +142,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | ツール | 機能 |
 | --- | --- |
 | `openpencil_new` | 単純な作業向けの互換高速パスです。1つのトランザクション型 QuickJS `batch_design` スクリプトを実行し、存在しない場合にのみ公開して編集可能なプレゼンテーションを返します。本番品質のデザインには以下のフルパイプラインを優先してください。 |
-| `openpencil_pipeline_begin` | 新しいワークスペース相対 `.op` パス用に、所有セッション専用のプライベートドラフトを開始します。ターゲットファイルは未公開のまま変更されません。 |
-| `openpencil_pipeline_context` | ネイティブの動的 design-agent prompt と、関連する guidelines、style guides、変数／テーマ、UI kit のメタデータまたはスクリプト参照を読み込みます。 |
-| `openpencil_pipeline_batch` | 意味単位の QuickJS バッチをドラフトへ直列適用します。最初に骨格を作り、その後セクションを追加・洗練します。 |
-| `openpencil_pipeline_inspect` | ネイティブ品質または解決済みレイアウトを検査するか、モデルが画像読み取りで開いて目視確認できる正確な PNG を生成します。 |
-| `openpencil_pipeline_finish` | ネイティブ最終化、lint、レイアウト、スクリーンショットの鮮度、DSH 品質ゲートを実行し、`createIfAbsent` でアトミックに公開して編集可能なプレゼンテーションを返します。 |
+| `openpencil_pipeline_begin` | 所有セッション専用のプライベートドラフトと唯一の root を開始し、同じ live canvas をサイドバーですぐに開きます。ターゲット `.op` は未公開のままです。 |
+| `openpencil_pipeline_context` | begin contract に本当に不足している guideline、style、theme、UI kit の詳細を1件だけ限定的に読み込みます。起動時の refresh loop ではありません。 |
+| `openpencil_pipeline_batch` | 直接 QuickJS の生成スクリプトを最大2本実行します。成功した各トランザクションはユーザー向けの正確な PNG 表示だけを試み、ツールが返ったら直ちに `next` に従います。 |
+| `openpencil_pipeline_inspect` | ユーザーが明示的に要求した場合にのみ手動診断を提供します。通常の生成ではプレビューやモデルの画像確認ステップとして使用しません。 |
+| `openpencil_pipeline_finish` | ネイティブと DSH の決定論的ゲートを実行し、最終化後の正確な PNG をレンダリングして `createIfAbsent` でアトミックに公開します。`needs_correction`、`canContinue: true`、完全で空でない `repairTargets`、`omitted: 0` がすべて揃った場合に限り、U-only 修復1回と最後の finish 1回を許可します。それ以外の未公開結果は terminal です。 |
 | `openpencil_pipeline_abort` | ターゲットファイルを作成せず、未公開ドラフトを破棄します。 |
 | `openpencil_create` | 既存のライブキャンバス上でノードを生成・再構築するために、トランザクション型 `batch_design` プログラムを適用します。 |
 | `openpencil_edit` | 明示的なノード、またはユーザーが選択した単一のノードを変更します。 |
@@ -155,11 +155,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## エージェントのデザインワークフロー
 
-本番品質のデザインでは、`openpencil_pipeline_begin` → `openpencil_pipeline_context` → `openpencil_pipeline_batch` と `openpencil_pipeline_inspect` の反復 → `openpencil_pipeline_finish` の順に使用します。ドラフトデーモンは所有する DSH セッションだけに公開され、公開が成功するまで要求したワークスペースパスは存在しません。中間のプライベートドラフト画像は編集可能なサイドバーを公開しないため、ユーザー編集とエージェントのバッチが競合しません。編集権限は公開後にだけ付与されます。
+通常の生成では固定の短い経路を使います。`openpencil_pipeline_begin` → 直接 QuickJS の `openpencil_pipeline_batch` を2回 → `openpencil_pipeline_finish` を1回です。Begin は唯一の root を作成し、プライベートな live canvas をサイドバーですぐに開きます。公開が成功するまで要求したワークスペースパスは存在しません。begin または batch が成功するたびに、説明、計画、比較、検査、無関係なツール呼び出しを挟まず、次の必須呼び出しを直ちに行います。既定ではデザイン全体で画像は正確に1枚とし、各 Hero/Product/Art/Media frame の主ビジュアルも1つだけにして、画像とプレースホルダーアイコンを併置しません。
 
-コンテキストは静的テンプレートではありません。OpenPencil ネイティブの design-agent prompt と、関連する guidelines、style guides、変数／テーマ、UI kits を動的に組み合わせます。まず構造的な骨格を作り、次に意味のあるセクション単位でコンテンツと仕上げを追加します。速度を保つため、成功したバッチが返すのは簡潔なレイアウト診断だけです。完全な解決済みレイアウトは必要なときに `openpencil_pipeline_inspect` で取得します。少なくとも、signature/heading の確立後と、主要タスクまたは form と CTA の完成後を中間の視覚マイルストーンとし、それぞれ `kind: "screenshot"` で `openpencil_pipeline_inspect` を呼び出します。モデルは各時点の正確な PNG を画像読み取りで開き、目に見えるクリッピング、オーバーフロー、階層、間隔、コントロール比率、コントラスト、文字可読性を修正して必要なだけ反復します。目視確認は自動ではありません。
+成功した2つのバッチはいずれも、ユーザー向けに正確な PNG プレビューを表示しようとします。ツールが返ったら直ちに `next` に従ってください。`next` が `previewUnavailable` を返しても、スクリプトはすでに live canvas にコミット済みです。バッチを再実行せず、`openpencil_pipeline_inspect` や `read_image` も呼び出さないでください。`openpencil_pipeline_inspect` はユーザーが明示的に要求した診断専用です。
 
-完了処理では、OpenPencil ネイティブの最終化、lint、レイアウト検査に加え、DSH 品質ゲートを実行します。これらの決定論的検査がセンスや視覚的な洗練を生み出すわけではありません。最終化の後に別の新しい正確なスクリーンショットを撮り、モデルが目視確認する必要があります。中間マイルストーンのスクリーンショットが、最終化後の鮮度ゲートを満たすことは決してありません。その後の finish 呼び出しだけが `createIfAbsent` でターゲットをアトミックに作成します。ゲートの失敗や `openpencil_pipeline_abort` ではターゲットは存在しないままです。公開された生成結果はすべて、正確な最終 PNG プレビューとドキュメント限定の編集権限を同時に含む1つの presentation です。サイドバーがアイドルのときだけ自動で開き、別セッションのエディターを置き換えず、明示的な切り替え用の **キャンバスを編集** を必ず残します。PTC/Code Mode 内でネストされた `openpencil_pipeline_finish` の結果も同じ presentation を保持し、通常の JSON や読み取り専用カードに退化しません。履歴カードやハイドレート済みカードは自動では開きません。
+Finish は OpenPencil ネイティブの最終化、lint、コントラスト、レイアウト検査と DSH の決定論的品質ゲートを実行し、正常な同じ呼び出しで正確な最終 PNG をレンダリングしてターゲットをアトミックに公開します。修復を許可するのは、結果に `stage: "needs_correction"`、`canContinue: true`、完全で空でない `repairTargets` と `omitted: 0` が同時にあり、各 target に `operation: "U"`、正確で空でない `nodeId`、空でない `patch` がある場合だけです。全 target を1つの U-only batch でまとめて適用し、説明を挟まず finish を最後に1回だけ呼びます。それ以外の未公開結果、error、`canContinue: false` は terminal です。1回だけ報告し、retry、inspect、image/context の読み取り、abort、代替 draft の開始は行いません。ゲート失敗または `openpencil_pipeline_abort` ではターゲットは作成されません。published result の正確な最終 PNG と live editor はすでに authoritative なので、それを返して直ちに終了します。サイドバーは idle のときだけ自動で開き、明示的な切り替え用に **キャンバスを編集** が常に残ります。
 
 同じ実行中の DSH サービス内では、ブラウザーの切り替えや再読み込み後も、厳密に解析された `openpencil_new` または `openpencil_pipeline_finish` の永続 publication を、正確な PNG と明示的な **キャンバスを編集** 操作として復元できます。履歴カードがサイドバーを自動で開くことはなく、ユーザーがその操作をクリックする必要があります。通常の履歴 `openpencil_render` は読み取り専用のままで、非 loopback 接続にはエディター権限を発行しません。
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,10 +15,12 @@ const fileIndex = process.argv.indexOf('--file')
 const sourcePath = process.argv[fileIndex + 1]
 const handshakeDelay = Number(process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS || 0)
 const dropResetResponseOnce = process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE === '1'
+const mutateDuringScreenshotOnce = process.env.FAKE_DRAFT_MUTATE_DURING_SCREENSHOT_ONCE === '1'
 let document = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
 let version = 1
 let resetConsumed = false
 let resetResponseDropped = false
+let screenshotMutationConsumed = false
 let active = 0
 let maxActive = 0
 function log(value) { fs.appendFileSync(logPath, JSON.stringify(value) + '\\n') }
@@ -123,6 +126,10 @@ const server = http.createServer((req, res) => {
         } else if (tool === 'finalize_design' || tool === 'enrich_images') {
           value = { repairs: 0, advisories: [] }
         } else if (tool === 'get_screenshot') {
+          if (mutateDuringScreenshotOnce && !screenshotMutationConsumed) {
+            screenshotMutationConsumed = true
+            document = { ...document, sameVersionScreenshotMutation: true }
+          }
           active -= 1
           log({ event: 'end', tool, active, maxActive })
           res.setHeader('content-type', 'application/json')
@@ -134,6 +141,9 @@ const server = http.createServer((req, res) => {
             ] },
           }))
           return
+        } else if (tool === 'get_design_prompt' && args.mutateSameVersion === true) {
+          document = { ...document, sameVersionMutation: String(args.label || 'changed') }
+          value = { ok: true, mutatedWithoutVersion: true }
         } else {
           value = { ok: true, tool, token: 'fake-draft-token-123456789', sourcePath }
         }
@@ -195,6 +205,10 @@ async function logEntries(logPath) {
   return text.trim() === '' ? [] : text.trim().split('\n').map(line => JSON.parse(line))
 }
 
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
 async function createHarness(options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-openpencil-draft-test-'))
   const binary = join(root, 'fake-host.cjs')
@@ -204,9 +218,11 @@ async function createHarness(options = {}) {
   const previousLog = process.env.FAKE_DRAFT_LOG
   const previousHandshakeDelay = process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS
   const previousDropResetResponse = process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE
+  const previousScreenshotMutation = process.env.FAKE_DRAFT_MUTATE_DURING_SCREENSHOT_ONCE
   process.env.FAKE_DRAFT_LOG = logPath
   process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS = String(options.handshakeDelayMs ?? 0)
   process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE = options.dropResetResponseOnce === true ? '1' : '0'
+  process.env.FAKE_DRAFT_MUTATE_DURING_SCREENSHOT_ONCE = options.mutateDuringScreenshotOnce === true ? '1' : '0'
   const { DesignDraftController } = await import(`../lib/design-draft-controller.js?draft=${Date.now()}-${Math.random()}`)
   const controller = new DesignDraftController({
     binary,
@@ -231,6 +247,8 @@ async function createHarness(options = {}) {
       else process.env.FAKE_DRAFT_HANDSHAKE_DELAY_MS = previousHandshakeDelay
       if (previousDropResetResponse === undefined) delete process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE
       else process.env.FAKE_DRAFT_DROP_RESET_RESPONSE_ONCE = previousDropResetResponse
+      if (previousScreenshotMutation === undefined) delete process.env.FAKE_DRAFT_MUTATE_DURING_SCREENSHOT_ONCE
+      else process.env.FAKE_DRAFT_MUTATE_DURING_SCREENSHOT_ONCE = previousScreenshotMutation
       await rm(root, { recursive: true, force: true })
     },
   }
@@ -420,7 +438,12 @@ test('finish requires a current screenshot, preserves a draft on publish failure
     await harness.controller.finalize(begun.draftId, 'owner-publish')
     await assert.rejects(
       harness.controller.finish(begun.draftId, 'owner-publish', { publish: async () => ({ ok: true }) }),
-      error => error?.code === 'OPENPENCIL_DRAFT_VISUAL_INSPECTION_REQUIRED',
+      error => {
+        assert.equal(error?.code, 'OPENPENCIL_DRAFT_PREVIEW_REQUIRED')
+        assert.equal(error.currentVersion, error.finalizedVersion)
+        assert.notEqual(error.screenshotFinalizedVersion, error.currentVersion)
+        return true
+      },
     )
     const screenshot = await harness.controller.screenshot(begun.draftId, 'owner-publish')
     assert.equal(screenshot.mimeType, 'image/png')
@@ -457,6 +480,169 @@ test('finish requires a current screenshot, preserves a draft on publish failure
       harness.controller.snapshot(begun.draftId, 'owner-publish'),
       /has ended/,
     )
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('finish rejects a checkpoint when a queued mutation wins the serialized publication lock', async () => {
+  const harness = await createHarness()
+  try {
+    const begun = await harness.controller.begin({
+      ownerSessionId: 'owner-concurrent-finish',
+      target: { id: 'concurrent-finish-target' },
+      signal: new AbortController().signal,
+    })
+    await harness.controller.call(begun.draftId, 'owner-concurrent-finish', 'batch_design', { script: 'checkpoint' })
+    await harness.controller.finalize(begun.draftId, 'owner-concurrent-finish')
+    const checkpoint = await harness.controller.snapshot(begun.draftId, 'owner-concurrent-finish')
+    const checkpointSha256 = sha256(checkpoint.documentJson)
+    await harness.controller.screenshot(begun.draftId, 'owner-concurrent-finish')
+
+    const mutation = harness.controller.call(
+      begun.draftId,
+      'owner-concurrent-finish',
+      'batch_design',
+      { script: 'wins before publish', delayMs: 50 },
+    )
+    let publishCalls = 0
+    const publishing = harness.controller.finish(begun.draftId, 'owner-concurrent-finish', {
+      expectedVersion: checkpoint.version,
+      expectedDocumentSha256: checkpointSha256,
+      publish: async () => {
+        publishCalls += 1
+        return { stored: true }
+      },
+    })
+    await mutation
+    await assert.rejects(publishing, error => {
+      assert.equal(error?.code, 'OPENPENCIL_DRAFT_CHECKPOINT_DRIFT')
+      assert.equal(error.expectedVersion, checkpoint.version)
+      assert.equal(error.expectedDocumentSha256, checkpointSha256)
+      assert.ok(error.currentVersion > checkpoint.version)
+      return true
+    })
+    assert.equal(publishCalls, 0)
+
+    await harness.controller.finalize(begun.draftId, 'owner-concurrent-finish')
+    const current = await harness.controller.snapshot(begun.draftId, 'owner-concurrent-finish')
+    await harness.controller.screenshot(begun.draftId, 'owner-concurrent-finish')
+    const recovered = await harness.controller.finish(begun.draftId, 'owner-concurrent-finish', {
+      expectedVersion: current.version,
+      expectedDocumentSha256: sha256(current.documentJson),
+      publish: async () => ({ stored: true }),
+    })
+    assert.deepEqual(recovered.published, { stored: true })
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('a child screenshot cannot satisfy the finalized root publication proof', async () => {
+  const harness = await createHarness()
+  try {
+    const begun = await harness.controller.begin({
+      ownerSessionId: 'owner-child-proof', target: { id: 'child-proof-target' }, signal: new AbortController().signal,
+    })
+    await harness.controller.call(begun.draftId, 'owner-child-proof', 'batch_design', { script: 'child proof' })
+    await harness.controller.finalize(begun.draftId, 'owner-child-proof')
+    const checkpoint = await harness.controller.snapshot(begun.draftId, 'owner-child-proof')
+    const checkpointSha256 = sha256(checkpoint.documentJson)
+    const child = await harness.controller.screenshot(begun.draftId, 'owner-child-proof', { nodeId: 'n-1' })
+    assert.equal(child.documentSha256, checkpointSha256)
+    assert.deepEqual(child.metadata, { nodeId: 'n-1', token: '[redacted]' })
+
+    await assert.rejects(
+      harness.controller.finish(begun.draftId, 'owner-child-proof', {
+        expectedVersion: checkpoint.version,
+        expectedDocumentSha256: checkpointSha256,
+        publish: async () => ({ stored: true }),
+      }),
+      error => {
+        assert.equal(error?.code, 'OPENPENCIL_DRAFT_PREVIEW_REQUIRED')
+        assert.equal(error.screenshotVersion, undefined)
+        assert.equal(error.screenshotFinalizedVersion, undefined)
+        return true
+      },
+    )
+
+    const root = await harness.controller.screenshot(begun.draftId, 'owner-child-proof')
+    assert.equal(root.documentSha256, checkpointSha256)
+    const finished = await harness.controller.finish(begun.draftId, 'owner-child-proof', {
+      expectedVersion: checkpoint.version,
+      expectedDocumentSha256: checkpointSha256,
+      publish: async () => ({ stored: true }),
+    })
+    assert.deepEqual(finished.published, { stored: true })
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('same-version document byte drift invalidates both checkpoint and screenshot proof', async () => {
+  const harness = await createHarness()
+  try {
+    const begun = await harness.controller.begin({
+      ownerSessionId: 'owner-byte-drift', target: { id: 'byte-drift-target' }, signal: new AbortController().signal,
+    })
+    await harness.controller.call(begun.draftId, 'owner-byte-drift', 'batch_design', { script: 'same version baseline' })
+    await harness.controller.finalize(begun.draftId, 'owner-byte-drift')
+    const checkpoint = await harness.controller.snapshot(begun.draftId, 'owner-byte-drift')
+    const checkpointSha256 = sha256(checkpoint.documentJson)
+    await harness.controller.screenshot(begun.draftId, 'owner-byte-drift')
+
+    await harness.controller.call(begun.draftId, 'owner-byte-drift', 'get_design_prompt', {
+      mutateSameVersion: true,
+      label: 'same-version-drift',
+    })
+    const drifted = await harness.controller.snapshot(begun.draftId, 'owner-byte-drift')
+    assert.equal(drifted.version, checkpoint.version)
+    assert.notEqual(sha256(drifted.documentJson), checkpointSha256)
+
+    await assert.rejects(
+      harness.controller.finish(begun.draftId, 'owner-byte-drift', {
+        expectedVersion: checkpoint.version,
+        expectedDocumentSha256: checkpointSha256,
+        publish: async () => ({ stored: true }),
+      }),
+      error => {
+        assert.equal(error?.code, 'OPENPENCIL_DRAFT_CHECKPOINT_DRIFT')
+        assert.equal(error.currentVersion, checkpoint.version)
+        assert.notEqual(error.currentDocumentSha256, checkpointSha256)
+        return true
+      },
+    )
+
+    await harness.controller.finalize(begun.draftId, 'owner-byte-drift')
+    const recoveredCheckpoint = await harness.controller.snapshot(begun.draftId, 'owner-byte-drift')
+    await harness.controller.screenshot(begun.draftId, 'owner-byte-drift')
+    const recovered = await harness.controller.finish(begun.draftId, 'owner-byte-drift', {
+      expectedVersion: recoveredCheckpoint.version,
+      expectedDocumentSha256: sha256(recoveredCheckpoint.documentJson),
+      publish: async () => ({ stored: true }),
+    })
+    assert.deepEqual(recovered.published, { stored: true })
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('screenshot rejects same-version document changes that happen while rendering', async () => {
+  const harness = await createHarness({ mutateDuringScreenshotOnce: true })
+  try {
+    const begun = await harness.controller.begin({
+      ownerSessionId: 'owner-screenshot-drift',
+      target: { id: 'screenshot-drift-target' },
+      signal: new AbortController().signal,
+    })
+    await harness.controller.call(begun.draftId, 'owner-screenshot-drift', 'batch_design', { script: 'render baseline' })
+    await harness.controller.finalize(begun.draftId, 'owner-screenshot-drift')
+    await assert.rejects(
+      harness.controller.screenshot(begun.draftId, 'owner-screenshot-drift'),
+      /changed while its exact root preview artifact was rendered/,
+    )
+    const screenshot = await harness.controller.screenshot(begun.draftId, 'owner-screenshot-drift')
+    assert.match(screenshot.documentSha256, /^[a-f0-9]{64}$/)
   } finally {
     await harness.cleanup()
   }

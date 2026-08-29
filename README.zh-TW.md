@@ -97,7 +97,7 @@ DSH OpenPencil 將 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 與 [O
 
 ### 🎯 一套完整的工作流程
 
-「需求 → 私有草稿 → 語意化批次 → 精確 PNG 視覺檢查與修復 → 通過品質門檻後原子發布」——全程在 DSH 內完成閉環。
+「需求 → 側邊欄中的 private live canvas → 兩次向使用者展示精確 PNG 的語意化批次 → 原生／DSH 確定性品質門檻 → 原子發布」——全程在 DSH 內完成閉環。
 
 </td>
 </tr>
@@ -142,11 +142,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | 工具 | 功能說明 |
 | --- | --- |
 | `openpencil_new` | 適合簡單工作的相容快速路徑：執行一份交易性 QuickJS `batch_design` 指令碼，以「僅在不存在時建立」語意發布並回傳可編輯呈現。正式設計應優先使用下方完整管線。 |
-| `openpencil_pipeline_begin` | 為新的工作區相對 `.op` 路徑啟動僅屬於目前工作階段的私有草稿；目標檔案維持未發布且不會被改動。 |
-| `openpencil_pipeline_context` | 載入原生動態 design-agent prompt，以及相關 guidelines、style guides、變數／主題與 UI kit 中繼資料或指令碼參照。 |
-| `openpencil_pipeline_batch` | 將語意化 QuickJS 批次依序套用到草稿；先建立結構骨架，再按區塊補充與細化。 |
-| `openpencil_pipeline_inspect` | 執行原生品質或解析後版面檢查，或產生精確 PNG，讓模型用影像讀取能力開啟並進行視覺檢查。 |
-| `openpencil_pipeline_finish` | 執行原生最終化、lint、版面、截圖時效與 DSH 品質門檻，再透過 `createIfAbsent` 原子發布並回傳可編輯呈現。 |
+| `openpencil_pipeline_begin` | 啟動僅屬於目前工作階段的私有草稿與唯一 root，立即在側邊欄開啟同一個 live canvas；目標 `.op` 仍維持未發布。 |
+| `openpencil_pipeline_context` | 只有 begin contract 確實缺少某項 guideline、style、theme 或 UI kit 細節時，才定向載入一次；不是啟動時的 refresh loop。 |
+| `openpencil_pipeline_batch` | 最多執行兩段直接 QuickJS generation script。每次成功交易只會嘗試向使用者展示精確 PNG；工具回傳後立即遵循 `next`。 |
+| `openpencil_pipeline_inspect` | 僅在使用者明確要求時提供手動診斷；普通生成不會把它當作預覽或模型看圖步驟。 |
+| `openpencil_pipeline_finish` | 執行原生與 DSH 的確定性門檻，渲染最終化後的精確 PNG，再透過 `createIfAbsent` 原子發布。只有結果同時為 `needs_correction`、`canContinue: true`、含完整非空 `repairTargets` 且 `omitted: 0` 時，才允許一次純 `U(...)` 修復與最後一次 finish；其他未發布結果一律終止。 |
 | `openpencil_pipeline_abort` | 捨棄未發布草稿，不建立目標檔案。 |
 | `openpencil_create` | 套用交易性的 `batch_design` 程式，在既有的即時畫布上產生或重構節點。 |
 | `openpencil_edit` | 修改明確指定的節點，或使用者選取的單一節點。 |
@@ -155,11 +155,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## 代理設計工作流程
 
-正式設計應依序使用 `openpencil_pipeline_begin` → `openpencil_pipeline_context` → 多輪 `openpencil_pipeline_batch` 與 `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`。草稿守護程序僅對其所屬的 DSH 工作階段可見；發布成功前，要求的工作區路徑並不存在。中間私有草稿截圖絕不暴露可編輯側邊欄，以免使用者編輯與代理批次發生競爭；只有發布成功後才授予編輯能力。
+普通生成採用固定短路徑：`openpencil_pipeline_begin` → 兩次直接 QuickJS `openpencil_pipeline_batch` → 一次 `openpencil_pipeline_finish`。Begin 會建立唯一 root，並立即在側邊欄開啟私有 live canvas；發布成功前，要求的工作區路徑並不存在。每次 begin 或 batch 成功後，都必須不加敘述、規劃、比較、檢查或無關工具呼叫地立即執行下一步。除非使用者明確要求多圖，整份設計預設只用一張 image；每個 Hero/Product/Art/Media frame 只能有一個主視覺，禁止 image 與佔位 icon 並存。
 
-上下文不是靜態範本，而是動態組合 OpenPencil 原生 design-agent prompt 與相關 guidelines、style guides、變數／主題和 UI kits。先建立結構骨架，再按語意區塊補充內容並細化。為兼顧速度，成功的 batch 呼叫只回傳精簡版面診斷；需要完整解析後版面時再呼叫 `openpencil_pipeline_inspect`。至少要設定兩個中間視覺里程碑：完成 signature/heading 後一次，完成主要任務或 form 加 CTA 後再一次；每次都以 `kind: "screenshot"` 呼叫 `openpencil_pipeline_inspect`，讓模型用影像讀取能力開啟精確 PNG，修復可見的裁切、溢出、層級、間距、控制項比例、對比與文字可讀性，並視需要重複。視覺檢查不會自動發生。
+兩次成功 batch 都會嘗試向使用者展示精確 PNG 預覽。工具回傳後立即遵循 `next`。若 `next` 回報 `previewUnavailable`，指令碼已提交到 live canvas：禁止重跑 batch，也不要呼叫 `openpencil_pipeline_inspect` 或 `read_image`。`openpencil_pipeline_inspect` 只用於使用者明確要求的診斷。
 
-完成階段會執行 OpenPencil 原生最終化、lint 與版面檢查，以及 DSH 品質門檻。這些確定性檢查不會創造品味或視覺精緻度。最終化之後必須另拍一張新的精確截圖，並讓模型進行視覺檢查；任何中間里程碑截圖都絕不能滿足最終化後的截圖時效門檻。只有如此，最後一次 finish 呼叫才會透過 `createIfAbsent` 原子建立目標檔案。門檻失敗或呼叫 `openpencil_pipeline_abort` 時，目標仍不存在。每個已發布的生成結果都是同一個 presentation，其中同時包含精確最終 PNG 預覽與限定於該文件的可編輯授權；它只在側邊欄閒置時自動開啟，絕不取代另一工作階段的編輯器，並始終保留 **編輯畫布** 供明確切換。即使 `openpencil_pipeline_finish` 巢狀用於 PTC/Code Mode，回傳結果也必須保留同一 presentation，絕不能退化成一般 JSON 或唯讀卡片。歷史或水合卡片不會自動開啟。
+Finish 會執行 OpenPencil 原生最終化、lint、對比與版面檢查，以及 DSH 確定性品質門檻，並在同一次健康呼叫中渲染精確最終 PNG、原子發布目標。只有結果同時包含 `stage: "needs_correction"`、`canContinue: true`、完整非空 `repairTargets`、`omitted: 0`，且每個 target 都有 `operation: "U"`、精確非空 `nodeId` 與非空 `patch` 時，才允許修復：一次把所有 target 套用到唯一一段純 U-only batch，然後不加敘述地只再呼叫一次 finish。其他未發布結果、error 或 `canContinue: false` 一律終止：只回報一次，禁止 retry、inspect、讀取 image/context、abort 或另起 draft。門檻失敗或呼叫 `openpencil_pipeline_abort` 時不會建立目標。published result 中的精確最終 PNG 與 live editor 已是權威結果，應直接回傳並結束。側邊欄只在 idle 時自動開啟，並保留 **編輯畫布** 供明確切換。
 
 在同一個持續執行的 DSH 服務內，切換瀏覽器或重新載入後，經過嚴格解析的 `openpencil_new` 或 `openpencil_pipeline_finish` 持久化 publication 可以還原為精確 PNG 與明確的 **編輯畫布** 動作。歷史卡片絕不會自動開啟側邊欄，必須由使用者點擊該動作。一般歷史 `openpencil_render` 一律維持唯讀，非 loopback 連線也絕不會取得編輯器授權。
 

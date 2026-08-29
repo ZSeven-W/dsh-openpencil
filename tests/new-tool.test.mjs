@@ -10,7 +10,7 @@ const { RenderAccessController } = await import('../lib/renderer.js')
 
 const previousDshHome = process.env.DSH_HOME
 const testRoot = await mkdtemp(join(tmpdir(), 'dsh-openpencil-new-tool-'))
-const SIMPLE_SCRIPT = 'const root = I(null, { type: "frame", name: "Forage", width: 390, height: 844 });\nI(root, { type: "text", name: "Title", content: "Forage", width: "fill_container", height: 44 });'
+const SIMPLE_SCRIPT = 'const root = I(null, { type: "frame", name: "Forage", width: 390, height: 844 });\nI(root, { type: "text", name: "Title", content: "Forage", width: "fill_container", height: 44, fontFamily: "Inter, system-ui, sans-serif", fontSize: 32, lineHeight: 1.2 });'
 process.env.DSH_HOME = join(testRoot, 'dsh-home')
 after(async () => {
   if (previousDshHome === undefined) delete process.env.DSH_HOME
@@ -400,9 +400,10 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
 
   const decisionContract = `${harness.tool.description}\n${harness.tool.parameters.properties.script.description}`
   assert.doesNotMatch(decisionContract, /\{\.\.\.\}/, 'model-facing examples must be executable rather than schematic')
-  assert.match(decisionContract, /no \.op file or live editor/i)
+  assert.match(decisionContract, /explicitly requested simple one-shot/i)
+  assert.match(decisionContract, /ordinary natural-language generation uses openpencil_pipeline_begin/i)
   assert.match(decisionContract, /do not ask the user to open a sidebar/i)
-  assert.match(decisionContract, /load the bundled openpencil-design skill/i)
+  assert.doesNotMatch(decisionContract, /load the bundled openpencil-design skill/i)
   assert.match(decisionContract, /sandboxed QuickJS/i)
   assert.match(decisionContract, /script (?:program )?string.*outer run_code runtime/i)
   assert.match(decisionContract, /I\/K do not exist in the outer run_code runtime/i)
@@ -411,6 +412,7 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
   assert.match(decisionContract, /C\/U\/D\/M\/R\/G.*not available/i)
   assert.match(decisionContract, /const root = I\(null,/)
   assert.match(decisionContract, /const card = I\(root,/)
+  assert.match(decisionContract, /type: "text".*fontFamily: "Inter, system-ui, sans-serif".*lineHeight: 1\.2/s)
   assert.match(decisionContract, /binding returned from an earlier I\(\)/i)
   assert.match(decisionContract, /never (?:write )?I\("root",/i)
   assert.match(decisionContract, /do not set node ids yourself/i)
@@ -426,8 +428,11 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
   assert.match(decisionContract, /icon_font.*real glyph name/i)
   assert.match(decisionContract, /style fingerprint/i)
   assert.match(decisionContract, /generic initial-letter logo.*white form card.*saturated button/i)
-  assert.match(decisionContract, /Chinese interfaces default to system-ui.*lineHeight at least 1\.3/i)
-  assert.match(decisionContract, /Noto\/PingFang\/YaHei.*confirms it is installed/i)
+  assert.match(decisionContract, /every generated visible text node.*fontFamily:"Inter, system-ui, sans-serif"/i)
+  assert.match(decisionContract, /Desktop uses its bundled Inter.*Web host.*generic fallback.*never use bare Inter or pure system-ui/is)
+  assert.match(decisionContract, /Chinese interfaces use lineHeight at least 1\.3/i)
+  assert.match(decisionContract, /another named family.*confirms it is installed/i)
+  assert.doesNotMatch(decisionContract, /default to (?:pure )?system-ui/i)
   assert.match(decisionContract, /never invent paddingX, paddingY, radius, strokeWidth, align/i)
   assert.match(decisionContract, /negative space/i)
   assert.match(decisionContract, /at most two saturated colors/i)
@@ -440,7 +445,8 @@ test('openpencil_new exposes a strict creation schema and output contract', () =
   assert.match(decisionContract, /one call creates the file and requests editor auto-open/i)
   assert.match(decisionContract, /opens.*sidebar when that surface is idle/i)
   assert.match(decisionContract, /never replaces an editor already owned by another session/i)
-  assert.match(decisionContract, /final openpencil_render check is encouraged for visual QA/i)
-  assert.match(decisionContract, /clipping, overflow, hierarchy, spacing, or legibility defects.*corrected/i)
+  assert.match(decisionContract, /Stop after success/i)
+  assert.match(decisionContract, /Do not call openpencil_render, read_image, or openpencil_pipeline_inspect as a completion gate/i)
+  assert.doesNotMatch(decisionContract, /visual QA|vision.*available/i)
   assert.doesNotMatch(decisionContract, /call openpencil_render.*editable=true/i)
 })

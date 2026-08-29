@@ -38,6 +38,7 @@ import {
 } from './renderer.js'
 import {
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
   OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
@@ -75,7 +76,35 @@ interface HydratableInspectionResult {
   next: string
 }
 
-type HydratableResult = RenderResult | DesignNewResult | BegunDraft | PublishedDraft | HydratableInspectionResult
+interface HydratableBatchResult {
+  draftId: string
+  version: number
+  screenshot: HydratableInspectionResult['screenshot']
+}
+
+interface HydratablePendingPipelineResult {
+  draftId: string
+  path: string
+  published: false
+  stage: 'needs_preview'
+  reason: 'preview_unavailable'
+  version: number
+  diagnostics: unknown[]
+  canContinue: true
+  next: string
+  screenshot: HydratableInspectionResult['screenshot']
+  finalization: {
+    version: number
+    changed: boolean
+    documentChanged: boolean
+    reused: boolean
+    documentSha256: string
+    note: string
+  }
+}
+
+type HydratableResult = RenderResult | DesignNewResult | BegunDraft | PublishedDraft
+  | HydratableBatchResult | HydratableInspectionResult | HydratablePendingPipelineResult
 
 interface HydrationRequest {
   sessionId: string
@@ -302,7 +331,7 @@ export function parseHydratableNewResult(value: unknown): DesignNewResult | unde
 const PIPELINE_RESULT_KEYS = new Set([...NEW_RESULT_KEYS, 'draftId', 'published', 'preview'])
 
 /** Accept only the canonical document-only result emitted by pipeline_finish. */
-export function parseHydratablePipelineResult(value: unknown): PublishedDraft | undefined {
+function parseHydratablePublishedPipelineResult(value: unknown): PublishedDraft | undefined {
   if (!isRecord(value) || !hasExactKeys(value, PIPELINE_RESULT_KEYS)) return undefined
   if (
     typeof value.draftId !== 'string'
@@ -332,10 +361,77 @@ export function parseHydratablePipelineResult(value: unknown): PublishedDraft | 
   return value as unknown as PublishedDraft
 }
 
-const BEGIN_RESULT_KEYS = new Set([
+const PENDING_PIPELINE_RESULT_KEYS = new Set([
+  'draftId', 'path', 'published', 'stage', 'version', 'diagnostics', 'canContinue',
+  'next', 'reason', 'screenshot', 'finalization',
+])
+const PENDING_FINALIZATION_KEYS = new Set([
+  'version', 'changed', 'documentChanged', 'reused', 'documentSha256', 'note',
+])
+
+function isHydratableInspectionScreenshot(value: unknown): value is HydratableInspectionResult['screenshot'] {
+  if (!isRecord(value) || !hasExactKeys(value, INSPECTION_SCREENSHOT_KEYS)) return false
+  return typeof value.sha256 === 'string'
+    && isSha256(value.sha256)
+    && value.filename === `${value.sha256}.png`
+    && isManagedArtifactPath(
+      value.path,
+      join(stateRoot(), 'design-draft-inspections'),
+      value.filename,
+    )
+    && value.mimeType === 'image/png'
+    && isSafeInteger(value.bytes, 1, MAX_RENDER_BYTES)
+    && isSafeInteger(value.width, 1, 32_768)
+    && isSafeInteger(value.height, 1, 32_768)
+    && value.width * value.height <= 128 * 1024 * 1024
+}
+
+/** Accept a post-finalization wait only when it carries an immutable root screenshot. */
+function parseHydratablePendingPipelineResult(value: unknown): HydratablePendingPipelineResult | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, PENDING_PIPELINE_RESULT_KEYS)) return undefined
+  const finalization = value.finalization
+  if (
+    typeof value.draftId !== 'string'
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
+    || !isSafeString(value.path)
+    || !isAbsolute(value.path)
+    || !value.path.toLowerCase().endsWith('.op')
+    || value.published !== false
+    || value.stage !== 'needs_preview'
+    || value.reason !== 'preview_unavailable'
+    || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
+    || !Array.isArray(value.diagnostics)
+    || value.diagnostics.length > 64
+    || value.canContinue !== true
+    || !isSafeString(value.next)
+    || !isHydratableInspectionScreenshot(value.screenshot)
+    || !isRecord(finalization)
+    || !hasExactKeys(finalization, PENDING_FINALIZATION_KEYS)
+    || !isSafeInteger(finalization.version, 0, Number.MAX_SAFE_INTEGER)
+    || finalization.version !== value.version
+    || typeof finalization.changed !== 'boolean'
+    || typeof finalization.documentChanged !== 'boolean'
+    || typeof finalization.reused !== 'boolean'
+    || !isSha256(finalization.documentSha256)
+    || !isSafeString(finalization.note)
+  ) return undefined
+  return value as unknown as HydratablePendingPipelineResult
+}
+
+/** Accept a published pipeline result or its immutable post-final preview wait. */
+export function parseHydratablePipelineResult(
+  value: unknown,
+): PublishedDraft | HydratablePendingPipelineResult | undefined {
+  return parseHydratablePublishedPipelineResult(value) ?? parseHydratablePendingPipelineResult(value)
+}
+
+const LEGACY_BEGIN_RESULT_KEYS = new Set([
   'draftId', 'path', 'version', 'createdAt', 'platform', 'editorState',
   'canvas', 'buildContract', 'styleGuideTags', 'document', 'sourceTool', 'previewIntent', 'editable',
   'autoOpenEditor', 'liveCanvas', 'published', 'next',
+])
+const SCRIPT_BEGIN_RESULT_KEYS = new Set([
+  ...LEGACY_BEGIN_RESULT_KEYS, 'rootNodeId', 'continuationStyle',
 ])
 
 const BEGIN_CANVAS_KEYS = new Set([
@@ -362,22 +458,89 @@ const COMPACT_BUILD_CONTRACT_V1_KEYS = new Set([
 const COMPACT_BUILD_CONTRACT_V2_KEYS = new Set([
   ...COMPACT_BUILD_CONTRACT_V1_KEYS, 'firstBatch',
 ])
+const COMPACT_BUILD_CONTRACT_V5_KEYS = new Set([
+  ...COMPACT_BUILD_CONTRACT_V2_KEYS, 'continuationStyle',
+])
+const COMPACT_BUILD_CONTRACT_V6_KEYS = new Set([
+  ...COMPACT_BUILD_CONTRACT_V1_KEYS, 'generation', 'continuationStyle',
+])
+const COMPACT_BUILD_CONTRACT_V7_KEYS = new Set([
+  'version', 'canvas', 'script', 'repair', 'node', 'layoutRules', 'generation', 'continuationStyle',
+])
+const COMPACT_BUILD_CONTRACT_V8_KEYS = new Set([
+  ...COMPACT_BUILD_CONTRACT_V7_KEYS, 'quality',
+])
+const COMPACT_BUILD_CONTRACT_V8_QUALITY_KEYS = new Set([
+  'textDefaults', 'contrast',
+])
+
+const COMPACT_BUILD_CONTRACT_SCRIPT_MODE_VERSIONS = new Set([
+  'openpencil-script-v6',
+  'openpencil-script-v7',
+  'openpencil-script-v8',
+  'openpencil-script-v9',
+  'openpencil-script-v10',
+  'openpencil-script-v11',
+  'openpencil-script-v12',
+])
+const COMPACT_BUILD_CONTRACT_DIRECT_SCRIPT_VERSIONS = new Set([
+  'openpencil-script-v7',
+  'openpencil-script-v8',
+  'openpencil-script-v9',
+  'openpencil-script-v10',
+  'openpencil-script-v11',
+  'openpencil-script-v12',
+])
+const COMPACT_BUILD_CONTRACT_QUALITY_VERSIONS = new Set([
+  'openpencil-script-v8',
+  'openpencil-script-v9',
+  'openpencil-script-v10',
+  'openpencil-script-v11',
+  'openpencil-script-v12',
+])
+
+const COMPACT_BUILD_CONTRACT_LEGACY_FIRST_BATCH_VERSIONS = new Set([
+  'openpencil-batch-v2',
+  'openpencil-batch-v3',
+  'openpencil-batch-v4',
+])
 
 function isCompactBuildContract(value: unknown): boolean {
   if (!isRecord(value)) return false
-  const expectedKeys = value.version === 'openpencil-batch-v2'
+  const version = typeof value.version === 'string' ? value.version : undefined
+  if (version === undefined) return false
+  const expectedKeys = COMPACT_BUILD_CONTRACT_LEGACY_FIRST_BATCH_VERSIONS.has(version)
     ? COMPACT_BUILD_CONTRACT_V2_KEYS
-    : value.version === 'openpencil-batch-v1'
-      ? COMPACT_BUILD_CONTRACT_V1_KEYS
-      : undefined
+    : version === 'openpencil-batch-v5'
+      ? COMPACT_BUILD_CONTRACT_V5_KEYS
+      : COMPACT_BUILD_CONTRACT_QUALITY_VERSIONS.has(version)
+        ? COMPACT_BUILD_CONTRACT_V8_KEYS
+        : version === 'openpencil-script-v7'
+          ? COMPACT_BUILD_CONTRACT_V7_KEYS
+          : version === 'openpencil-script-v6'
+            ? COMPACT_BUILD_CONTRACT_V6_KEYS
+            : version === 'openpencil-batch-v1'
+              ? COMPACT_BUILD_CONTRACT_V1_KEYS
+              : undefined
   if (expectedKeys === undefined || !hasExactKeys(value, expectedKeys)) return false
+  const directScript = COMPACT_BUILD_CONTRACT_DIRECT_SCRIPT_VERSIONS.has(version)
+  const quality = value.quality
   if (
     !isRecord(value.canvas)
     || !isRecord(value.script)
-    || !isSafeString(value.operations)
+    || (directScript ? !isSafeString(value.repair) : !isSafeString(value.operations))
     || !isRecord(value.node)
     || !Array.isArray(value.layoutRules)
-    || (value.version === 'openpencil-batch-v2' && !isRecord(value.firstBatch))
+    || (COMPACT_BUILD_CONTRACT_LEGACY_FIRST_BATCH_VERSIONS.has(version) && !isRecord(value.firstBatch))
+    || (version === 'openpencil-batch-v5' && (!isRecord(value.firstBatch) || !isRecord(value.continuationStyle)))
+    || (version === 'openpencil-script-v6' && (!isRecord(value.generation) || !isRecord(value.continuationStyle)))
+    || (directScript && (!isRecord(value.generation) || !isRecord(value.continuationStyle)))
+    || (COMPACT_BUILD_CONTRACT_QUALITY_VERSIONS.has(version) && (
+      !isRecord(quality)
+      || !hasExactKeys(quality, COMPACT_BUILD_CONTRACT_V8_QUALITY_KEYS)
+      || !isSafeString(quality.textDefaults)
+      || !isSafeString(quality.contrast)
+    ))
   ) return false
   try {
     return Buffer.byteLength(JSON.stringify(value)) <= 16 * 1024
@@ -388,7 +551,10 @@ function isCompactBuildContract(value: unknown): boolean {
 
 /** Accept only the compact live-draft settlement emitted by pipeline_begin. */
 export function parseHydratableBeginResult(value: unknown): BegunDraft | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, BEGIN_RESULT_KEYS)) return undefined
+  if (!isRecord(value) || !isRecord(value.buildContract)) return undefined
+  const scriptMode = typeof value.buildContract.version === 'string'
+    && COMPACT_BUILD_CONTRACT_SCRIPT_MODE_VERSIONS.has(value.buildContract.version)
+  if (!hasExactKeys(value, scriptMode ? SCRIPT_BEGIN_RESULT_KEYS : LEGACY_BEGIN_RESULT_KEYS)) return undefined
   if (
     typeof value.draftId !== 'string'
     || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
@@ -400,6 +566,11 @@ export function parseHydratableBeginResult(value: unknown): BegunDraft | undefin
     || (value.platform !== 'web' && value.platform !== 'mobile')
     || !isBeginCanvasContract(value.canvas, value.platform)
     || !isCompactBuildContract(value.buildContract)
+    || (scriptMode && (
+      typeof value.rootNodeId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootNodeId)
+      || !isRecord(value.continuationStyle)
+    ))
     || !isRecord(value.editorState)
     || !isRecord(value.styleGuideTags)
     || !isDocumentSnapshot(value.document)
@@ -423,34 +594,55 @@ const INSPECTION_SCREENSHOT_KEYS = new Set([
 export function parseHydratableInspectionResult(value: unknown): HydratableInspectionResult | undefined {
   if (!isRecord(value) || !hasExactKeys(value, INSPECTION_RESULT_KEYS)) return undefined
   const screenshot = value.screenshot
-  if (!isRecord(screenshot) || !hasExactKeys(screenshot, INSPECTION_SCREENSHOT_KEYS)) return undefined
   if (
     typeof value.draftId !== 'string'
     || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
     || value.kind !== 'screenshot'
     || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
-    || typeof screenshot.sha256 !== 'string'
-    || !isSha256(screenshot.sha256)
-    || screenshot.filename !== `${screenshot.sha256}.png`
-    || !isManagedArtifactPath(
-      screenshot.path,
-      join(stateRoot(), 'design-draft-inspections'),
-      screenshot.filename,
-    )
-    || screenshot.mimeType !== 'image/png'
-    || !isSafeInteger(screenshot.bytes, 1, MAX_RENDER_BYTES)
-    || !isSafeInteger(screenshot.width, 1, 32_768)
-    || !isSafeInteger(screenshot.height, 1, 32_768)
-    || screenshot.width * screenshot.height > 128 * 1024 * 1024
+    || !isHydratableInspectionScreenshot(screenshot)
     || !isSafeString(value.next)
   ) return undefined
   return value as unknown as HydratableInspectionResult
+}
+
+const BATCH_RESULT_KEYS = new Set([
+  'draftId', 'version', 'changed', 'generationScriptCount', 'generationScriptLimit',
+  'rootNodeId', 'batch', 'canvas', 'canvasCheck', 'screenshot', 'previewUnavailable',
+  'diagnostics', 'canContinue', 'next',
+])
+
+/** Accept a committed pipeline batch only when it carries a concrete PNG artifact. */
+export function parseHydratableBatchResult(value: unknown): HydratableBatchResult | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, BATCH_RESULT_KEYS)) return undefined
+  if (
+    typeof value.draftId !== 'string'
+    || !/^[A-Za-z0-9_-]{32}$/.test(value.draftId)
+    || !isSafeInteger(value.version, 0, Number.MAX_SAFE_INTEGER)
+    || typeof value.changed !== 'boolean'
+    || !isSafeInteger(value.generationScriptCount, 0, 2)
+    || value.generationScriptLimit !== 2
+    || (value.rootNodeId !== undefined && (
+      typeof value.rootNodeId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootNodeId)
+    ))
+    || !isRecord(value.batch)
+    || !isRecord(value.canvas)
+    || !isRecord(value.canvasCheck)
+    || !isHydratableInspectionScreenshot(value.screenshot)
+    || value.previewUnavailable !== undefined
+    || !Array.isArray(value.diagnostics)
+    || value.diagnostics.length > 64
+    || value.canContinue !== true
+    || !isSafeString(value.next)
+  ) return undefined
+  return value as unknown as HydratableBatchResult
 }
 
 function parseHydratableResult(toolName: unknown, value: unknown): HydratableResult | undefined {
   if (toolName === OPENPENCIL_RENDER_TOOL_NAME) return parseHydratableRenderResult(value)
   if (toolName === OPENPENCIL_NEW_TOOL_NAME) return parseHydratableNewResult(value)
   if (toolName === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME) return parseHydratableBeginResult(value)
+  if (toolName === OPENPENCIL_PIPELINE_BATCH_TOOL_NAME) return parseHydratableBatchResult(value)
   if (toolName === OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME) return parseHydratableInspectionResult(value)
   if (toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME) return parseHydratablePipelineResult(value)
   return undefined
@@ -860,6 +1052,7 @@ export class PresentationHydrationController {
           event.data.name !== OPENPENCIL_RENDER_TOOL_NAME
           && event.data.name !== OPENPENCIL_NEW_TOOL_NAME
           && event.data.name !== OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+          && event.data.name !== OPENPENCIL_PIPELINE_BATCH_TOOL_NAME
           && event.data.name !== OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME
           && event.data.name !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
         )

@@ -1,17 +1,23 @@
 /** Model-facing orchestration for OpenPencil's complete, unpublished design pipeline. */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { copyFile, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type FileSystem from '@deepseek-ai/dsh-fs'
 import type { FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
 import type SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { inspectGeneratedDesignQuality } from './design-quality.js'
+import {
+  inspectGeneratedDraftStructureReport,
+  inspectGeneratedDesignQualityReport,
+  type GeneratedDesignQualityRepairTarget,
+  type GeneratedDesignQualityReport,
+} from './design-quality.js'
 import type {
   DesignDraftCallResult,
   DesignDraftController,
   DesignDraftScreenshot,
+  DesignDraftSnapshot,
 } from './design-draft-controller.js'
 import type { EditorHostController } from './editor-host.js'
 import {
@@ -37,11 +43,21 @@ import {
 
 const MAX_BRIEF_LENGTH = 64 * 1024
 const MAX_BATCH_LENGTH = 256 * 1024
+const MAX_FIRST_GENERATION_BYTES = 8 * 1024
+const MAX_FIRST_GENERATION_CALLS = 32
+const VERIFIED_LUCIDE_ICONS = 'home/search/shopping-bag/shopping-cart/user/heart/star/plus/arrow-right/sparkles/sun/apple/snowflake/droplet/cookie/leaf/coffee/package/gift/baby/spray-can/lamp/sofa/armchair/shirt/smartphone/camera/utensils/sandwich/headphones/laptop/monitor/gamepad-2/watch/palette/croissant/cake/bed/bed-double/lamp-desk/flower/truck/shield-check/credit-card/map-pin/menu/x/check/chevron-down/phone/mail/facebook/instagram/youtube/table-2/gem/music/tv/car/globe/clock/calendar/tag/percent/store/users/rocket/layers/database/cloud/lock/shield/chart-bar/chart-line/chart-pie/trending-up/activity/gauge/target/code/workflow'
 const MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
 const MAX_TARGETED_CONTEXT_CALLS = 4
+const MAX_CORRECTION_DIAGNOSTICS = 64
+// One repair round can legitimately surface a second round of repairable
+// geometry (collapsing failed media reflows siblings). Two bounded rounds
+// convert those runs into publishes; anything deeper is a real defect.
+const MAX_FINISH_REPAIR_ROUNDS = 2
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const EXPLICIT_MOBILE_BRIEF = /(?:\b(?:mobile|phone|iphone|ios|android)\b|移动(?:端|应用|界面)?|手机(?:端|应用|界面)?)/iu
 const EXPLICIT_CANVAS_SIZE = /(?:^|\D)(\d{3,4})\s*(?:x|×|✕|\*)\s*(\d{3,5})(?:\D|$)/iu
+const COMMERCE_BRIEF = /(?:\b(?:e-?commerce|shop|shopping|storefront|retail)\b|电商|商城|购物|商品|商店)/iu
+const SECOND_BATCH_SCOPE_INSTRUCTION = 'Fresh QuickJS; opaque I/K ids parent-only, no mutation/locals. No new Page/App Content/Header/Hero. On begin.rootNodeId add <=3 regions/cards ending with the required Footer; exact old wrapper id only. Category helper: card=I(rail,96x112 vertical); face=I(card,{type:"frame",name:"Category glyph surface",width:56,height:56}); I(face,{type:"icon_font",name:label+" icon",iconFontName:glyph,width:24,height:24}); I(card,{type:"text",name:label+" label",content:label,...}); rail justifyContent:"space_between"; never art/media/image names. Semantic match: 数码/electronics=smartphone/camera, 食品/food=utensils/sandwich/croissant; never lamp/coffee for those. Desktop: complete three equal fill_container product cards from one coherent collection spanning the rail, one large image/name/price each, gap24, no unused right tail. Mobile: the product rail uses at most 2 fill_container cards OR equal numeric-width cards (e.g. 3x240px) inside an explicit clipped scroller rail — never three fill_container cards. Badge/pill text on #C2410C must be >=15px fontWeight>=600 (or #C2410C text on #FFF7ED). Generic home uses exactly `gray armchair isolated photo`, `artemide tolomeo lamp photo`, `potted plant isolated photo`; label the third as a potted plant, not a vase. That trio is ONLY for a generic home/furniture brief: any other vertical (coffee, food, fashion, electronics, ...) must give every card an English query naming the exact product shown in that card visible name, never the home trio. Every query <=4 English words, exactly one product, no lifestyle/collection/category. No lone small icon in large media. The last root region is the required Footer that completes the page: a role footer frame width:"fill_container" height:"fit_content" vertical gap 24 padding:[48,160] (mobile [40,24]) fill #1C1917; through its binding add the brand text #FFFFFF, one role nav-links horizontal row of >=3 role nav-link frames (minWidth 44, height 44) each holding 14px #D6D3D1 text, then one 13px #A8A29E copyright line. Never finish without the Footer.'
 
 const CONTEXT_TOOLS = [
   'get_guidelines',
@@ -79,12 +95,56 @@ interface PendingPublication {
   requestedPath: string
   processPath: string
   target: FsTarget
-  previewCount: number
   canvas: DraftCanvasContract
   canvasValidated: boolean
   contextCalls: Set<string>
-  enrichmentUsed: boolean
-  latestRootScreenshot?: { path: string; version: number; bytes: number; sha256: string }
+  contextEnrichmentUsed: boolean
+  finalEnrichmentUsed: boolean
+  rootNodeId: string
+  commerceIntent: boolean
+  generationScriptCount: number
+  generationCorrectionAttempted: Set<number>
+  repairAuthorized: boolean
+  repairAttemptCount: number
+  latestRootScreenshot?: InspectionScreenshotArtifact & {
+    version: number
+    documentSha256: string
+    finalized: boolean
+  }
+  finalization?: DraftFinalizationCheckpoint
+}
+
+interface InspectionScreenshotArtifact {
+  path: string
+  filename: string
+  mimeType: 'image/png'
+  bytes: number
+  sha256: string
+  width?: number
+  height?: number
+}
+
+interface DraftFinalizationCheckpoint {
+  version: number
+  documentSha256: string
+  beforeVersion: number
+  versionChanged: boolean
+  documentChanged: boolean
+  result: JsonValue
+  validation?: DraftValidationCheckpoint
+}
+
+interface DraftValidationCheckpoint {
+  canvasDiagnostics: string[]
+  canvasRepairTargets: GeneratedDesignQualityRepairTarget[]
+  nativeDiagnostics: string[]
+  nativeSources: {
+    finalize: number
+    quality: number
+    lint: number
+    layout: number
+  }
+  dsh: GeneratedDesignQualityReport
 }
 
 export interface DraftCanvasContract {
@@ -96,6 +156,41 @@ export interface DraftCanvasContract {
   rootCount: 1
   rootType: 'frame'
 }
+
+
+const DESIGN_PALETTE = {
+  page: '#F4F0E8',
+  panel: '#FFFFFF',
+  surface: '#111318',
+  onSurface: '#FAF8F3',
+  mutedOnSurface: '#C9C5BC',
+  accent: '#A84300',
+  accentHighlight: '#FFD9A8',
+  onAccent: '#FFFFFF',
+  ink: '#17191D',
+  muted: '#66635E',
+  line: '#DED8CE',
+  surfaceLine: '#8F929B',
+} as const
+
+// Compact host-selected counterpart of OpenPencil's bundled
+// `ecommerce-modern-light` style guide. Ordinary DSH turns must not spend a
+// model/tool round trip discovering a style, but they still need the same
+// concrete visual direction the App resolves before it starts drawing.
+const ECOMMERCE_PALETTE = {
+  page: '#FFFFFF',
+  panel: '#FFFFFF',
+  surface: '#1C1917',
+  onSurface: '#FFFFFF',
+  mutedOnSurface: '#A8A29E',
+  accent: '#C2410C',
+  accentHighlight: '#FFF7ED',
+  onAccent: '#FFFFFF',
+  ink: '#1C1917',
+  muted: '#57534E',
+  line: '#E7E5E4',
+  surfaceLine: '#F5F5F4',
+} as const
 
 export interface PublishedDraft {
   draftId: string
@@ -125,6 +220,8 @@ export interface BegunDraft {
   platform: 'web' | 'mobile'
   canvas: DraftCanvasContract
   buildContract: JsonValue
+  rootNodeId: string
+  continuationStyle: JsonValue
   editorState: JsonValue
   styleGuideTags: JsonValue
   document: DocumentSnapshot
@@ -138,11 +235,11 @@ export interface BegunDraft {
 }
 
 class DesignDraftJsQualityError extends Error {
-  readonly issues: string[]
+  readonly report: GeneratedDesignQualityReport
 
-  constructor(issues: string[]) {
+  constructor(report: GeneratedDesignQualityReport) {
     super('OpenPencil draft failed the DSH publication quality gate')
-    this.issues = issues
+    this.report = report
   }
 }
 
@@ -169,8 +266,178 @@ function asJson(value: unknown): JsonValue {
   return (value ?? null) as JsonValue
 }
 
-function draftCanvasContract(brief: string): DraftCanvasContract {
-  const explicit = EXPLICIT_CANVAS_SIZE.exec(brief)
+function publicBatchReceipt(value: unknown): JsonValue {
+  if (!isRecord(value)) return {}
+  const receipt: Record<string, JsonValue> = {}
+  if (Array.isArray(value.results)) {
+    receipt.results = value.results.flatMap((entry) => {
+      if (!isRecord(entry)
+        || typeof entry.binding !== 'string'
+        || typeof entry.nodeId !== 'string') return []
+      return [{ binding: entry.binding, nodeId: entry.nodeId }]
+    })
+  }
+  if (typeof value.nodeCount === 'number' && Number.isFinite(value.nodeCount)) {
+    receipt.nodeCount = value.nodeCount
+  }
+  if (typeof value.postProcessed === 'boolean') receipt.postProcessed = value.postProcessed
+  if (typeof value.applied === 'boolean') receipt.applied = value.applied
+  return receipt
+}
+
+function creationCallCount(script: string): number {
+  return [...script.matchAll(/\b[IK]\s*\(/gu)].length
+}
+
+/**
+ * Direct QuickJS bindings are opaque node-id strings, not mutable PenNode
+ * objects. Assigning `card.x = ...` throws after earlier I/K calls have
+ * already been recorded; older native runners intentionally salvaged that
+ * prefix, which made a visibly incomplete batch look successful. Creation
+ * scripts do not need member mutation, so reject it before any draft change.
+ */
+function hasMemberMutation(script: string): boolean {
+  return /(?:^|[;{}\n])\s*[A-Za-z_$][\w$]*\s*(?:\.[A-Za-z_$][\w$]*|\[[^\]\n]+\])\s*(?:=(?!=)|\+=|-=|\*=|\/=|%=|\+\+|--)/mu.test(script)
+}
+
+function designContinuationStyle(canvas: DraftCanvasContract, commerceIntent: boolean): JsonValue {
+  const mobile = canvas.platform === 'mobile'
+  const commerceDesktop = commerceIntent && !mobile
+  return {
+    version: 'openpencil-continuation-style-v1',
+    styleGuide: commerceIntent ? 'ecommerce-modern-light' : 'dsh-editorial-warm',
+    palette: commerceIntent ? ECOMMERCE_PALETTE : DESIGN_PALETTE,
+    typography: {
+      fontFamily: 'Inter, system-ui, sans-serif',
+      display: [mobile ? 42 : commerceDesktop ? 56 : 64, commerceDesktop ? 700 : 800, commerceDesktop ? 1.05 : 1.04],
+      heading: [mobile ? 28 : commerceDesktop ? 36 : 40, commerceDesktop ? 700 : 750, commerceDesktop ? 1.2 : 1.12],
+      body: [mobile ? 16 : 18, 400, commerceIntent ? 1.6 : 1.5],
+      label: [14, commerceIntent ? 500 : 650, commerceIntent ? 1.4 : 1.3],
+    },
+    spacing: {
+      pageInset: mobile ? 24 : commerceDesktop ? 160 : 80,
+      headerInset: mobile ? 24 : commerceDesktop ? 160 : 72,
+      sectionPadding: mobile ? [40, 24, 36, 24] : commerceDesktop ? [64, 160] : [72, 80],
+      gaps: [8, 12, 16, 24, 32, 48, 64],
+    },
+    ...(commerceIntent
+      ? {
+          recipe: {
+            direction: 'Modern direct-to-consumer storefront: clean white base, warm-tinted section rhythm, product-first hierarchy; orange only for CTA, active state, and price.',
+            surfaces: 'Structural wrappers stay transparent. Cards are white with 16px radius and optional #E7E5E4 hairline; buttons use 12px radius. Never stack decorative wrapper cards.',
+            hero: mobile
+              ? 'One dominant message, one primary CTA, and one recognizable focal visual; avoid generic floating rectangles.'
+              : '1120px row: 512px copy + 64px gap + 448px product visual; headline/subtitle fill the copy width; one primary CTA, 56px display, 64-96px vertical rhythm.',
+            rails: 'Category rail spans its content width with space_between. Product rail is a three-column equal-width grid with 24px gaps, large image areas, 24px card content padding, and no unused right tail.',
+            language: 'Visible copy follows the user request language; keep the invented brand name consistent and do not mix interface languages.',
+          },
+        }
+      : {}),
+    iconSizes: [18, 20, 24],
+    controls: {
+      height: mobile ? 52 : 48,
+      buttonHeight: mobile ? 52 : 48,
+      iconButton: 44,
+    },
+  } as JsonValue
+}
+
+function defaultDraftPath(brief: string): string {
+  const stem = COMMERCE_BRIEF.test(brief) ? 'shop-home' : 'openpencil-design'
+  return `${stem}-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}.op`
+}
+
+function seedCanvasScript(canvas: DraftCanvasContract, commerceIntent: boolean): string {
+  const palette = commerceIntent ? ECOMMERCE_PALETTE : DESIGN_PALETTE
+  const root = {
+    type: 'frame',
+    name: 'Generated Page',
+    width: canvas.width,
+    height: canvas.fixedViewport ? canvas.seedHeight : 'fit_content',
+    ...(canvas.fixedViewport ? {} : { minHeight: canvas.seedHeight }),
+    layout: 'vertical',
+    padding: 0,
+    gap: 0,
+    fill: [{ type: 'solid', color: palette.page }],
+  }
+  return `I(null, ${JSON.stringify(root)});`
+}
+
+function documentSha256(documentJson: string): string {
+  return createHash('sha256').update(documentJson).digest('hex')
+}
+
+function clearFinalizationCheckpoint(pending: PendingPublication): void {
+  pending.finalization = undefined
+  pending.latestRootScreenshot = undefined
+}
+
+function finalizationNote(checkpoint: DraftFinalizationCheckpoint): string {
+  if (checkpoint.documentChanged) {
+    return `Native finalization changed document bytes and advanced version from ${checkpoint.beforeVersion} to ${checkpoint.version}. The finalized checkpoint is informational only and does not request a repair.`
+  }
+  if (checkpoint.versionChanged) {
+    return `Native finalization advanced version from ${checkpoint.beforeVersion} to ${checkpoint.version} without changing document bytes. The finalized checkpoint is informational only and does not request a repair.`
+  }
+  return 'Native finalization preserved the current version and document bytes. The finalized checkpoint is informational only and does not request a repair.'
+}
+
+function publicFinalizationCheckpoint(
+  checkpoint: DraftFinalizationCheckpoint,
+  reused: boolean,
+): JsonValue {
+  return {
+    version: checkpoint.version,
+    changed: checkpoint.versionChanged,
+    documentChanged: checkpoint.documentChanged,
+    reused,
+    documentSha256: checkpoint.documentSha256,
+    note: finalizationNote(checkpoint),
+  }
+}
+
+function publicScreenshot(
+  screenshot: PendingPublication['latestRootScreenshot'],
+  version: number,
+  documentSha?: string,
+): JsonValue | undefined {
+  if (
+    screenshot === undefined
+    || screenshot.version !== version
+    || (documentSha !== undefined && screenshot.documentSha256 !== documentSha)
+  ) return undefined
+  const {
+    version: _version,
+    documentSha256: _documentSha256,
+    finalized: _finalized,
+    ...artifact
+  } = screenshot
+  return artifact as unknown as JsonValue
+}
+
+function latestDirectUserText(exec: ToolRunContext): string | undefined {
+  const session = exec.agent?.session
+  if (session === undefined || typeof session.deriveMessages !== 'function') return undefined
+  const messages = session.deriveMessages()
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'user' || message.source.kind !== 'user') continue
+    const text = message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('\n')
+      .trim()
+    if (text.length > 0) return text.slice(0, MAX_BRIEF_LENGTH)
+  }
+  return undefined
+}
+
+function draftCanvasContract(brief: string, directUserText?: string): DraftCanvasContract {
+  // Platform and viewport are user intent, not design-agent creative choices.
+  // The model-facing `brief` may expand the requested content, but it must not
+  // silently turn an ordinary desktop/web request into a mobile composition.
+  const authoritativeIntent = directUserText ?? brief
+  const explicit = EXPLICIT_CANVAS_SIZE.exec(authoritativeIntent)
   const explicitWidth = explicit === null ? undefined : Number(explicit[1])
   const explicitHeight = explicit === null ? undefined : Number(explicit[2])
   const validExplicit = explicitWidth !== undefined
@@ -181,7 +448,7 @@ function draftCanvasContract(brief: string): DraftCanvasContract {
     && explicitWidth <= 3_840
     && explicitHeight >= 240
     && explicitHeight <= 20_000
-  const mobile = EXPLICIT_MOBILE_BRIEF.test(brief) || (validExplicit && explicitWidth <= 500)
+  const mobile = EXPLICIT_MOBILE_BRIEF.test(authoritativeIntent) || (validExplicit && explicitWidth <= 500)
   const width = validExplicit ? explicitWidth! : mobile ? 390 : 1_440
   const seedHeight = validExplicit ? explicitHeight! : mobile ? 844 : 900
   return {
@@ -196,61 +463,65 @@ function draftCanvasContract(brief: string): DraftCanvasContract {
 }
 
 /**
- * Small, version-pinned subset of the native design contract needed to make
- * the first valid batch. It deliberately avoids the full native prompt while
- * giving the model executable field names instead of asking it to guess.
+ * Small, version-pinned subset of the native design contract needed to write
+ * at most two direct QuickJS generation scripts without re-reading native sources.
  */
-function compactBuildContract(canvas: DraftCanvasContract): JsonValue {
+function compactBuildContract(canvas: DraftCanvasContract, commerceIntent: boolean): JsonValue {
+  const mobile = canvas.platform === 'mobile'
   return {
-    version: 'openpencil-batch-v2',
+    version: 'openpencil-script-v12',
     canvas: {
-      instruction: `Create exactly one root frame at ${canvas.width}x${canvas.seedHeight} in the first batch.`,
       width: canvas.width,
-      seedHeight: canvas.seedHeight,
-      finalHeight: canvas.finalHeight,
-      finalHeightInstruction: canvas.fixedViewport
-        ? 'Keep the explicitly requested numeric viewport.'
-        : 'After the content flow is complete, update the root height to "fit_content".',
+      rootHeight: canvas.finalHeight,
+      rule: canvas.fixedViewport
+        ? 'Keep numeric root viewport.'
+        : 'Keep root height:"fit_content".',
     },
     script: {
       runtime: 'sandboxed QuickJS',
-      create: 'const root = I(null, node); const child = I(root, node);',
-      component: 'K(kitId, parent, overrides) only with a real kit id returned by native context.',
-      rules: [
-        'I and K are the only creation functions; use const/let, arrays, and loops for repeated content.',
-        'A child parent is the binding returned by an earlier I/K call, never an invented id or display name.',
-        'Do not use imports, console, Node.js, browser, network, filesystem, or update/delete operations in script mode.',
-      ],
+      create: 'rootNodeId is page. Use I(parent,node)/K(realKitId,...); only returned frame/group bindings parent children. No Page/root, I(null,...), or children on leaves including text_input. Round art parent=frame+cornerRadius, not ellipse.',
+      wrapper: 'const draftId="<exact begin.draftId>";\nconst script=String.raw`...`;\nconst r=await tools.openpencil_pipeline_batch({draftId,script});\nreturn r;',
+      wrapperRule: 'Quote exact begin.draftId first; call contains only draftId,script; no fields/return inside.',
+      safe: 'QuickJS loops/helpers. I/K return opaque ids: parent-only, never mutate a binding. No imports/console/host APIs/edit/delete.',
     },
-    firstBatch: {
-      purpose: 'Make the live canvas visibly useful as fast as possible; stop after the empty page-region skeleton.',
-      required: [
-        `Create one fixed root frame with width ${canvas.width} and height ${canvas.seedHeight}.`,
-        'Create 4-8 named top-level frame shells directly under the root binding.',
-        'Keep every shell empty: omit children or use children:[]; do not create descendants.',
-        'Use no more than 10 I(...) calls total, including the root.',
-      ],
-      forbidden: [
-        'text, icon_font, image, path, controls, ref, K(...), G(...), or any non-frame node',
-        'nested content, inline child nodes, or I(...) calls parented below a top-level shell',
-        'filling a shell with labels, icons, images, controls, cards, or decorative content',
-      ],
-      completion: 'Return immediately after the root and empty named shells exist. Populate them in subsequent batches.',
+    generation: {
+      first: mobile
+        ? 'First<=32 I/K: compact Header/Search/Cart + one complete mobile Hero; short ASCII brand. One dominant message/CTA and one recognizable focal visual; no desktop two-column rule and no generic floating rectangles. Below-fold/images batch2; else one.'
+        : commerceIntent
+          ? 'First<=32 I/K: use literal hex colors directly in node objects, no palette alias variables. const header=I(root,{type:"frame",name:"Header",role:"navbar",width:"fill_container",height:64,layout:"horizontal",padding:[0,160],justifyContent:"space_between",alignItems:"center"}); insert Brand text, Nav role nav-links, and Actions through that header binding, never as root siblings — an empty role container invalidates the batch. Every nav item MUST be a frame role nav-link minWidth44 height44 containing its text child; never put role nav-link on text. Header actions role toolbar (Search/Cart each 44x44 role icon-button frame with a 20px icon). Hero is width:"fill_container" horizontal padding:[64,160], containing copy512+gap64+image448; never set Hero width1120 together with padding. Headline/subtitle width:"fill_container". Short ASCII brand; all other copy follows the user language (Chinese request => Chinese copy). One headline/subtitle/primary CTA; CTA role button 160x48 #C2410C/#FFFFFF and label must be inserted through its CTA binding. Generic commerce MUST use this direct visual pattern: const visual=I(hero,{type:"image",name:"Hero product image",width:448,height:360,imageSearchQuery:"gray loveseat isolated photo"}); imageSearchQuery is a direct node field and must differ from every product-card query. Never wrap the image, use image:{...}, or mix it with shapes. A layout:none 4-6-layer ellipse/path fallback is allowed only when the user explicitly requests illustration/no photos. Below-fold product images batch2.'
+          : 'First<=32 I/K: Header/Nav(Brand/Search/Cart)+one polished Hero; short ASCII brand. Use one dominant message, one primary CTA, and one recognizable focal visual with no blank field or overflow. Below-fold/images batch2; else one.',
+      second: 'Second=fresh parent-only I/K; no mutation/new Page/App Content/Header/Hero. rootNodeId<=3 regions, old wrapper. Product=media-or-none+name+price. Category=96x112 -> 56x56 Category glyph surface -> semantic 24x24 icon+label; names not art/media/image; rail spans width with justifyContent:"space_between". 数码=smartphone/camera; 食品=utensils/sandwich/croissant; not lamp/coffee. Commerce desktop=3 equal fill_container product cards spanning the rail, 24px gap, large media, name, price, no unused right tail; mobile product rail=at most 2 fill_container cards OR equal numeric-width cards (e.g. 3x240px) inside an explicit clipped scroller rail, never 3 fill_container. Badge/pill text on the #C2410C accent must be >=15px fontWeight>=600 or use #C2410C text on #FFF7ED. Generic home ONLY exact queries=gray armchair isolated photo/artemide tolomeo lamp photo/potted plant isolated photo; third card is potted plant. Other verticals: each query names the exact product in that card name (coffee=>latte cup photo), never the home trio. Images=node.image. Query<=4 English words, one product, no lifestyle/collection/category. Last region=required Footer: role footer fill_container/fit_content vertical gap24 padding[48,160] (mobile[40,24]) fill #1C1917: brand #FFFFFF, role nav-links row of >=3 role nav-link frames minWidth44 height44 14px #D6D3D1, 13px #A8A29E copyright. Loops; finish.',
+      limit: 'Exactly two I/K generation scripts; do not expand short briefs into gallery/promo variants beyond the contract sections; the single closing Footer is required, not an expansion.',
     },
-    operations: 'For later edits use newline DSL U("exact-id", patch), R, D, M, C, or G; ids must come from prior native results.',
+    continuationStyle: {
+      rule: 'Use returned values only.',
+    },
+    quality: {
+      textDefaults: 'Generated text: Inter, system-ui, sans-serif / 16 / 1.5.',
+      contrast: 'Use AA text pairs from the returned continuationStyle palette.',
+    },
+    repair: 'Each complete non-empty finish.repairTargets allows one U(nodeId,patch)-only script + one finish retry (host caps repair rounds at 2); otherwise stop.',
     node: {
-      types: ['frame', 'text', 'rectangle', 'ellipse', 'line', 'path', 'image', 'icon_font', 'group', 'ref', 'text_input', 'text_area', 'select', 'checkbox'],
-      container: 'width/height: number | "fill_container" | "fit_content"; layout: "vertical" | "horizontal" | "none"; gap; padding is only a number, [vertical,horizontal], or [top,right,bottom,left] (never an object); justifyContent; alignItems; clipContent; cornerRadius.',
-      text: 'Use content (not text), fontSize, fontWeight, lineHeight, letterSpacing, textAlign, and a fill array.',
-      paint: 'fill is [{type:"solid",color:"#RRGGBB"}]; stroke is {thickness,fill:[...]}; effects is an array.',
-      controls: 'Use native text_input/text_area/select/checkbox nodes. Inputs need width:"fill_container" and an explicit 44-52px height; password text_input uses secure:true; leadingIcon/trailingIcon accept only a glyph-name string such as "mail" or "eye", never an object or node.',
-      icons: 'Use icon_font with iconFontName (for example search, cart, heart, user); never emoji or guessed SVG/path data.',
+      parents: 'Only frame/group parent. Use rectangle not rect; ellipse/image/icon_font/text/path are leaves.',
+      container: 'width/height: number, fill_container, or fit_content; padding:[vertical,horizontal] or [top,right,bottom,left].',
+      text: 'Text portable "Inter, system-ui, sans-serif"/16/1.5; CJK same. height omitted/fit_content; never bare Inter.',
+      paint: 'fill:[solid #RRGGBB]; stroke:{thickness,fill}; effects[]; shadow blur<=40.',
+      icon: `{type:'icon_font',name:'Search icon',iconFontName:'search',width:20,height:20}; name=layer label; iconFontName=glyph from ${VERIFIED_LUCIDE_ICONS}; else shapes.`,
+      image: 'Photos:default1; commerce=Hero1+product3, all four queries distinct. Hero exact leaf: I(parent,{type:"image",name:"Hero product image",width:"fill_container",height:300,imageSearchQuery:"gray loveseat isolated photo"}); imageSearchQuery is direct, never image:{...}, never wrapper. Query<=4 English words, one product, no lifestyle/collection/category. Generic desktop Hero uses the direct image leaf; shapes only when user explicitly requests illustration/no photos. Media=image XOR shapes; no tiny icon.',
+      control: 'Controls >=44x44 (or fill width) and bind visible children. Button/CTA role button; icon buttons are role icon-button 44x44 frames containing a 20px icon. Nav collection role nav-links; each item role nav-link minWidth44 height44 with text. text_input is a leaf: placeholder only; never I(text_input,...). Icon+hint search uses a Search frame. password text_input secure:true.',
     },
     layoutRules: [
-      'Never set x/y on children inside a layout container.',
-      'Do not put fill_container inside a fit_content parent on the same axis.',
-      'Use equal sizing strategies for siblings in a row and verify fixed item widths fit the inner width.',
-      'First create only the fixed root and 4-8 empty named top-level frame shells; populate those shells in later batches.',
+      'No x/y in horizontal/vertical flow. An explicit layout:"none" visual stack has numeric width/height and every direct child has numeric x/y/width/height; never mutate returned bindings.',
+      'No fill_container on fit_content same-axis parent.',
+      'No empty shells.',
+      'Visible copy uses the user request language consistently; brand identity stays identical.',
+      ...(canvas.platform === 'mobile'
+        ? [
+            'Mobile: only full-width root children; text/icons/controls/titles use a bound 24px-gutter rail.',
+            'Mobile category item: vertical fit_content item -> 56x56 frame tile -> icon, then label; never put the icon directly in the item.',
+            'Mobile product rail: height:"fit_content"; either at most 2 all-fill_container cards, or equal numeric-width cards in an explicit clipped/scroller rail; never mix numeric and fill_container card widths.',
+          ]
+        : []),
     ],
   } as JsonValue
 }
@@ -261,7 +532,51 @@ function draftRootNodes(document: Record<string, unknown>): unknown[] {
   return document.pages.flatMap(page => isRecord(page) && Array.isArray(page.children) ? page.children : [])
 }
 
-function canvasContractDiagnostics(documentJson: string, canvas: DraftCanvasContract): string[] {
+function draftRootNodeId(documentJson: string): string | undefined {
+  let document: unknown
+  try {
+    document = JSON.parse(documentJson)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(document)) return undefined
+  const roots = draftRootNodes(document)
+  if (roots.length !== 1 || !isRecord(roots[0])) return undefined
+  const id = roots[0].id
+  return typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)
+    ? id
+    : undefined
+}
+
+function hasUnresolvedImageSearchQuery(documentJson: string): boolean {
+  let document: unknown
+  try {
+    document = JSON.parse(documentJson)
+  } catch {
+    return false
+  }
+  const pending: unknown[] = [document]
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (Array.isArray(value)) {
+      pending.push(...value)
+      continue
+    }
+    if (!isRecord(value)) continue
+    if (typeof value.imageSearchQuery === 'string' && value.imageSearchQuery.trim() !== '') {
+      const source = typeof value.src === 'string' ? value.src.trim() : ''
+      if (source === '' || /^placeholder:\/\//iu.test(source)) return true
+    }
+    pending.push(...Object.values(value))
+  }
+  return false
+}
+
+function canvasContractDiagnostics(
+  documentJson: string,
+  canvas: DraftCanvasContract,
+  options: { requireFinalHeight?: boolean } = {},
+): string[] {
   let document: unknown
   try {
     document = JSON.parse(documentJson)
@@ -283,7 +598,39 @@ function canvasContractDiagnostics(documentJson: string, canvas: DraftCanvasCont
   if (canvas.fixedViewport && root.height !== canvas.seedHeight) {
     return [`Canvas contract requires the explicit root height ${canvas.seedHeight}px; current root height is ${String(root.height)}.`]
   }
+  if (options.requireFinalHeight === true && !canvas.fixedViewport && root.height !== canvas.finalHeight) {
+    return [`Canvas contract requires the completed root height ${String(canvas.finalHeight)}; current root height is ${String(root.height)}.`]
+  }
   return []
+}
+
+function canvasContractRepairTargets(
+  documentJson: string,
+  canvas: DraftCanvasContract,
+  options: { requireFinalHeight?: boolean } = {},
+): GeneratedDesignQualityRepairTarget[] {
+  let document: unknown
+  try {
+    document = JSON.parse(documentJson)
+  } catch {
+    return []
+  }
+  if (!isRecord(document)) return []
+  const roots = draftRootNodes(document)
+  if (roots.length !== 1 || !isRecord(roots[0]) || roots[0].type !== canvas.rootType) return []
+  const root = roots[0]
+  const nodeId = typeof root.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(root.id)
+    ? root.id
+    : undefined
+  if (nodeId === undefined) return []
+  const patch: GeneratedDesignQualityRepairTarget['patch'] = {}
+  if (root.width !== canvas.width) patch.width = canvas.width
+  if (canvas.fixedViewport && root.height !== canvas.seedHeight) patch.height = canvas.seedHeight
+  if (options.requireFinalHeight === true && !canvas.fixedViewport && root.height !== canvas.finalHeight) {
+    patch.height = 'fit_content'
+  }
+  if (Object.keys(patch).length === 0) return []
+  return [{ nodeId, operation: 'U', rule: 'canvas-contract', patch }]
 }
 
 function contextFingerprint(tool: ContextTool, args: Record<string, unknown>): string {
@@ -323,7 +670,15 @@ function assertNoExternalArguments(value: unknown, location = 'arguments', depth
 }
 
 const ISSUE_FIELD = /(?:issues$|^advisories$|^diagnostics$|^errors$|^emptyShells$|^intentQuestions$|^imageSlots$)/i
-const OBSERVATIONAL_QUALITY_FIELD = /^emptyShells$/i
+const OBSERVATIONAL_QUALITY_FIELD = /^(?:emptyShells|imageSlots|intentQuestions)$/i
+const NON_BLOCKING_LINT_WARNINGS = new Set([
+  'invisible-container',
+  'mixed-sibling-corner-radius',
+  'mixed-sibling-padding',
+  'sibling-inconsistency',
+  'text-effect',
+  'text-explicit-height',
+])
 
 function issueValues(value: unknown, options: { includeObservational?: boolean } = {}): string[] {
   const includeObservational = options.includeObservational ?? true
@@ -348,9 +703,11 @@ function issueValues(value: unknown, options: { includeObservational?: boolean }
     for (const [childKey, child] of Object.entries(candidate)) {
       if (ISSUE_FIELD.test(childKey)) {
         // Empty shells include intentional layout primitives such as spacers
-        // and dividers. Keep them visible in quality inspection, but let the
-        // publication gate exclude this observational heuristic without
-        // weakening any other native diagnostic category.
+        // and dividers. Image-slot hints are also observational: script mode
+        // cannot call the G() helper, and a deliberate
+        // product swatch or placeholder must not force a repair loop. Keep
+        // both visible in explicit inspection while excluding them from the
+        // publication gate without weakening hard rendering diagnostics.
         if (!includeObservational && OBSERVATIONAL_QUALITY_FIELD.test(childKey)) continue
         if (Array.isArray(child)) visit(child, childKey, depth + 1)
         else if (typeof child === 'string' && child.trim().length > 0) issues.push(child.slice(0, 300))
@@ -367,19 +724,30 @@ function blockingLintValue(value: unknown): unknown {
   if (!isRecord(value) || !Array.isArray(value.issues)) return value
   return {
     ...value,
-    // OpenPencil's own fixer deliberately treats Info as observational. Keep
-    // it visible in the returned lint report, but do not make an informational
-    // heuristic an impossible publication gate (notably for host-owned chrome).
-    issues: value.issues.filter(issue => !(
-      isRecord(issue)
-      && typeof issue.severity === 'string'
-      && issue.severity.toLocaleLowerCase('en-US') === 'info'
-    )),
+    // OpenPencil's own fixer treats Info as observational. A narrow set of
+    // visual-consistency and authored-text warnings are also non-fatal, but
+    // other Warning categories (for example invisible paths, accessibility,
+    // or pathological effects) still block publication.
+    issues: value.issues.filter(issue => {
+      if (!isRecord(issue)) return true
+      const severity = typeof issue.severity === 'string'
+        ? issue.severity.toLocaleLowerCase('en-US')
+        : ''
+      if (severity === 'info') return false
+      const categoryValue = typeof issue.category === 'string' ? issue.category : issue.code
+      const category = typeof categoryValue === 'string'
+        ? categoryValue.toLocaleLowerCase('en-US')
+        : ''
+      return !(severity === 'warning' && NON_BLOCKING_LINT_WARNINGS.has(category))
+    }),
   }
 }
 
 function presentationMeta(editorHost: EditorHostController, render: RenderAccessController) {
   return (_args: unknown, value: JsonValue): JsonValue => {
+    if (isRecord(value) && value.published === false) {
+      return projectScreenshotPresentation(value, render)
+    }
     const result = value as unknown as PublishedDraft
     const editor = editorHost.grantFor(result.path, result.document?.sha256)
     return projectDocumentGrant(value, render, editor)
@@ -390,25 +758,30 @@ function inspectionPreviewFilename(sha256: string): string {
   return `render-stage-${sha256}.png`
 }
 
+function projectScreenshotPresentation(value: JsonValue, render: RenderAccessController): JsonValue {
+  if (!isRecord(value) || !isRecord(value.screenshot)) return value
+  const artifact = value.screenshot
+  if (
+    typeof artifact.bytes !== 'number'
+    || typeof artifact.sha256 !== 'string'
+    || typeof artifact.width !== 'number'
+    || typeof artifact.height !== 'number'
+  ) return value
+  return projectImageArtifactGrant(value, render, {
+    filename: inspectionPreviewFilename(artifact.sha256),
+    bytes: artifact.bytes,
+    sha256: artifact.sha256,
+    width: artifact.width,
+    height: artifact.height,
+    name: 'Live design preview',
+    index: 0,
+  })
+}
+
 function inspectionPresentationMeta(render: RenderAccessController) {
   return (_args: unknown, value: JsonValue): JsonValue => {
-    if (!isRecord(value) || value.kind !== 'screenshot' || !isRecord(value.screenshot)) return value
-    const artifact = value.screenshot
-    if (
-      typeof artifact.bytes !== 'number'
-      || typeof artifact.sha256 !== 'string'
-      || typeof artifact.width !== 'number'
-      || typeof artifact.height !== 'number'
-    ) return value
-    return projectImageArtifactGrant(value, render, {
-      filename: inspectionPreviewFilename(artifact.sha256),
-      bytes: artifact.bytes,
-      sha256: artifact.sha256,
-      width: artifact.width,
-      height: artifact.height,
-      name: 'Live design preview',
-      index: 0,
-    })
+    if (!isRecord(value) || value.kind !== 'screenshot') return value
+    return projectScreenshotPresentation(value, render)
   }
 }
 
@@ -461,7 +834,7 @@ async function persistInspectionScreenshot(screenshot: DesignDraftScreenshot): P
   }
   const verified = await verifyRenderOutput(browserPath)
   if (verified.bytes !== screenshot.bytes.length || verified.sha256 !== sha256) {
-    throw new Error('OpenPencil browser preview did not match its inspection screenshot')
+    throw new Error('OpenPencil browser preview did not match its exact PNG render artifact')
   }
   return {
     path,
@@ -500,6 +873,14 @@ export class DesignDraftToolController {
     ] as const
   }
 
+  /** Whether this DSH agent currently owns an unpublished pipeline draft. */
+  hasActiveDraft(owner: string): boolean {
+    for (const pending of this.#pending.values()) {
+      if (pending.ownerSessionId === owner) return true
+    }
+    return false
+  }
+
   async abortOwner(owner: string): Promise<void> {
     await this.#drafts.abortOwner(owner)
     for (const [draftId, pending] of this.#pending) {
@@ -531,11 +912,9 @@ export class DesignDraftToolController {
     const editorHost = this.#editorHost
     return defineTool({
       name: OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
-      description: 'Begin a fast, private OpenPencil design draft and immediately open its live canvas. '
-        + 'Use this for new production designs. It validates a new .op target, starts one native daemon, '
-        + 'and returns compact authoritative starter context. The target is not created until pipeline_finish.',
+      description: 'Start a private OpenPencil draft, open its live canvas, and return the two-batch QuickJS contract. The .op target is created only after a successful finish.',
       parameters: {
-        path: { type: 'string', required: true, description: 'New workspace-relative or absolute .op target. It must not exist.' },
+        path: { type: 'string', description: 'Optional new workspace-relative or absolute .op target. Omit it unless the user explicitly named a file; the plugin creates a concrete collision-resistant filename. An explicit target must not exist and is preserved exactly.' },
         brief: { type: 'string', required: true, description: 'The user\'s design request. Preserve it; do not invent a mobile platform when none was requested.' },
       },
       output: {
@@ -549,14 +928,15 @@ export class DesignDraftToolController {
           return projectDocumentGrant(value, services.render, editor)
         },
       },
-      execute: async (args: { path: string; brief: string }, exec) => {
-        const requestedPath = args.path.trim()
+      execute: async (args: { path?: string; brief: string }, exec) => {
         const brief = args.brief.trim()
-        if (requestedPath.length === 0) throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: path is required`)
+        const requestedPath = args.path?.trim() || defaultDraftPath(brief)
         if (extname(requestedPath).toLowerCase() !== '.op') throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: path must end in .op`)
         if (brief.length === 0) throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: brief is required`)
         if (brief.length > MAX_BRIEF_LENGTH) throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: brief is too large`)
-        const canvas = draftCanvasContract(brief)
+        const directUserText = latestDirectUserText(exec)
+        const canvas = draftCanvasContract(brief, directUserText)
+        const commerceIntent = COMMERCE_BRIEF.test(directUserText ?? brief)
         const owner = ownerSessionId(exec)
         const policy = services.sandboxPolicy.resolve({ session: exec.agent?.session })
         if (services.fs.sandboxMode !== undefined && policy.mode === 'read-only') {
@@ -589,22 +969,39 @@ export class DesignDraftToolController {
           signal: exec.signal,
         })
         try {
-          const editorState = await drafts.call(begun.draftId, owner, 'get_editor_state', {}, { signal: exec.signal })
-          const styleGuideTags = await drafts.call(begun.draftId, owner, 'get_style_guide_tags', {}, { signal: exec.signal })
+          const seeded = await drafts.call(begun.draftId, owner, 'batch_design', {
+            script: seedCanvasScript(canvas, commerceIntent),
+            postProcess: true,
+            canvasWidth: canvas.width,
+          }, { signal: exec.signal })
+          if (seeded.changed !== true) {
+            throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: native canvas seed did not create the root frame`)
+          }
           const authoritative = await drafts.snapshot(begun.draftId, owner, { signal: exec.signal })
           const document = await (services.createDocumentSnapshot ?? createDocumentSnapshotFromText)(
             authoritative.documentJson,
           )
+          const rootNodeId = draftRootNodeId(authoritative.documentJson)
+          const canvasDiagnostics = canvasContractDiagnostics(authoritative.documentJson, canvas)
+          if (rootNodeId === undefined || canvasDiagnostics.length > 0) {
+            throw new Error(`${OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME}: native canvas seed did not produce the authoritative single root frame`)
+          }
           this.#pending.set(begun.draftId, {
             ownerSessionId: owner,
             requestedPath,
             processPath,
             target,
-            previewCount: 0,
             canvas,
-            canvasValidated: false,
+            canvasValidated: true,
             contextCalls: new Set(),
-            enrichmentUsed: false,
+            contextEnrichmentUsed: false,
+            finalEnrichmentUsed: false,
+            rootNodeId,
+            commerceIntent,
+            generationScriptCount: 0,
+            generationCorrectionAttempted: new Set(),
+            repairAuthorized: false,
+            repairAttemptCount: 0,
           })
           return {
             draftId: begun.draftId,
@@ -613,9 +1010,13 @@ export class DesignDraftToolController {
             ...(begun.createdAt === undefined ? {} : { createdAt: begun.createdAt }),
             platform: canvas.platform,
             canvas: asJson(canvas),
-            buildContract: compactBuildContract(canvas),
-            editorState: asJson(editorState.value),
-            styleGuideTags: asJson(styleGuideTags.value),
+            buildContract: compactBuildContract(canvas, commerceIntent),
+            rootNodeId,
+            continuationStyle: designContinuationStyle(canvas, commerceIntent),
+            editorState: {},
+            styleGuideTags: commerceIntent
+              ? { name: 'ecommerce-modern-light', tags: ['clean', 'light-mode', 'modern', 'rounded', 'warm-tones', 'landing-page'] }
+              : { name: 'dsh-editorial-warm', tags: ['editorial', 'warm', 'product-ui'] },
             document: asJson(document),
             sourceTool: OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
             previewIntent: 'document',
@@ -623,14 +1024,16 @@ export class DesignDraftToolController {
             autoOpenEditor: true,
             liveCanvas: true,
             published: false,
-            next: `Use the returned canvas and buildContract directly. Make the first ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME} script only the fixed root plus 4-8 empty named top-level frame shells, with at most 10 I calls and no text, icon, image, control, or nested content; return after that fast live-canvas skeleton, then populate the shells in later batches. Do not re-fetch the design-agent prompt or already-returned context.`,
-          }
+            next: `Without narration, send batch 1 now using script.wrapper and const root="${rootNodeId}": <=32 I/K for a complete header/nav + polished hero. Follow generation.first exactly; bind frame/group containers and add their children immediately. text_input is a leaf, so icon+hint search uses a named Search frame wrapper. The ${canvas.platform} platform is final for this draft; never abort/rebegin to evade a gate. Follow generation.second after success.`,
+          } as Record<string, JsonValue>
         } catch (error) {
           await drafts.abort(begun.draftId, owner).catch(() => {})
           throw error
         }
       },
-      presentCall: (args: { path: string }) => ({ card: 'generic', title: `Begin OpenPencil pipeline for ${args.path}`, kind: 'execute', locations: [{ path: args.path }] }),
+      presentCall: (args: { path?: string }) => args.path === undefined
+        ? { card: 'generic', title: 'Begin OpenPencil pipeline', kind: 'execute' }
+        : { card: 'generic', title: `Begin OpenPencil pipeline for ${args.path}`, kind: 'execute', locations: [{ path: args.path }] },
     })
   }
 
@@ -639,7 +1042,7 @@ export class DesignDraftToolController {
     return defineTool({
       name: OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME,
       description: 'Read native design context for an unpublished OpenPencil pipeline draft. '
-        + 'Use it only for context not already returned by pipeline_begin. The allowlist includes bounded design reads, draft-local design-system/theme configuration, and post-final enrich_images; '
+        + 'Use it only for context not already returned by pipeline_begin. The allowlist includes bounded design reads and draft-local design-system/theme configuration; '
         + 'filesystem paths, URLs, imports, exports, and spawned agents are forbidden.',
       parameters: {
         draftId: { type: 'string', required: true, description: 'Draft id returned by openpencil_pipeline_begin.' },
@@ -669,7 +1072,7 @@ export class DesignDraftToolController {
           throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: this exact native context request was already consumed; continue from the prior result`)
         }
         if (args.tool === 'enrich_images') {
-          if (pending.enrichmentUsed) {
+          if (pending.contextEnrichmentUsed) {
             throw new Error(`${OPENPENCIL_PIPELINE_CONTEXT_TOOL_NAME}: enrich_images already ran for this draft`)
           }
         } else if (pending.contextCalls.size >= MAX_TARGETED_CONTEXT_CALLS) {
@@ -677,7 +1080,8 @@ export class DesignDraftToolController {
         }
         const result = await drafts.call(args.draftId, owner, args.tool, nativeArgs, { signal: exec.signal })
         pending.contextCalls.add(fingerprint)
-        if (args.tool === 'enrich_images') pending.enrichmentUsed = true
+        if (args.tool === 'enrich_images') pending.contextEnrichmentUsed = true
+        if (result.changed) clearFinalizationCheckpoint(pending)
         return { draftId: args.draftId, ...publicCall(result) }
       },
       presentCall: (args: { tool: string }) => ({ card: 'generic', title: `Read OpenPencil draft context: ${args.tool}`, kind: 'read' }),
@@ -688,61 +1092,245 @@ export class DesignDraftToolController {
     const drafts = this.#drafts
     return defineTool({
       name: OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
-      description: 'Apply one transactional native batch_design step to an unpublished draft. '
-        + 'The first script is a strict fast-live-canvas checkpoint: create only the fixed root plus 4-8 empty named top-level frame shells, use at most 10 I calls, and stop without text, icons, images, controls, K/G calls, or nested content. '
-        + 'Populate those shells with script in subsequent batches, then use operations for later U/R/D/M/G/C repairs. '
-        + 'Exactly one must be provided. OpenPencil post-processing is always forced on and the begin canvas width is enforced. '
-        + 'The batch returns its own native diagnostics without adding automatic quality/layout round trips; use pipeline_inspect only for a concrete diagnostic or visual milestone.',
+      description: 'Commit the next QuickJS step from begin.buildContract and return its live-canvas preview. Generation is exactly two I/K scripts; only a complete finish.repairTargets array may authorize one later U-only script.',
       parameters: {
         draftId: { type: 'string', required: true },
-        script: { type: 'string', description: 'Sandboxed QuickJS creation program. First call: fixed root + 4-8 empty named top-level frame shells only, at most 10 I calls, no content or nesting. Later calls may use I/K to populate exact shells.' },
-        operations: { type: 'string', description: 'Transactional edit operations for existing draft nodes.' },
-        pageId: { type: 'string', description: 'Optional page id from native editor state.' },
-        canvasWidth: { type: 'number', description: 'Optional compatibility assertion. When provided it must equal the canvas width returned by pipeline_begin; the wrapper always supplies that authoritative width.' },
+        script: { type: 'string', required: true, description: 'Standalone sandboxed QuickJS. In run_code declare String.raw`...`, call the fixed {draftId,script} object, and return r. Follow begin.buildContract and the latest next exactly.' },
       },
-      output: { schema: { type: 'object', additionalProperties: true }, render: renderJson },
-      execute: async (args: { draftId: string; script?: string; operations?: string; pageId?: string; canvasWidth?: number }, exec) => {
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: renderJson,
+        presentationMeta: (_args: unknown, value: JsonValue): JsonValue => projectScreenshotPresentation(value, this.#services.render),
+      },
+      execute: async (args: { draftId: string; script?: string; pageId?: string; canvasWidth?: number }, exec) => {
         const owner = ownerSessionId(exec)
         const pending = this.#requirePending(args.draftId, owner)
         const script = args.script?.trim() ?? ''
-        const operations = args.operations?.trim() ?? ''
-        if ((script === '') === (operations === '')) {
-          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: provide exactly one non-empty script or operations value`)
+        if (script === '') {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: provide one non-empty QuickJS script`)
         }
-        const source = script === '' ? operations : script
-        if (source.length > MAX_BATCH_LENGTH) throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: batch source is too large`)
+        const repairScript = pending.generationScriptCount >= 2
+        if (!repairScript && /\b[UCDMRG]\s*\(/u.test(script)) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: generation scripts may only create with I/K; finish must authorize a later U() repair script`)
+        }
+        if (repairScript && !pending.repairAuthorized) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: ordinary generation is limited to two direct QuickJS scripts; call finish before any repair script`)
+        }
+        if (repairScript && (!/\bU\s*\(/u.test(script) || /\b[IKCDMRG]\s*\(/u.test(script))) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: the authorized repair must be one bounded QuickJS script containing only U(nodeId, patch) mutations`)
+        }
+        if (!repairScript && /\bI\s*\(\s*null\s*,/u.test(script)) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: scripts must attach top-level regions to begin.rootNodeId ${pending.rootNodeId}; I(null, ...) is forbidden`)
+        }
+        // The two classic wrapper mistakes produce opaque QuickJS syntax
+        // errors ("return not in a function", "expecting ';'") that send the
+        // model into blind retries. Reject them with the exact correction.
+        if (/\btools\s*\.\s*openpencil_pipeline_batch\b/u.test(script)
+          || /\bString\s*\.\s*raw\b/u.test(script)
+          || /^\s*return\b/mu.test(script)) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: the script field is the QuickJS body itself — never nest the run_code wrapper (const draftId, String.raw, tools.${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}, return r) inside it. Start the script directly with const root="${pending.rootNodeId}"; followed by plain I(parent, node) / K(...) calls, and resend it once corrected.`)
+        }
+        if (/(?:\b(?:const|let|var)\s+[IK]\s*=|\bfunction\s+[IK]\s*\()/u.test(script)) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: I and K are host-provided creation helpers — never redefine them. Call I(parent, node) directly and resend the corrected script once.`)
+        }
+        if (!repairScript && hasMemberMutation(script)) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: I/K bindings are opaque node-id strings and cannot be mutated; put properties inside the I/K object and never assign binding.x, binding.y, or any member`)
+        }
+        if (!repairScript && pending.generationScriptCount === 0 && (
+          Buffer.byteLength(script) > MAX_FIRST_GENERATION_BYTES
+          || creationCallCount(script) > MAX_FIRST_GENERATION_CALLS
+        )) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: the first live-preview script is limited to ${MAX_FIRST_GENERATION_CALLS} I/K calls and ${MAX_FIRST_GENERATION_BYTES} bytes; keep only the first visible viewport named by begin.next`)
+        }
+        if (script.length > MAX_BATCH_LENGTH) throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: batch source is too large`)
         if (args.canvasWidth !== undefined && (!Number.isFinite(args.canvasWidth) || args.canvasWidth <= 0 || args.canvasWidth > 16_384)) {
           throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: canvasWidth must be greater than 0 and at most 16384`)
         }
         if (args.canvasWidth !== undefined && args.canvasWidth !== pending.canvas.width) {
           throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: canvasWidth must match the ${pending.canvas.width}px begin canvas contract`)
         }
-        const batch = await drafts.call(args.draftId, owner, 'batch_design', {
-          ...(script === '' ? { operations } : { script }),
+        const generationStage = pending.generationScriptCount
+        const beforeGeneration = !repairScript
+          ? await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+          : undefined
+        const callBatchDesign = () => drafts.call(args.draftId, owner, 'batch_design', {
+          script,
           postProcess: true,
           ...(args.pageId === undefined || args.pageId.trim() === '' ? {} : { pageId: args.pageId }),
           canvasWidth: pending.canvas.width,
-        }, { signal: exec.signal })
-        const snapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+        }, {
+          signal: exec.signal,
+          ...(beforeGeneration === undefined ? {} : { expectedVersion: beforeGeneration.version }),
+        })
+        let batch: Awaited<ReturnType<typeof callBatchDesign>>
+        try {
+          batch = await callBatchDesign()
+        } catch (error) {
+          exec.signal?.throwIfAborted()
+          // A raw QuickJS failure ("script error: expecting ';'") gives the
+          // model nothing to correct against; restate the exact body shape.
+          if (error instanceof Error && /script error/iu.test(error.message)) {
+            throw new Error(`${error.message}. The script field must be one standalone QuickJS body: start with const root="${pending.rootNodeId}"; use only plain I(parent, node) / K(...) calls with literal values, no imports, no return statements, and no nested run_code wrapper. Resend one complete corrected script.`)
+          }
+          throw error
+        }
+        if (repairScript) {
+          pending.repairAuthorized = false
+          pending.repairAttemptCount += 1
+        }
+        if (batch.changed) clearFinalizationCheckpoint(pending)
+        let snapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+        if (snapshot.version !== batch.version) {
+          return {
+            draftId: args.draftId,
+            path: pending.processPath,
+            published: false,
+            stage: 'blocked_generation_validation',
+            version: snapshot.version,
+            diagnostics: ['The live canvas changed while the generation batch was being validated.'],
+            canContinue: false,
+            next: 'Stop and report the concurrent live-canvas change once. Do not retry, guess a repair, abort, or rebuild another draft.',
+          } as Record<string, JsonValue>
+        }
+        if (!repairScript && batch.changed === true && beforeGeneration !== undefined) {
+          const structure = inspectGeneratedDraftStructureReport(
+            snapshot.documentJson,
+            generationStage === 0 && pending.commerceIntent && pending.canvas.width >= 900,
+          )
+          if (structure.diagnostics.length > 0) {
+            let restored: DesignDraftSnapshot
+            try {
+              restored = await drafts.restoreSnapshot(
+                args.draftId,
+                owner,
+                beforeGeneration,
+                { signal: exec.signal, expectedVersion: snapshot.version },
+              )
+            } catch {
+              return {
+                draftId: args.draftId,
+                path: pending.processPath,
+                published: false,
+                stage: 'blocked_generation_validation',
+                version: snapshot.version,
+                diagnostics: structure.diagnostics,
+                canContinue: false,
+                next: 'The invalid second batch could not be safely rolled back because the live canvas changed. Stop and report this once; do not retry or overwrite the editor.',
+              } as Record<string, JsonValue>
+            }
+            clearFinalizationCheckpoint(pending)
+            pending.canvasValidated = canvasContractDiagnostics(restored.documentJson, pending.canvas).length === 0
+            const canCorrect = !pending.generationCorrectionAttempted.has(generationStage)
+            pending.generationCorrectionAttempted.add(generationStage)
+            return {
+              draftId: args.draftId,
+              path: pending.processPath,
+              published: false,
+              stage: canCorrect ? 'needs_generation_correction' : 'blocked_generation_validation',
+              version: restored.version,
+              changed: false,
+              rolledBack: true,
+              generationScriptCount: pending.generationScriptCount,
+              generationScriptLimit: 2,
+              diagnostics: structure.diagnostics,
+              canContinue: canCorrect,
+              next: canCorrect
+                ? generationStage === 0
+                  ? 'Without narration, resend the complete corrected first script once: the rollback removed both Header/Nav and Hero, so recreate both. Follow begin.buildContract.generation.first exactly and use literal hex colors, no aliases. Bind the Header first (const header=I(root,{role:"navbar",height:64,padding:[0,160],justifyContent:"space_between"})) and insert Brand, Nav, and Actions through that binding, never as root siblings; an empty role container invalidates the batch again. Nav role nav-links, with every 44px role nav-link on a frame containing its text child, never on text; Header actions role toolbar with 44x44 role icon-button wrappers. CTA role button 160x48 #C2410C/#FFFFFF; insert its label through the CTA binding. Hero is width:"fill_container" horizontal padding:[64,160], containing copy width512 + gap64 + image width448; never combine width1120 with padding. Headline and subtitle each use width:"fill_container". Keep all non-brand copy in the user language. For generic commerce create the image directly under Hero exactly as I(hero,{type:"image",name:"Hero product image",width:448,height:360,imageSearchQuery:"gray loveseat isolated photo"}); keep that query distinct from every product card; never use a wrapper, image:{...}, or shapes. No blank field or overflow.'
+                  : `Without narration, resend only the corrected second script once. ${SECOND_BATCH_SCOPE_INSTRUCTION} Use the nested 56x56 face exactly; keep every category and product card complete, and fix every reported rail height/width/overflow issue in this replacement batch.`
+                : `Stop and report the repeated invalid ${generationStage === 0 ? 'first' : 'second'}-generation structure once. Do not retry, inspect, abort, or rebuild another draft.`,
+            } as Record<string, JsonValue>
+          }
+        }
+        if (batch.changed === true && !repairScript) {
+          pending.generationScriptCount += 1
+          // The App fills authored image slots as soon as their section lands,
+          // so its canvas becomes a real design rather than a wireframe. Keep
+          // DSH's two-script speed, but automatically do the same after each
+          // commerce generation batch commits. Failure is preview-only:
+          // finish still owns one canonical post-final enrichment attempt.
+          if (pending.commerceIntent && hasUnresolvedImageSearchQuery(snapshot.documentJson)) {
+            try {
+              const enriched = await drafts.call(
+                args.draftId,
+                owner,
+                'enrich_images',
+                { timeout_seconds: 8 },
+                { signal: exec.signal, expectedVersion: snapshot.version },
+              )
+              pending.contextEnrichmentUsed = true
+              if (enriched.changed) clearFinalizationCheckpoint(pending)
+              const enrichedSnapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+              if (enriched.version === enrichedSnapshot.version) snapshot = enrichedSnapshot
+            } catch {
+              // Preserve the committed live canvas. The finalizer may reshape
+              // slots and finish will retry canonical enrichment once.
+            }
+          }
+        }
         const version = snapshot.version
+        const rootNodeId = draftRootNodeId(snapshot.documentJson)
         const canvasDiagnostics = canvasContractDiagnostics(snapshot.documentJson, pending.canvas)
+        if (rootNodeId !== pending.rootNodeId) {
+          throw new Error(`${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}: authoritative root changed unexpectedly`)
+        }
         pending.canvasValidated = canvasDiagnostics.length === 0
-        const diagnostics = [...canvasDiagnostics, ...issueValues(batch.value)].slice(0, 30)
+        // Batch receipts are a live-canvas checkpoint, not a repair phase.
+        // Native layout/quality diagnostics are rerun and aggregated by finish,
+        // where exact repair targets can be authorized atomically. Surfacing
+        // them between generation batches makes models abandon the returned
+        // `next` contract and start speculative repair loops.
+        const diagnostics = canvasDiagnostics.slice(0, 30)
+        let screenshot: InspectionScreenshotArtifact | undefined
+        let previewUnavailable = false
+        if (batch.changed === true) {
+          try {
+            const rendered = await drafts.screenshot(args.draftId, owner, { signal: exec.signal })
+            const artifact = await persistInspectionScreenshot(rendered)
+            pending.latestRootScreenshot = {
+              version: rendered.version,
+              documentSha256: rendered.documentSha256,
+              finalized: false,
+              ...artifact,
+            }
+            screenshot = artifact
+          } catch {
+            // The design transaction already committed. Report a recoverable
+            // preview-only state so the model never repeats the creation
+            // script and duplicates the page after a transient render error.
+            previewUnavailable = true
+          }
+        }
         return {
           draftId: args.draftId,
           version,
           changed: batch.changed === true,
-          batch: asJson(batch.value),
+          generationScriptCount: pending.generationScriptCount,
+          generationScriptLimit: 2,
+          ...(rootNodeId === undefined ? {} : { rootNodeId }),
+          batch: publicBatchReceipt(batch.value),
           canvas: asJson(pending.canvas),
           canvasCheck: {
             valid: pending.canvasValidated,
             diagnostics: canvasDiagnostics,
           },
+          ...(screenshot === undefined ? {} : { screenshot: asJson(screenshot) }),
+          ...(previewUnavailable ? { previewUnavailable: true } : {}),
           diagnostics,
           canContinue: true,
-          next: diagnostics.length === 0
-            ? `Continue the next semantic batch; at each visual milestone call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" so the user receives an exact preview. If the current model supports image input, open it with read_image; after one explicit unsupported-image error, do not retry or inspect source.`
-            : 'Repair every reported diagnostic with another operations batch before finishing.',
+          next: diagnostics.length > 0
+            ? pending.generationScriptCount < 2
+              ? `The committed preview includes native diagnostics. Without narration or inspection, continue with ${pending.generationScriptCount === 0 ? 'the first bounded visible-viewport' : 'the second and final completion'} JS script. ${pending.generationScriptCount === 1 ? `${SECOND_BATCH_SCOPE_INSTRUCTION} ` : ''}Finish will validate the completed page.`
+              : 'The complete composition preview includes native diagnostics. Call finish once so it can aggregate and authorize one exact-id repair transaction.'
+            : previewUnavailable
+              ? pending.generationScriptCount < 2
+                ? `The committed JS is visible on the live canvas, but its inline PNG user preview was temporarily unavailable. Do not rerun it. Continue with ${pending.generationScriptCount === 0 ? 'the first bounded visible-viewport' : 'the second and final completion'} JS script. ${pending.generationScriptCount === 1 ? `${SECOND_BATCH_SCOPE_INSTRUCTION} ` : ''}Finish will render the final preview automatically.`
+                : 'The completed JS composition is visible on the live canvas, but its inline PNG user preview was temporarily unavailable. Do not rerun it or call inspect. Call finish once; it will render the final preview automatically.'
+              : pending.generationScriptCount === 0
+                ? 'No visible generation change was committed. Send the bounded first-visible-viewport QuickJS script now.'
+                : pending.generationScriptCount === 1
+                  ? `Without narration, send the second and final QuickJS script now. ${SECOND_BATCH_SCOPE_INSTRUCTION} Each media frame gets one primary visual; outside commerce default to one image total unless the user explicitly requested more. Then call finish once.`
+                  : 'Without narration, call finish exactly once now. It will validate, render the final user preview, and publish atomically.',
         }
       },
       presentCall: () => ({ card: 'generic', title: 'Build OpenPencil draft batch', kind: 'execute' }),
@@ -755,8 +1343,8 @@ export class DesignDraftToolController {
       name: OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
       description: 'Inspect an unpublished draft using native resolved layout, composite quality/lint, or an exact PNG screenshot. '
         + 'Layout inspection returns the resolved node array directly as tree (not a nested layout.layout envelope). '
-        + 'Screenshot always returns a bounded content-addressed DSH cache path for the user preview and records proof for that exact draft version. '
-        + 'Open it with read_image only when the current model supports image input; after one explicit unsupported-image error, do not retry or inspect source.',
+        + 'Screenshot returns a bounded content-addressed DSH cache path for the user preview and records render-integrity metadata for that exact draft version. '
+        + 'This tool is optional and user-directed; finish renders its own final root PNG and never requires model image inspection.',
       parameters: {
         draftId: { type: 'string', required: true },
         kind: { type: 'string', required: true, enum: ['layout', 'quality', 'screenshot'] },
@@ -804,27 +1392,36 @@ export class DesignDraftToolController {
             diagnostics: issueValues({ quality: quality.value, lint: lint.value }),
           } as Record<string, JsonValue>
         }
+        const requestedNodeId = args.nodeId?.trim()
+        const rootScreenshot = requestedNodeId === undefined || requestedNodeId === '' || requestedNodeId === 'root'
         const screenshot = await drafts.screenshot(args.draftId, owner, {
-          ...(args.nodeId === undefined || args.nodeId.trim() === '' ? {} : { nodeId: args.nodeId }),
+          ...(rootScreenshot ? {} : { nodeId: requestedNodeId }),
           signal: exec.signal,
         })
         const artifact = await persistInspectionScreenshot(screenshot)
         const pending = this.#requirePending(args.draftId, owner)
-        if (args.nodeId === undefined || args.nodeId.trim() === '' || args.nodeId === 'root') {
-          pending.previewCount += 1
+        const screenshotMatchesFinalization = rootScreenshot
+          && pending.finalization?.version === screenshot.version
+          && pending.finalization.documentSha256 === screenshot.documentSha256
+        if (rootScreenshot) {
           pending.latestRootScreenshot = {
-            path: artifact.path,
             version: screenshot.version,
-            bytes: artifact.bytes,
-            sha256: artifact.sha256,
+            documentSha256: screenshot.documentSha256,
+            finalized: screenshotMatchesFinalization,
+            ...artifact,
           }
         }
+        const completionInstruction = !rootScreenshot
+          ? 'This is a child-node detail preview only; finish will still render its own finalized root preview before publication.'
+          : screenshotMatchesFinalization
+            ? 'This root user preview matches the finalized version and document SHA checkpoint; call finish exactly once to publish.'
+            : 'This root user preview predates a matching finalized checkpoint; call finish once to finalize, render its own final preview, and publish.'
         return {
           draftId: args.draftId,
           kind: args.kind,
           version: screenshot.version,
           screenshot: artifact,
-          next: `The exact user preview is ready at ${artifact.path}. If the current model supports image input, open it with read_image and judge the rendered composition; after one explicit unsupported-image error, do not retry or inspect source. Continue with native quality/finalize gates and state honestly when model visual review was unavailable.`,
+          next: `The exact user preview is ready at ${artifact.path}. No model image inspection is required. ${completionInstruction}`,
         } as Record<string, JsonValue>
       },
       presentCall: (args: { kind: string }) => ({ card: 'generic', title: `Inspect OpenPencil draft: ${args.kind}`, kind: 'read' }),
@@ -836,12 +1433,7 @@ export class DesignDraftToolController {
     const services = this.#services
     return defineTool({
       name: OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
-      description: 'Finalize and publish a complete OpenPencil draft in two phases. '
-        + 'Each call runs native finalization, design quality, lint, and layout checks. Diagnostics/advisories keep the draft private for repair. '
-        + 'A clean finalized version must then receive a distinct pipeline_inspect(kind:"screenshot") user preview before finish is called again. '
-        + 'Use read_image only when the current model supports image input; an explicit unsupported-image error must not be retried or replaced by source inspection. '
-        + 'Only that exact post-final screenshot version may pass the JS quality gate and atomic DSH createIfAbsent publication. '
-        + 'The published presentation pairs the exact PNG with an editable document grant, an Edit canvas action, and idle-only editor auto-open, including in nested PTC/Code Mode.',
+      description: 'Validate, render the final user preview, and atomically publish a completed two-batch draft. A complete structured repairTargets array may authorize one U-only repair; any unstructured validation or host failure is terminal and must not be retried.',
       parameters: {
         draftId: { type: 'string', required: true, description: 'Draft id returned by pipeline_begin.' },
       },
@@ -853,60 +1445,247 @@ export class DesignDraftToolController {
       execute: async (args: { draftId: string }, exec) => {
         const owner = ownerSessionId(exec)
         const pending = this.#requirePending(args.draftId, owner)
-        if (pending.previewCount === 0) {
+        if (pending.generationScriptCount < 2) {
           return {
             draftId: args.draftId,
             path: pending.processPath,
             published: false,
-            stage: 'needs_visual_preview',
+            stage: 'needs_generation',
+            generationScriptCount: pending.generationScriptCount,
+            generationScriptLimit: 2,
             diagnostics: [],
             canContinue: true,
-            next: `Before finalization, call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" to generate the exact user preview. If the current model supports image input, open the PNG with read_image and repair visible defects; after one explicit unsupported-image error, do not retry or inspect source, and continue with native quality/finalize gates while stating that model visual review was unavailable.`,
+            next: pending.generationScriptCount === 0
+              ? 'Send the bounded first-visible-viewport QuickJS script. Its preview will render automatically.'
+              : `Without narration, send the second and final direct JS script now. ${SECOND_BATCH_SCOPE_INSTRUCTION} Its preview will render automatically, then call finish once.`,
           }
         }
-        const finalized = await drafts.finalize(args.draftId, owner, { signal: exec.signal })
-        const finalizedSnapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
-        const canvasDiagnostics = canvasContractDiagnostics(finalizedSnapshot.documentJson, pending.canvas)
-        pending.canvasValidated = canvasDiagnostics.length === 0
-        if (!pending.canvasValidated) {
-          return {
-            draftId: args.draftId,
-            path: pending.processPath,
-            published: false,
-            stage: 'needs_correction',
+        const beforeFinalize = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+        const beforeSha256 = documentSha256(beforeFinalize.documentJson)
+        let checkpoint = pending.finalization
+        let reusedFinalization = checkpoint !== undefined
+          && checkpoint.version === beforeFinalize.version
+          && checkpoint.documentSha256 === beforeSha256
+        let finalizedSnapshot = beforeFinalize
+        if (!reusedFinalization) {
+          let finalized: DesignDraftCallResult
+          try {
+            finalized = await drafts.finalize(args.draftId, owner, { signal: exec.signal })
+          } catch (error) {
+            pending.repairAuthorized = false
+            return {
+              draftId: args.draftId,
+              path: pending.processPath,
+              published: false,
+              stage: 'blocked_host_failure',
+              version: beforeFinalize.version,
+              diagnostics: [error instanceof Error ? error.message.slice(0, 500) : 'OpenPencil native finalization failed.'],
+              canContinue: false,
+              next: 'Stop and report this host failure once. Do not retry finish, inspect/context-read, guess a repair, abort, or rebuild another draft.',
+            }
+          }
+          const nativeFinalizedSnapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+          if (finalized.version !== nativeFinalizedSnapshot.version) {
+            throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: native finalization version did not match its authoritative snapshot`)
+          }
+          finalizedSnapshot = nativeFinalizedSnapshot
+          let enrichment: JsonValue | undefined
+          // Match the App/native contract: finalization may materialize or
+          // reshape image slots, so stock enrichment must see the canonical
+          // post-final tree. Running it first left finalizer-created slots empty
+          // and published grey placeholders.
+          if (!pending.finalEnrichmentUsed && hasUnresolvedImageSearchQuery(finalizedSnapshot.documentJson)) {
+            const enriched = await drafts.call(
+              args.draftId,
+              owner,
+              'enrich_images',
+              { timeout_seconds: 20 },
+              { signal: exec.signal },
+            )
+            pending.finalEnrichmentUsed = true
+            enrichment = asJson(enriched.value)
+            finalizedSnapshot = await drafts.snapshot(args.draftId, owner, { signal: exec.signal })
+            if (enriched.version !== finalizedSnapshot.version) {
+              throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: image enrichment version did not match its authoritative snapshot`)
+            }
+          }
+          const finalizedSha256 = documentSha256(finalizedSnapshot.documentJson)
+          const versionChanged = finalizedSnapshot.version !== beforeFinalize.version
+          const documentChanged = finalizedSha256 !== beforeSha256
+          if (documentChanged && !versionChanged) {
+            throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: native finalization changed document bytes without advancing its version`)
+          }
+          checkpoint = {
             version: finalizedSnapshot.version,
-            diagnostics: canvasDiagnostics,
-            canContinue: true,
-            next: `Repair the authoritative ${pending.canvas.width}px root canvas contract with ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}, then take a fresh screenshot and finish again.`,
+            documentSha256: finalizedSha256,
+            beforeVersion: beforeFinalize.version,
+            versionChanged,
+            documentChanged,
+            result: enrichment === undefined
+              ? asJson(finalized.value)
+              : asJson({ finalize: finalized.value, enrichment }),
           }
+          pending.finalization = checkpoint
+          reusedFinalization = false
         }
-        const quality = await drafts.call(args.draftId, owner, 'get_design_quality', {}, { signal: exec.signal })
-        const lint = await drafts.call(args.draftId, owner, 'lint_document', {}, { signal: exec.signal })
-        const layout = await drafts.call(args.draftId, owner, 'snapshot_layout', { maxDepth: 8 }, { signal: exec.signal })
-        const blockingLint = blockingLintValue(lint.value)
-        const nativeDiagnostics = issueValues({
-          finalize: finalized.value,
-          quality: quality.value,
-          lint: blockingLint,
-          layout: layout.value,
-        }, { includeObservational: false })
-        if (nativeDiagnostics.length > 0) {
+        if (checkpoint === undefined) {
+          throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: finalized checkpoint was not recorded`)
+        }
+        const finalizedRootNodeId = draftRootNodeId(finalizedSnapshot.documentJson)
+        if (finalizedRootNodeId === undefined) {
+          throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: native finalization did not preserve one valid page root`)
+        }
+        // Native finalization may transactionally replace the root while
+        // preserving the one-root canvas contract. Subsequent authorized U()
+        // repair scripts never create under that root, but the post-commit
+        // invariant must follow the authoritative finalized id instead of
+        // throwing after a successful repair mutation.
+        pending.rootNodeId = finalizedRootNodeId
+        let validation = checkpoint.validation
+        if (validation === undefined) {
+          const canvasDiagnostics = canvasContractDiagnostics(
+            finalizedSnapshot.documentJson,
+            pending.canvas,
+            { requireFinalHeight: true },
+          )
+          const canvasRepairTargets = canvasContractRepairTargets(
+            finalizedSnapshot.documentJson,
+            pending.canvas,
+            { requireFinalHeight: true },
+          )
+          const quality = await drafts.call(args.draftId, owner, 'get_design_quality', {}, { signal: exec.signal })
+          const lint = await drafts.call(args.draftId, owner, 'lint_document', {}, { signal: exec.signal })
+          const layout = await drafts.call(args.draftId, owner, 'snapshot_layout', { maxDepth: 8 }, { signal: exec.signal })
+          const blockingLint = blockingLintValue(lint.value)
+          const nativeBySource = {
+            finalize: issueValues(checkpoint.result, { includeObservational: false }),
+            quality: issueValues(quality.value, { includeObservational: false }),
+            lint: issueValues(blockingLint, { includeObservational: false }),
+            layout: issueValues(layout.value, { includeObservational: false }),
+          }
+          const nativeDiagnostics = [
+            ...nativeBySource.finalize,
+            ...nativeBySource.quality,
+            ...nativeBySource.lint,
+            ...nativeBySource.layout,
+          ].slice(0, 30)
+          validation = {
+            canvasDiagnostics,
+            canvasRepairTargets,
+            nativeDiagnostics,
+            nativeSources: {
+              finalize: nativeBySource.finalize.length,
+              quality: nativeBySource.quality.length,
+              lint: nativeBySource.lint.length,
+              layout: nativeBySource.layout.length,
+            },
+            dsh: inspectGeneratedDesignQualityReport(finalizedSnapshot.documentJson),
+          }
+          checkpoint.validation = validation
+        }
+        pending.canvasValidated = validation.canvasDiagnostics.length === 0
+        const diagnostics = [
+          ...validation.canvasDiagnostics,
+          ...validation.nativeDiagnostics,
+          ...validation.dsh.diagnostics,
+        ].slice(0, MAX_CORRECTION_DIAGNOSTICS)
+        if (diagnostics.length > 0) {
+          const repairTargets = [...validation.canvasRepairTargets, ...validation.dsh.repairTargets]
+          const omittedRepairTargets = validation.dsh.repairTargetSummary.omitted
+          const canvasRepairIsComplete = validation.canvasDiagnostics.length === 0
+            || validation.canvasRepairTargets.length > 0
+          // Native findings do not veto the repair attempt: they routinely
+          // co-report the same defect a DSH repair target fixes (a starved
+          // mixed-width card both starves in native quality AND carries a
+          // width patch here). Publication itself still requires a clean
+          // native pass, so an unrelated native defect stays terminal on
+          // the bounded retry.
+          const repairIsComplete = canvasRepairIsComplete
+            && validation.dsh.unrepairableDiagnosticCount === 0
+            && repairTargets.length > 0
+            && omittedRepairTargets === 0
+            && pending.repairAttemptCount < MAX_FINISH_REPAIR_ROUNDS
+          pending.repairAuthorized = repairIsComplete
           return {
             draftId: args.draftId,
             path: pending.processPath,
             published: false,
-            stage: 'needs_correction',
-            version: layout.version,
-            finalize: asJson(finalized.value),
-            quality: asJson(quality.value),
-            lint: asJson(blockingLint),
-            layoutCheck: {
-              version: layout.version,
-              diagnostics: issueValues(layout.value),
-            },
-            diagnostics: nativeDiagnostics,
-            canContinue: true,
-            next: `Blocking native diagnostics remain (Info lint has already been excluded). Repair these exact items with ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}, re-inspect, then finish again; do not inspect detector source.`,
+            stage: repairIsComplete ? 'needs_correction' : 'blocked_host_validation',
+            version: checkpoint.version,
+            finalization: publicFinalizationCheckpoint(checkpoint, reusedFinalization),
+            checks: asJson({
+              canvas: {
+                diagnosticCount: validation.canvasDiagnostics.length,
+                repairTargetCount: validation.canvasRepairTargets.length,
+              },
+              native: {
+                diagnosticCount: validation.nativeDiagnostics.length,
+                sources: validation.nativeSources,
+              },
+              dsh: {
+                  diagnosticCount: validation.dsh.diagnostics.length,
+                  unrepairableDiagnosticCount: validation.dsh.unrepairableDiagnosticCount,
+                  repairTargetSummary: validation.dsh.repairTargetSummary,
+              },
+            }),
+            diagnostics,
+            ...(repairIsComplete ? { repairTargets: asJson(repairTargets) } : {}),
+            canContinue: repairIsComplete,
+            next: repairIsComplete
+              ? `Apply every repairTargets item in one ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME} QuickJS script using only U(nodeId, patch), then call finish exactly once. Repair only when a result presents a complete repairTargets array; the host bounds repair rounds.`
+              : 'Stop and report these host validation diagnostics once. They do not provide one complete actionable repair transaction, or the bounded repair rounds were already used. Do not guess node ids, inspect/context-read, retry finish, abort, or rebuild another draft.',
+          }
+        }
+        pending.repairAuthorized = false
+
+        if (
+          pending.latestRootScreenshot === undefined
+          || pending.latestRootScreenshot.version !== checkpoint.version
+          || pending.latestRootScreenshot.documentSha256 !== checkpoint.documentSha256
+          || !pending.latestRootScreenshot.finalized
+        ) {
+          let rendered: DesignDraftScreenshot
+          let artifact: InspectionScreenshotArtifact
+          try {
+            rendered = await drafts.screenshot(args.draftId, owner, { signal: exec.signal })
+            artifact = await persistInspectionScreenshot(rendered)
+          } catch (error) {
+            exec.signal?.throwIfAborted()
+            pending.latestRootScreenshot = undefined
+            return {
+              draftId: args.draftId,
+              path: pending.processPath,
+              published: false,
+              stage: 'needs_preview',
+              reason: 'preview_unavailable',
+              version: checkpoint.version,
+              finalization: publicFinalizationCheckpoint(checkpoint, reusedFinalization),
+              diagnostics: [],
+              canContinue: true,
+              next: 'The finalized document is clean, but its final PNG user preview is temporarily unavailable. Call finish exactly once to retry only the preview render and publish; do not call inspect, rerun generation, or perform model image inspection.',
+            }
+          }
+          if (
+            rendered.version !== checkpoint.version
+            || rendered.documentSha256 !== checkpoint.documentSha256
+          ) {
+            clearFinalizationCheckpoint(pending)
+            return {
+              draftId: args.draftId,
+              path: pending.processPath,
+              published: false,
+              stage: 'needs_refinalization',
+              version: rendered.version,
+              diagnostics: [],
+              canContinue: true,
+              next: 'The live canvas changed while the automatic final preview was rendered. Call finish once; the stale checkpoint and preview artifact were discarded.',
+            }
+          }
+          pending.latestRootScreenshot = {
+            version: rendered.version,
+            documentSha256: rendered.documentSha256,
+            finalized: true,
+            ...artifact,
           }
         }
 
@@ -914,11 +1693,20 @@ export class DesignDraftToolController {
         try {
           const finished = await drafts.finish(args.draftId, owner, {
             signal: exec.signal,
+            expectedVersion: checkpoint.version,
+            expectedDocumentSha256: checkpoint.documentSha256,
             publish: async (authoritative): Promise<PublishedDraft> => {
-              const jsDiagnostics = inspectGeneratedDesignQuality(authoritative.documentJson)
-              if (jsDiagnostics.length > 0) throw new DesignDraftJsQualityError(jsDiagnostics)
+              // Recheck under the controller's serialized publication lock so
+              // a concurrent editor mutation cannot bypass the preflight.
+              const jsReport = inspectGeneratedDesignQualityReport(authoritative.documentJson)
+              if (jsReport.diagnostics.length > 0) throw new DesignDraftJsQualityError(jsReport)
               const inspected = pending.latestRootScreenshot
-              if (inspected === undefined || inspected.version !== authoritative.version) {
+              const authoritativeSha256 = documentSha256(authoritative.documentJson)
+              if (
+                inspected === undefined
+                || inspected.version !== authoritative.version
+                || inspected.documentSha256 !== authoritativeSha256
+              ) {
                 throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: current post-final preview artifact is unavailable`)
               }
               const policy = services.sandboxPolicy.resolve({ session: exec.agent?.session })
@@ -938,7 +1726,7 @@ export class DesignDraftToolController {
               try {
                 const verified = await verifyRenderOutput(previewPath)
                 if (verified.bytes !== inspected.bytes || verified.sha256 !== inspected.sha256) {
-                  throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: post-final preview changed since visual inspection`)
+                  throw new Error(`${OPENPENCIL_PIPELINE_FINISH_TOOL_NAME}: post-final preview changed after its exact PNG integrity checkpoint`)
                 }
                 preview = {
                   path: previewPath,
@@ -1001,38 +1789,109 @@ export class DesignDraftToolController {
                 autoOpenEditor: true,
                 preview,
                 document,
-                note: `Published ${pending.processPath} atomically after native quality, lint, layout, screenshot, and DSH quality gates; the exact preview remains paired with its editable document and DSH requests idle-only editor auto-open.`,
+                note: `Published ${pending.processPath} atomically after native quality, lint, layout, render-integrity, and DSH quality gates. The exact final PNG user preview and live editor are already attached; stop now.`,
               }
             },
           })
           published = finished.published
         } catch (error) {
           if (error instanceof DesignDraftJsQualityError) {
+            const repairTargets = error.report.repairTargets
+            const omittedRepairTargets = error.report.repairTargetSummary.omitted
+            const repairIsComplete = repairTargets.length > 0
+              && omittedRepairTargets === 0
+              && error.report.unrepairableDiagnosticCount === 0
+              && pending.repairAttemptCount < MAX_FINISH_REPAIR_ROUNDS
+            pending.repairAuthorized = repairIsComplete
             return {
               draftId: args.draftId,
               path: pending.processPath,
               published: false,
-              stage: 'needs_correction',
-              version: layout.version,
-              diagnostics: error.issues,
-              canContinue: true,
-              next: `Repair DSH quality diagnostics with ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME}, take a new screenshot, then finish again.`,
+              stage: repairIsComplete ? 'needs_correction' : 'blocked_host_validation',
+              version: checkpoint.version,
+              finalization: publicFinalizationCheckpoint(checkpoint, reusedFinalization),
+              checks: asJson({
+                canvas: { diagnosticCount: 0 },
+                native: { diagnosticCount: 0, sources: { finalize: 0, quality: 0, lint: 0, layout: 0 } },
+                dsh: {
+                  diagnosticCount: error.report.diagnostics.length,
+                  unrepairableDiagnosticCount: error.report.unrepairableDiagnosticCount,
+                  repairTargetSummary: error.report.repairTargetSummary,
+                  recheckedAtPublish: true,
+                },
+              }),
+              diagnostics: error.report.diagnostics,
+              ...(repairIsComplete ? { repairTargets: asJson(repairTargets) } : {}),
+              canContinue: repairIsComplete,
+              next: repairIsComplete
+                ? `Apply every repairTargets item in one ${OPENPENCIL_PIPELINE_BATCH_TOOL_NAME} QuickJS script using only U(nodeId, patch), then call finish exactly once. Repair only when a result presents a complete repairTargets array; the host bounds repair rounds.`
+                : 'Stop and report these host validation diagnostics once. They do not provide one complete actionable repair transaction, or the bounded repair rounds were already used. Do not guess node ids, inspect/context-read, retry finish, abort, or rebuild another draft.',
             }
           }
           const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined
-          if (code === 'OPENPENCIL_DRAFT_VISUAL_INSPECTION_REQUIRED') {
+          if (code === 'OPENPENCIL_DRAFT_CHECKPOINT_DRIFT') {
+            const controllerVersion = isRecord(error)
+              && typeof error.currentVersion === 'number'
+              && Number.isSafeInteger(error.currentVersion)
+              && error.currentVersion >= 0
+              ? error.currentVersion
+              : checkpoint.version
+            clearFinalizationCheckpoint(pending)
+            pending.repairAuthorized = false
             return {
               draftId: args.draftId,
               path: pending.processPath,
               published: false,
-              stage: 'needs_visual_inspection',
-              version: layout.version,
+              stage: 'needs_refinalization',
+              version: controllerVersion,
               diagnostics: [],
               canContinue: true,
-              next: `Call ${OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME} with kind:"screenshot" to generate the exact post-final user preview. If the current model supports image input, open it with read_image and correct visible defects. After one explicit unsupported-image error, do not retry or inspect source; rely on the native quality/finalize gates, state that model visual review was unavailable, and call finish again.`,
+              next: `The authoritative document changed after version ${checkpoint.version} and SHA ${checkpoint.documentSha256} were validated. The stale finalization and root preview proof were discarded. Call finish exactly once; it will finalize, validate, automatically render the current root preview, and publish when clean.`,
             }
           }
-          throw error
+          if (code === 'OPENPENCIL_DRAFT_PREVIEW_REQUIRED') {
+            const controllerVersion = isRecord(error)
+              && typeof error.currentVersion === 'number'
+              && Number.isSafeInteger(error.currentVersion)
+              && error.currentVersion >= 0
+              ? error.currentVersion
+              : checkpoint.version
+            const checkpointIsCurrent = controllerVersion === checkpoint.version
+            if (!checkpointIsCurrent) clearFinalizationCheckpoint(pending)
+            const screenshot = publicScreenshot(
+              pending.latestRootScreenshot,
+              controllerVersion,
+              checkpointIsCurrent ? checkpoint.documentSha256 : undefined,
+            )
+            return {
+              draftId: args.draftId,
+              path: pending.processPath,
+              published: false,
+              stage: checkpointIsCurrent ? 'needs_preview' : 'needs_refinalization',
+              ...(checkpointIsCurrent ? { reason: 'preview_unavailable' } : {}),
+              version: controllerVersion,
+              ...(screenshot === undefined ? {} : { screenshot }),
+              diagnostics: [],
+              ...(checkpointIsCurrent
+                ? { finalization: publicFinalizationCheckpoint(checkpoint, reusedFinalization) }
+                : {}),
+              canContinue: true,
+              next: checkpointIsCurrent
+                ? `The finalized document is clean, but its final PNG user preview is not yet available. Call finish exactly once to retry only the preview proof and publish; finalization and diagnostics are checkpointed and will not rerun unless the draft changes. Do not call inspect or perform model image inspection.`
+                : `The document changed concurrently to version ${controllerVersion}, so stale finalization and preview proof were discarded. Call finish once to finalize, validate, render the current root preview, and publish when clean.`,
+            }
+          }
+          pending.repairAuthorized = false
+          return {
+            draftId: args.draftId,
+            path: pending.processPath,
+            published: false,
+            stage: 'blocked_host_failure',
+            version: checkpoint.version,
+            diagnostics: [error instanceof Error ? error.message.slice(0, 500) : 'OpenPencil publication failed.'],
+            canContinue: false,
+            next: 'Stop and report this host failure once. Do not retry finish, inspect/context-read, guess a repair, abort, or rebuild another draft.',
+          }
         }
         this.#pending.delete(args.draftId)
         return published as unknown as Record<string, JsonValue>

@@ -97,7 +97,7 @@ DSH OpenPencil [DeepSeek Harness](https://github.com/deepseek-ai/DSH) को [Op
 
 ### 🎯 एक संपूर्ण वर्कफ़्लो
 
-"आवश्यकता → निजी draft → semantic batches → exact PNG की दृश्य जाँच और सुधार → quality gates के बाद atomic प्रकाशन" — DSH के भीतर एक पूर्ण चक्र।
+"आवश्यकता → sidebar में private live canvas → दो semantic batches और user-visible exact PNG → native/DSH deterministic quality gates → atomic प्रकाशन" — DSH के भीतर एक पूर्ण चक्र।
 
 </td>
 </tr>
@@ -142,11 +142,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | टूल | यह क्या करता है |
 | --- | --- |
 | `openpencil_new` | सरल कामों के लिए संगत तेज़ पथ: एक transactional QuickJS `batch_design` script चलाता है, target न होने पर ही प्रकाशित करता है और editable presentation लौटाता है। production design के लिए नीचे की पूर्ण pipeline चुनें। |
-| `openpencil_pipeline_begin` | नए workspace-relative `.op` पथ के लिए owner-session का निजी draft शुरू करता है; target file अप्रकाशित और अछूती रहती है। |
-| `openpencil_pipeline_context` | native dynamic design-agent prompt के साथ संबंधित guidelines, style guides, variables/themes और UI-kit metadata या script references लोड करता है। |
-| `openpencil_pipeline_batch` | semantic QuickJS batches को draft पर क्रम से लागू करता है: पहले skeleton, फिर sections और refinement। |
-| `openpencil_pipeline_inspect` | native quality या resolved-layout inspection चलाता है, या exact PNG बनाता है जिसे मॉडल image reading से खोलकर visually review कर सकता है। |
-| `openpencil_pipeline_finish` | native finalization, lint, layout, screenshot freshness और DSH quality gates चलाकर `createIfAbsent` से atomic publish करता है और editable presentation लौटाता है। |
+| `openpencil_pipeline_begin` | owner-session का निजी draft और उसका एकमात्र root शुरू करता है, उसी live canvas को sidebar में तुरंत खोलता है और target `.op` को अप्रकाशित रखता है। |
+| `openpencil_pipeline_context` | केवल तब एक सीमित guideline, style, theme या UI-kit detail लोड करता है जब begin contract में वह सचमुच न हो; यह startup refresh loop नहीं है। |
+| `openpencil_pipeline_batch` | अधिकतम दो सीधे QuickJS generation scripts चलाता है। हर सफल transaction user-visible exact PNG दिखाने की कोशिश करती है; tool लौटते ही उसके `next` पर आगे बढ़ें। |
+| `openpencil_pipeline_inspect` | केवल user के स्पष्ट diagnostic अनुरोध पर manual inspection देता है; सामान्य generation इसे preview या model image-review step की तरह उपयोग नहीं करती। |
+| `openpencil_pipeline_finish` | native और DSH deterministic gates चलाकर exact post-final PNG render करता है और `createIfAbsent` से atomically publish करता है। केवल `needs_correction`, `canContinue: true`, complete non-empty `repairTargets` और `omitted: 0` वाला result ही एक U-only repair और एक अंतिम finish अधिकृत करता है; बाकी हर unpublished result terminal है। |
 | `openpencil_pipeline_abort` | target file बनाए बिना अप्रकाशित draft छोड़ देता है। |
 | `openpencil_create` | किसी मौजूदा लाइव कैनवास पर नोड उत्पन्न करने या पुनर्संरचना करने के लिए एक ट्रांज़ैक्शनल `batch_design` प्रोग्राम लागू करता है। |
 | `openpencil_edit` | एक स्पष्ट नोड या उपयोगकर्ता द्वारा चयनित एकमात्र नोड को संशोधित करता है। |
@@ -155,11 +155,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## एजेंट डिज़ाइन वर्कफ़्लो
 
-Production design के लिए `openpencil_pipeline_begin` → `openpencil_pipeline_context` → बार-बार `openpencil_pipeline_batch` और `openpencil_pipeline_inspect` → `openpencil_pipeline_finish` क्रम अपनाएँ। Draft daemon केवल उसकी owner DSH session के लिए निजी होता है, और माँगा गया workspace path सफल प्रकाशन से पहले मौजूद नहीं होता। Intermediate private-draft screenshots editable sidebar नहीं दिखाते, ताकि user edits और Agent batches साथ चलकर टकराएँ नहीं; editability केवल publication के बाद मिलती है।
+सामान्य generation के लिए तय छोटा पथ अपनाएँ: `openpencil_pipeline_begin` → दो सीधे QuickJS `openpencil_pipeline_batch` → एक `openpencil_pipeline_finish`। Begin एकमात्र root बनाकर निजी live canvas को sidebar में तुरंत खोल देता है; माँगा गया workspace path सफल publication से पहले मौजूद नहीं होता। हर सफल begin या batch के बाद अगली आवश्यक call बिना narration, planning, comparison, inspection या unrelated tool के तुरंत करें। Default में पूरे design में ठीक एक image हो; हर Hero/Product/Art/Media frame में ठीक एक primary visual हो, image और placeholder icon साथ न हों।
 
-Context कोई static template नहीं है: यह OpenPencil के native dynamic design-agent prompt को संबंधित guidelines, style guides, variables/themes और UI kits के साथ जोड़ता है। पहले structural skeleton बनाएँ, फिर semantic section batches में content और refinement जोड़ें। गति के लिए सफल batch केवल compact layout diagnostics लौटाता है; पूरा resolved layout ज़रूरत पर `openpencil_pipeline_inspect` से माँगें। कम-से-कम signature/heading स्थापित होने के बाद और primary task या form तथा CTA बनने के बाद `openpencil_pipeline_inspect` को `kind: "screenshot"` के साथ कॉल करें। हर milestone पर मॉडल exact PNG को image reading से खोलता है, दिखने वाले cropping, overflow, hierarchy, spacing, control proportions, contrast और text legibility सुधारता है, और ज़रूरत के अनुसार दोहराता है; visual review अपने-आप नहीं होता।
+दोनों सफल batches user को exact PNG preview दिखाने की कोशिश करते हैं। Tool लौटने के बाद तुरंत उसके `next` का पालन करें। यदि `next` में `previewUnavailable` हो, तो script पहले ही live canvas पर commit हो चुकी है: batch को दोबारा न चलाएँ और `openpencil_pipeline_inspect` या `read_image` न बुलाएँ। `openpencil_pipeline_inspect` केवल user द्वारा स्पष्ट रूप से माँगे गए diagnostics के लिए है।
 
-Finish चरण OpenPencil की native finalization, lint और layout checks के साथ DSH quality gate चलाता है। ये deterministic checks स्वाद या visual polish नहीं बनाते। Finalization के बाद अलग नया exact screenshot लें और मॉडल से visually review कराएँ; intermediate milestone screenshots post-final freshness gate को कभी पूरा नहीं कर सकते। उसके बाद ही अंतिम finish call `createIfAbsent` से target को atomically बनाती है। Gate विफल होने या `openpencil_pipeline_abort` पर target अनुपस्थित रहता है। हर प्रकाशित generation result एक ही presentation होता है जिसमें exact final PNG preview और document-scoped editable grant दोनों रहते हैं; sidebar केवल idle होने पर auto-open होता है, दूसरी session का editor replace नहीं होता, और स्पष्ट switch के लिए **कैनवास संपादित करें** हमेशा रहता है। PTC/Code Mode में nested `openpencil_pipeline_finish` result भी यही presentation बनाए रखता है और कभी साधारण JSON या read-only card में degrade नहीं होता। Historical या hydrated cards auto-open नहीं होते।
+Finish OpenPencil की native finalization, lint, contrast और layout checks तथा DSH deterministic quality gates चलाता है, फिर उसी healthy call में exact final PNG render करके target को atomically publish करता है। Repair केवल तभी अधिकृत है जब result में एक साथ `stage: "needs_correction"`, `canContinue: true`, complete non-empty `repairTargets` और `omitted: 0` हों, तथा हर target में `operation: "U"`, exact non-empty `nodeId` और non-empty `patch` हो। सभी targets को ठीक एक U-only batch में साथ लागू करें और बिना narration finish को ठीक एक अंतिम बार चलाएँ। कोई अन्य unpublished result, error या `canContinue: false` terminal है: उसे एक बार report करें और retry, inspect, image/context read, abort या replacement draft न करें। Gate विफल होने या `openpencil_pipeline_abort` पर target अनुपस्थित रहता है। Published result की exact final PNG और live editor पहले से authoritative हैं; उसे लौटाकर तुरंत समाप्त करें। Sidebar idle होने पर ही auto-open होता है और explicit switch के लिए **कैनवास संपादित करें** उपलब्ध रहता है।
 
 उसी चल रही DSH service में browser बदलने या reload करने के बाद, strictly parsed durable publication को `openpencil_new` या `openpencil_pipeline_finish` से exact PNG और स्पष्ट **कैनवास संपादित करें** action के रूप में restore किया जा सकता है। Historical card sidebar को अपने-आप नहीं खोलता; user को वही action क्लिक करना होगा। सामान्य historical `openpencil_render` read-only रहता है, और non-loopback connection को editor grant कभी नहीं मिलता।
 

@@ -17,6 +17,8 @@ export const EDITOR_WORKBENCH_MIN_WIDTH = 640
 export const EDITOR_WORKBENCH_MAX_WIDTH = 960
 export const EDITOR_WORKBENCH_LEFT_CLEARANCE = 840
 export const EDITOR_WORKBENCH_RESIZE_STEP = 32
+export const EDITOR_WORKBENCH_CLOSE_BUTTON_MIN_WIDTH = 72
+export const OPENPENCIL_EDITOR_CLOSE_BUTTON_ATTRIBUTE = 'data-openpencil-editor-close'
 
 let bodyScrollLockCount = 0
 let bodyOverflowBeforeLock = ''
@@ -168,6 +170,14 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: 'border-box', width: 28, height: 28, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     border: 0, borderRadius: 6, color: 'var(--dsw-alias-label-secondary, inherit)', background: 'transparent',
     padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 'inherit', lineHeight: 1,
+  },
+  closeButton: {
+    boxSizing: 'border-box', minWidth: EDITOR_WORKBENCH_CLOSE_BUTTON_MIN_WIDTH, height: 30, flex: 'none',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.5))', borderRadius: 6,
+    color: 'var(--dsw-alias-label-primary, inherit)',
+    background: 'var(--dsw-alias-button-floating-fill, var(--dsw-alias-bg-layer-2, #fff))',
+    padding: '0 10px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 500, lineHeight: 1,
   },
   body: { flex: 1, minHeight: 0, overflow: 'hidden' },
   focusGuard: {
@@ -579,13 +589,15 @@ export function ManagedOpenPencilEditorModal({
             <button
               ref={closeRef}
               type="button"
-              style={{ ...styles.button, ...(lifecycle.phase === 'saving' ? { cursor: 'not-allowed', opacity: 0.55 } : {}) }}
+              {...{ [OPENPENCIL_EDITOR_CLOSE_BUTTON_ATTRIBUTE]: 'true' }}
+              style={{ ...styles.closeButton, ...(lifecycle.phase === 'saving' ? { cursor: 'not-allowed', opacity: 0.55 } : {}) }}
               aria-label={copy.close}
               title={copy.close}
               disabled={lifecycle.phase === 'saving'}
               onClick={() => { void requestClose() }}
             >
               <CloseIcon />
+              <span>{copy.close}</span>
             </button>
           </>}
         />

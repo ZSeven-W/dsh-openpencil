@@ -94,7 +94,7 @@ export function createDesignCreateTool(editorHost: EditorHostController) {
   return defineTool({
     name: OPENPENCIL_CREATE_TOOL_NAME,
     description: 'Generate or restructure design nodes on an existing active OpenPencil canvas using one transactional batch_design program. '
-      + 'Use this only after the editable sidebar is already open. For a new design with no .op file or live editor, use openpencil_new instead. '
+      + 'Use this only after the editable sidebar is already open. For an ordinary new design with no .op file or live editor, use openpencil_pipeline_begin; openpencil_new is only for an explicitly requested simple one-shot compatibility path. '
       + 'Use concise newline-separated operations: '
       + 'I(parentId, nodeJson) inserts, U(nodeId, patchJson) updates, D(nodeId) deletes, '
       + 'M(nodeId,parentId,index) moves, C(nodeId,parentId,overrides) clones, and R(nodeId,nodeJson) replaces. '

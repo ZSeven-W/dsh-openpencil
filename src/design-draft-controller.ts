@@ -1,6 +1,6 @@
 /** Persistent, owner-isolated design drafts backed by managed OpenPencil daemons. */
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +10,7 @@ import {
   OpenPencilMcpTransportError,
   type OpenPencilMcpResult,
 } from './mcp-client.js'
+import { restoreManagedDaemonDocument } from './editor-recovery.js'
 import {
   readManagedEditorDaemon,
   resetManagedEditorDaemonFromSource,
@@ -109,6 +110,8 @@ export interface DesignDraftBeginOptions {
 export interface DesignDraftCallOptions {
   signal?: AbortSignal
   timeoutMs?: number
+  /** Optional optimistic guard for a controller-owned compound operation. */
+  expectedVersion?: number
 }
 
 export interface DesignDraftCallResult {
@@ -133,6 +136,7 @@ export interface DesignDraftScreenshot {
   draftId: string
   target: DesignDraftTarget
   version: number
+  documentSha256: string
   bytes: Buffer
   mimeType: string
   metadata: unknown
@@ -153,6 +157,9 @@ export interface DesignDraftLiveLaunch {
 export interface DesignDraftFinishOptions<Published> {
   signal?: AbortSignal
   requireCurrentScreenshot?: boolean
+  /** Optional finalized checkpoint expected by the caller. Both fields must be supplied together. */
+  expectedVersion?: number
+  expectedDocumentSha256?: string
   /** Runs while the draft's serialized operation lock is still held. */
   publish: (snapshot: DesignDraftSnapshot) => Promise<Published>
 }
@@ -186,8 +193,11 @@ interface DesignDraftSession {
   timer?: NodeJS.Timeout
   activeOperation?: Promise<void>
   lastScreenshotVersion?: number
+  lastScreenshotDocumentSha256?: string
   lastScreenshotFinalizedVersion?: number
+  lastScreenshotFinalizedDocumentSha256?: string
   finalizedVersion?: number
+  finalizedDocumentSha256?: string
   publishing: boolean
   bootstrapResetConsumed: boolean
   liveAttach?: {
@@ -197,12 +207,57 @@ interface DesignDraftSession {
   }
 }
 
-export class DesignDraftVisualInspectionRequiredError extends Error {
-  readonly code = 'OPENPENCIL_DRAFT_VISUAL_INSPECTION_REQUIRED'
+export class DesignDraftPreviewRequiredError extends Error {
+  readonly code = 'OPENPENCIL_DRAFT_PREVIEW_REQUIRED'
+  readonly currentVersion: number
+  readonly finalizedVersion?: number
+  readonly screenshotVersion?: number
+  readonly screenshotDocumentSha256?: string
+  readonly screenshotFinalizedVersion?: number
+  readonly screenshotFinalizedDocumentSha256?: string
 
-  constructor() {
-    super('OpenPencil draft must have a screenshot from its current document version before publishing')
+  constructor(state: {
+    currentVersion: number
+    finalizedVersion?: number
+    screenshotVersion?: number
+    screenshotDocumentSha256?: string
+    screenshotFinalizedVersion?: number
+    screenshotFinalizedDocumentSha256?: string
+  }) {
+    super('OpenPencil draft must have an exact root preview artifact from its current finalized document before publishing')
+    this.currentVersion = state.currentVersion
+    this.finalizedVersion = state.finalizedVersion
+    this.screenshotVersion = state.screenshotVersion
+    this.screenshotDocumentSha256 = state.screenshotDocumentSha256
+    this.screenshotFinalizedVersion = state.screenshotFinalizedVersion
+    this.screenshotFinalizedDocumentSha256 = state.screenshotFinalizedDocumentSha256
   }
+}
+
+export class DesignDraftCheckpointDriftError extends Error {
+  readonly code = 'OPENPENCIL_DRAFT_CHECKPOINT_DRIFT'
+
+  constructor(
+    readonly expectedVersion: number,
+    readonly expectedDocumentSha256: string,
+    readonly currentVersion: number,
+    readonly currentDocumentSha256: string,
+  ) {
+    super('OpenPencil draft changed after its finalized checkpoint was validated')
+  }
+}
+
+function documentSha256(documentJson: string): string {
+  return createHash('sha256').update(documentJson).digest('hex')
+}
+
+function clearPublicationProof(session: DesignDraftSession): void {
+  delete session.lastScreenshotVersion
+  delete session.lastScreenshotDocumentSha256
+  delete session.lastScreenshotFinalizedVersion
+  delete session.lastScreenshotFinalizedDocumentSha256
+  delete session.finalizedVersion
+  delete session.finalizedDocumentSha256
 }
 
 function copyTarget(target: DesignDraftTarget): DesignDraftTarget {
@@ -443,6 +498,49 @@ export class DesignDraftController {
     })
   }
 
+  /**
+   * Atomically restore a controller-owned snapshot after a rejected batch.
+   * The current daemon version is used as the optimistic base so a concurrent
+   * live-canvas edit conflicts instead of being overwritten.
+   */
+  async restoreSnapshot(
+    draftId: string,
+    ownerSessionId: string,
+    snapshot: DesignDraftSnapshot,
+    options: Pick<DesignDraftCallOptions, 'signal' | 'expectedVersion'> = {},
+  ): Promise<DesignDraftSnapshot> {
+    const session = this.#session(draftId, ownerSessionId)
+    if (snapshot.draftId !== draftId || snapshot.target.id !== session.target.id) {
+      throw new Error('OpenPencil draft restore snapshot does not belong to this draft')
+    }
+    return this.#enqueue(session, async () => {
+      const signal = signalFor(session, options.signal)
+      signal.throwIfAborted()
+      try {
+        const current = await readManagedEditorDaemon(session.daemon, signal)
+        if (options.expectedVersion !== undefined && current.version !== options.expectedVersion) {
+          throw new Error('OpenPencil draft changed before its rejected batch could be restored')
+        }
+        signal.throwIfAborted()
+        const restoredVersion = await restoreManagedDaemonDocument(
+          session.daemon.baseUrl,
+          session.daemon.token,
+          { documentJson: snapshot.documentJson, version: current.version },
+        )
+        signal.throwIfAborted()
+        const confirmed = await readManagedEditorDaemon(session.daemon, signal)
+        if (confirmed.version !== restoredVersion || confirmed.documentJson !== snapshot.documentJson) {
+          throw new Error('OpenPencil draft restore could not confirm the authoritative document')
+        }
+        clearPublicationProof(session)
+        this.#touch(session)
+        return this.#snapshot(session, confirmed.version, confirmed.documentJson)
+      } catch (error) {
+        throw sanitizeInternalError(error, session)
+      }
+    })
+  }
+
   finalize(
     draftId: string,
     ownerSessionId: string,
@@ -463,43 +561,51 @@ export class DesignDraftController {
       )) throw new Error('OpenPencil screenshot timeout is invalid')
       const signal = signalFor(session, options.signal)
       signal.throwIfAborted()
-      const beforeVersion = await getOpenPencilMcpVersion({
-        baseUrl: session.daemon.baseUrl,
-        token: session.daemon.token,
-        signal,
-      })
+      const requestedNodeId = options.nodeId?.trim()
+      const rootScreenshot = requestedNodeId === undefined || requestedNodeId === '' || requestedNodeId === 'root'
+      const beforeDocument = await readManagedEditorDaemon(session.daemon, signal)
+      const beforeDocumentSha256 = documentSha256(beforeDocument.documentJson)
       let result: OpenPencilMcpResult
       try {
         result = await callOpenPencilMcp({
           baseUrl: session.daemon.baseUrl,
           token: session.daemon.token,
           tool: 'get_screenshot',
-          arguments: { nodeId: options.nodeId ?? 'root' },
+          arguments: { nodeId: rootScreenshot ? 'root' : requestedNodeId },
           signal,
           ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         })
       } catch (error) {
         throw sanitizeInternalError(error, session)
       }
-      const afterVersion = await getOpenPencilMcpVersion({
-        baseUrl: session.daemon.baseUrl,
-        token: session.daemon.token,
-        signal,
-      })
-      if (afterVersion !== beforeVersion) {
-        throw new Error('OpenPencil document changed while its visual inspection screenshot was rendered')
+      const afterDocument = await readManagedEditorDaemon(session.daemon, signal)
+      const afterDocumentSha256 = documentSha256(afterDocument.documentJson)
+      if (
+        afterDocument.version !== beforeDocument.version
+        || afterDocumentSha256 !== beforeDocumentSha256
+      ) {
+        throw new Error('OpenPencil document changed while its exact root preview artifact was rendered')
       }
       if (result.images.length !== 1) throw new Error('OpenPencil screenshot did not return exactly one bounded image')
-      session.lastScreenshotVersion = afterVersion
-      session.lastScreenshotFinalizedVersion = session.finalizedVersion === afterVersion
-        ? afterVersion
-        : undefined
+      if (rootScreenshot) {
+        session.lastScreenshotVersion = afterDocument.version
+        session.lastScreenshotDocumentSha256 = afterDocumentSha256
+        const matchesFinalization = session.finalizedVersion === afterDocument.version
+          && session.finalizedDocumentSha256 === afterDocumentSha256
+        session.lastScreenshotFinalizedVersion = matchesFinalization
+          ? afterDocument.version
+          : undefined
+        session.lastScreenshotFinalizedDocumentSha256 = matchesFinalization
+          ? afterDocumentSha256
+          : undefined
+      }
       this.#touch(session)
       const image = result.images[0]!
       return {
         draftId: session.id,
         target: { ...session.target },
-        version: afterVersion,
+        version: afterDocument.version,
+        documentSha256: afterDocumentSha256,
         bytes: Buffer.from(image.bytes),
         mimeType: image.mimeType,
         metadata: sanitizeInternalValue(result.value, session),
@@ -518,12 +624,51 @@ export class DesignDraftController {
       signal.throwIfAborted()
       const document = await readManagedEditorDaemon(session.daemon, signal)
       signal.throwIfAborted()
+      const authoritativeSha256 = documentSha256(document.documentJson)
+      const hasExpectedVersion = options.expectedVersion !== undefined
+      const hasExpectedSha256 = options.expectedDocumentSha256 !== undefined
+      if (hasExpectedVersion !== hasExpectedSha256) {
+        throw new Error('OpenPencil draft finish expectedVersion and expectedDocumentSha256 must be provided together')
+      }
+      if (hasExpectedVersion && (
+        !Number.isSafeInteger(options.expectedVersion)
+        || options.expectedVersion! < 0
+        || !/^[a-f0-9]{64}$/u.test(options.expectedDocumentSha256!)
+      )) throw new Error('OpenPencil draft finish checkpoint is invalid')
+      if (hasExpectedVersion && (
+        options.expectedVersion !== document.version
+        || options.expectedDocumentSha256 !== authoritativeSha256
+      )) {
+        clearPublicationProof(session)
+        throw new DesignDraftCheckpointDriftError(
+          options.expectedVersion!,
+          options.expectedDocumentSha256!,
+          document.version,
+          authoritativeSha256,
+        )
+      }
       if ((options.requireCurrentScreenshot ?? true) && (
         session.lastScreenshotVersion !== document.version
+        || session.lastScreenshotDocumentSha256 !== authoritativeSha256
         || session.lastScreenshotFinalizedVersion !== document.version
+        || session.lastScreenshotFinalizedDocumentSha256 !== authoritativeSha256
         || session.finalizedVersion !== document.version
+        || session.finalizedDocumentSha256 !== authoritativeSha256
       )) {
-        throw new DesignDraftVisualInspectionRequiredError()
+        throw new DesignDraftPreviewRequiredError({
+          currentVersion: document.version,
+          ...(session.finalizedVersion === undefined ? {} : { finalizedVersion: session.finalizedVersion }),
+          ...(session.lastScreenshotVersion === undefined ? {} : { screenshotVersion: session.lastScreenshotVersion }),
+          ...(session.lastScreenshotDocumentSha256 === undefined
+            ? {}
+            : { screenshotDocumentSha256: session.lastScreenshotDocumentSha256 }),
+          ...(session.lastScreenshotFinalizedVersion === undefined
+            ? {}
+            : { screenshotFinalizedVersion: session.lastScreenshotFinalizedVersion }),
+          ...(session.lastScreenshotFinalizedDocumentSha256 === undefined
+            ? {}
+            : { screenshotFinalizedDocumentSha256: session.lastScreenshotFinalizedDocumentSha256 }),
+        })
       }
       const snapshot = this.#snapshot(session, document.version, document.documentJson)
       // Publication deliberately stays under the same serialized draft lock.
@@ -734,6 +879,14 @@ export class DesignDraftController {
       if (isUncertain(error, signal)) await this.#retire(session, false)
       throw sanitizeInternalError(error, session)
     }
+    if (options.expectedVersion !== undefined) {
+      if (!Number.isSafeInteger(options.expectedVersion) || options.expectedVersion < 0) {
+        throw new Error('OpenPencil guarded operation version is invalid')
+      }
+      if (beforeVersion !== options.expectedVersion) {
+        throw new Error('OpenPencil draft changed before its guarded operation started')
+      }
+    }
 
     let result: OpenPencilMcpResult
     try {
@@ -772,13 +925,26 @@ export class DesignDraftController {
     if (mode === 'must-change' && afterVersion <= beforeVersion) {
       throw new Error(`OpenPencil MCP ${tool} reported success but did not apply a document change`)
     }
-    const changed = afterVersion > beforeVersion
-    if (changed) {
-      delete session.lastScreenshotVersion
-      delete session.lastScreenshotFinalizedVersion
-      delete session.finalizedVersion
+    let finalizedDocumentSha256: string | undefined
+    if (tool === 'finalize_design') {
+      try {
+        const authoritative = await readManagedEditorDaemon(session.daemon, signal)
+        if (authoritative.version !== afterVersion) {
+          await this.#retire(session, false)
+          throw new Error('OpenPencil finalize_design version did not match its authoritative document')
+        }
+        finalizedDocumentSha256 = documentSha256(authoritative.documentJson)
+      } catch (error) {
+        if (!session.closed) await this.#retire(session, false)
+        throw sanitizeInternalError(error, session)
+      }
     }
-    if (tool === 'finalize_design') session.finalizedVersion = afterVersion
+    const changed = afterVersion > beforeVersion
+    if (changed) clearPublicationProof(session)
+    if (tool === 'finalize_design') {
+      session.finalizedVersion = afterVersion
+      session.finalizedDocumentSha256 = finalizedDocumentSha256
+    }
     this.#touch(session)
     return {
       draftId: session.id,

@@ -97,7 +97,7 @@ DSH OpenPencil 将 [DeepSeek Harness](https://github.com/deepseek-ai/DSH) 与 [O
 
 ### 🎯 一个完整的工作流
 
-「需求 → 私有草稿 → 语义化批次 → 精确 PNG 视觉检查与修复 → 质量门禁后的原子发布」—— 全部在 DSH 内完成闭环。
+「需求 → 私有草稿 → 语义化批次 → live 用户预览 → 确定性的结构/布局/质量校验 → 最终 PNG 完整性保护下的原子发布」—— 全部在 DSH 内完成闭环。
 
 </td>
 </tr>
@@ -144,11 +144,11 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 | 工具 | 作用 |
 | --- | --- |
 | `openpencil_new` | 面向简单任务的兼容快速路径：运行一份事务性 QuickJS `batch_design` 脚本，以“仅在不存在时创建”的语义发布并返回可编辑呈现。生产级设计应优先使用下方完整管线。 |
-| `openpencil_pipeline_begin` | 为新的工作区相对 `.op` 路径启动仅归当前会话所有的私有草稿；目标文件保持未发布且不会被改动。 |
-| `openpencil_pipeline_context` | 加载原生动态 design-agent prompt，以及相关 guidelines、style guides、变量/主题和 UI kit 元数据或脚本引用。 |
-| `openpencil_pipeline_batch` | 将语义化 QuickJS 批次串行应用到草稿；先搭结构骨架，再按区块补充与细化。 |
-| `openpencil_pipeline_inspect` | 执行原生质量检查或解析后布局检查，或生成精确 PNG，供模型用图像读取能力打开并进行视觉检查。 |
-| `openpencil_pipeline_finish` | 执行原生最终化、lint、布局、截图时效与 DSH 质量门禁，然后用 `createIfAbsent` 原子发布并返回可编辑呈现。 |
+| `openpencil_pipeline_begin` | 启动仅归当前会话所有的私有草稿，在内部创建唯一 root，返回 `rootNodeId`、`continuationStyle` 与紧凑的运行时匹配构建契约，并立即在侧边栏打开同一个 live canvas；目标文件仍未发布。 |
+| `openpencil_pipeline_context` | 只在 begin 契约确实缺少某个指定 guideline、style、theme 或 UI kit 时加载一次定向上下文；不是启动时的固定步骤。 |
+| `openpencil_pipeline_batch` | 最多运行两段直接原生 `I(...)`/`K(...)` generation script：第一段严格执行 begin `next` 返回的有界首个可见视口脚本，第二段一次补齐全部剩余区域。展示第二次预览前会执行 authored-structure 门禁；空分类/商品 helper 会被拒绝并原子恢复第一批快照，只允许重发一次修正后的第二批，且不消耗两段式预算。每次成功事务只会尝试展示给用户的精确 PNG，随后必须不加叙述地立即执行返回的 `next`。第三段 generation script 会被拒；只有 finish 返回的完整修复门禁可以授权一段有界 `U(...)` QuickJS 修复脚本。 |
+| `openpencil_pipeline_inspect` | 仅在用户明确要求时提供手动诊断；普通生成不会把它当作预览或模型看图步骤。 |
+| `openpencil_pipeline_finish` | 健康状态下一次调用就完成最终化、验证、最终 root PNG 自动预览与 `createIfAbsent` 原子发布。只有结果同时为 `needs_correction`、`canContinue: true`、含完整非空 `repairTargets` 且 `omitted: 0` 时，才授权一次纯 `U(...)` 修复和最后一次 finish；其他未发布结果一律终止。 |
 | `openpencil_pipeline_abort` | 丢弃未发布草稿，不创建目标文件。 |
 | `openpencil_create` | 在现有的活动画布上应用事务性 `batch_design` 程序来生成或重构节点。 |
 | `openpencil_edit` | 修改显式指定的节点或用户选中的单个节点。 |
@@ -157,15 +157,38 @@ pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 
 ## 智能体设计工作流
 
-生产级设计应按顺序使用 `openpencil_pipeline_begin` → `openpencil_pipeline_context` → 多轮 `openpencil_pipeline_batch` 与 `openpencil_pipeline_inspect` → `openpencil_pipeline_finish`。草稿守护进程仅对其所属的 DSH 会话可见；发布成功前，请求的工作区路径并不存在。中间私有草稿截图绝不暴露可编辑侧边栏，以免用户编辑与智能体批次并发冲突；只有发布成功后才授予编辑能力。
+桌面电商 Hero 的几何结构会在第二批前验证：右侧每个视觉子节点和叠加形状都必须留在 Hero 的固定内宽高中。超大视觉会连同第一批原子回滚，不再撑大 live canvas 或流入最终发布。Generation receipt 只暴露已提交的节点映射与预览；原生诊断延后到 finish 聚合，由它一次给出精确修复事务，不再诱发生成中途的猜测循环。
 
-上下文不是静态模板，而是把 OpenPencil 原生 design-agent prompt 与相关 guidelines、style guides、变量/主题和 UI kits 动态组合起来。先搭结构骨架，再按语义区块补充内容并细化。为兼顾速度，成功的 batch 调用只返回紧凑布局诊断；需要完整解析布局时再调用 `openpencil_pipeline_inspect`。至少要设置两个中间视觉里程碑：完成 signature/heading 后一次，完成主要任务或 form 加 CTA 后再一次；每次都调用 `openpencil_pipeline_inspect` 并传入 `kind: "screenshot"`，让模型用图像读取能力打开精确 PNG，修复可见的裁切、溢出、层级、间距、控件比例、对比度和文字可读性，并按需重复。视觉检查不会自动发生。
+普通一句话需求直接调用 `openpencil_pipeline_begin`，不再花一个模型步骤加载可选 skill，然后走固定短路径：严格执行 begin `next` 给出的有界第一段直接 JS → 第二段也是最后一段直接 JS，一次补齐全部剩余区域 → 一次 `openpencil_pipeline_finish`。当前第一批只渲染**首个可见视口**：按 brief 构建完整 navigation/header 与精修 primary hero/content，限制 **不超过 32 次 `I`/`K` 调用、脚本不超过 8 KiB**。这个预算保留真实结构与视觉层级，同时仍避免重新落入无界生成循环；次要 cards、detail 与 `below-fold` 内容延后到第二批。电商 begin 会在绘制前选定与 App 对齐的 `ecommerce-modern-light` 方案：白色基底、暖色区段节奏、克制的橙色操作色、1120px 居中内容、56px Hero 大标题，并让可见文案跟随用户需求语言（中文需求保持中文文案，只允许可选的简短 ASCII 品牌名）。桌面电商 Hero 是带 `padding:[64,160]` 的全宽水平 frame，内层严格由 512px 文案、64px 间距和 448px 商品视觉组成；禁止再把 Hero 固定为 1120px 后叠加这组 padding。标题和副标题均使用 `width:"fill_container"`。通用电商把主视觉直接挂在 Hero 下：`I(hero,{type:"image",name:"Hero product image",width:448,height:360,imageSearchQuery:"gray loveseat isolated photo"})`。`imageSearchQuery` 是节点的直接字段，禁止写成 `image:{...}`，禁止再套 wrapper、和装饰形状混用，或被任一商品卡复用；第一批提交后它会立即富化。只有用户明确要求插画或不使用照片时，才允许改用显式 `layout:"none"` 的 4–6 层定位构图，其中至少包含 ellipse/path。纯粹堆叠圆角矩形、空白右栏、溢出或过小装饰块都会在第二批前被门禁原子回滚。平台和 viewport 只从最近一条真实用户请求中确定；模型扩写的 `brief` 不能把未指定的平台擅自改成移动端。用户未指定品牌时，直接根据 brief 使用中性店铺名或简短占位，不花时间比较命名方案。未提供 logo asset 时只使用纯文本品牌；禁止发明字母徽章，也不要给 text node 添加背景、固定高度或 effects。begin 会创建唯一 root 并打开私有 live canvas；每次 begin 或 batch 成功后，都必须不加叙述、规划、比较、检查或无关工具调用地立即执行下一步。健康 finish 会先执行原生定稿，再富化定稿后真实存在的图片槽，并在同一次调用中渲染最终用户预览与发布。
 
-完成阶段会执行 OpenPencil 原生最终化、lint 和布局检查，以及 DSH 质量门禁。这些确定性检查不会创造审美或视觉精致度。最终化之后必须另拍一张新的精确截图，并让模型进行视觉检查；任何中间里程碑截图都绝不能满足最终化后的截图时效门禁。只有这样，最后一次 finish 调用才会通过 `createIfAbsent` 原子创建目标文件。门禁失败或调用 `openpencil_pipeline_abort` 时，目标文件仍不存在。每个已发布的生成结果都是同一个 presentation，其中同时包含精确最终 PNG 预览和限定于该文档的可编辑授权；它只在侧边栏空闲时自动打开，绝不替换另一会话的编辑器，并始终保留 **编辑画布** 供用户显式切换。即使 `openpencil_pipeline_finish` 嵌套在 PTC/Code Mode 中调用，返回结果也必须保留同一 presentation，绝不能退化成普通 JSON 或只读卡片。历史或水合卡片不会自动打开。
+与 App 对齐的电商预设会把 64px Header 固定为 `padding:[0,160]`：Header 使用 `navbar`，Nav 是由 44px `nav-link` 项组成的 `nav-links` 集合，Header actions 则是由 44×44 `icon-button` frame 构成的 `toolbar`，不再直接放裸图标。160×48 主 CTA 使用 `button`、把 label 放进自己的 binding，并采用符合 AA 的 `#C2410C`/`#FFFFFF`。三张商品卡保持同一个连贯系列。通用家居需求固定使用运行时 4/4 实测通过的组合：`gray armchair isolated photo`、`artemide tolomeo lamp photo` 和 `potted plant isolated photo`；第三张卡必须写成盆栽，不能继续标成花瓶。
+
+begin 返回的 `rootNodeId`、`continuationStyle`、`canvas` 与 `buildContract` 就是权威运行契约。除非用户明确指定文件名，否则省略 `path`，由插件生成具体且防冲突的 `.op` 文件名，避免把模板语法写进路径后再 begin/abort 重试。直接原样实现 `next` 指定的有界第一段脚本，不扩大或重新解释范围，也不插入面向用户的 reasoning；自动预览返回后，立即用第二段也是最后一段脚本通过数组与循环补齐全部区域。这条直接的两段式路径让执行保持有界并及时返回。
+
+两段 generation script 都使用直接 `I(...)`/`K(...)` QuickJS，以及 begin 返回的精确 `rootNodeId`、`continuationStyle` 与 `buildContract`。在 `run_code` 内用 `String.raw` tagged template 构造内嵌脚本，保证转义符和预期文本换行原样进入 QuickJS。必须使用下面这个多行 wrapper：
+
+```js
+const draftId = "<exact begin.draftId>";
+const script = String.raw`...`;
+const r = await tools.openpencil_pipeline_batch({ draftId, script });
+return r;
+```
+
+先把精确的 `begin.draftId` 加引号写入独立 `draftId` 字符串，再声明 `script`。固定的工具参数对象只能包含 `draftId` 和 `script`；禁止追加 `canvasWidth`、其他字段或把 return 写进对象。只返回 `r`，不要 log、print 或 stringify。每一批 QuickJS 都是 fresh scope，本地 binding 不会跨批次存在。`I`/`K` 返回的是不透明 node-id 字符串，不是可修改的节点对象：binding 只能作为后续 `I`/`K` 的父级，禁止赋值 `binding.x`、`binding.y` 或任何成员。第二批禁止重建 Page、App Content、Header 或 Hero；优先把新建且已绑定的 section rail 直接挂到 begin 的 `rootNodeId`。如果第一批创建了共享 content wrapper，只能使用第一批返回 binding 的精确 nodeId 继续挂载，绝不能按同名再建一个 wrapper。
+
+`rootNodeId` 本身就是页面 frame，顶层区域直接挂到它上面，禁止再创建 Page/root wrapper；只有 frame/group binding 可以作为父级，包含图标的圆形视觉必须使用 frame 加 `cornerRadius`，不能拿 ellipse 当父级。每个语义容器（Header、Nav、Search、Hero、Card、Section、Toolbar、Button 或 CTA）都必须接住 `I`/`K` 返回的 binding，并立即通过该 binding 加入全部预期可见 children；禁止留下空语义容器，也禁止把预期 children 放成它的 siblings。最短有效 Header 示例为 `const h=I(root,{type:"frame",name:"Header",layout:"horizontal"}); I(h,{type:"text",content:"Shop",fontFamily:"Inter, system-ui, sans-serif"});`。移动端只有全宽 chrome/full-bleed section 可以直接挂 root；裸 text、icon、小 control 与 section title 必须放进一个已绑定且左右 gutter 为 24px 的 rail/section。每个分类卡都要有真实的视觉 tile 和 label；不同商品卡不能复用同一个 glyph 冒充商品图，应使用匹配且不同的 icon/shape，找不到合适视觉时直接省略 media wrapper。移动端分类项中的视觉 tile 固定为 56×56 tile frame。桌面电商分类栏以 `justifyContent:"space_between"` 铺满 1120px 内容宽度；商品栏固定为三张等宽 `fill_container` 卡片、24px 间距，右侧不能留下大段空白。每个 Button/CTA frame 创建后，必须立即通过其返回 binding 插入可见 text/icon child，不能把 label/icon 放成 sibling。最小图标示例为 `{type:'icon_font',name:'Search icon',iconFontName:'search',width:20,height:20}`：`name` 是图层标签，真正选择 glyph 的是 `iconFontName`，且只能使用这组已验证的 Lucide 名称：`home`、`search`、`shopping-bag`、`shopping-cart`、`user`、`heart`、`star`、`plus`、`arrow-right`、`sparkles`、`sun`、`apple`、`snowflake`、`droplet`、`cookie`、`leaf`、`coffee`、`package`、`gift`、`baby`、`spray-can`、`lamp`、`sofa`、`armchair`、`shirt`；没有合适图标时用形状构图。非电商设计默认只使用一个带具体英文 `imageSearchQuery` 的 `type:"image"` leaf，除非用户明确要求多图；电商固定使用三张不同商品图。每个 query 不超过四个英文词，只描述一个具体商品，禁止 lifestyle、collection 或宽泛 category；通用家居严格使用上面的实测组合。带 `isolated` 的 query 必须有 isolated/cutout/white-background 等正向元数据，重试也不能退回普通房间图；多词 query 至少命中两个有意义的元数据 token。禁止在大型固定商品媒体框里只放一个很小的 icon。每个 Hero/Product/Art/Media frame 只能有一个主视觉：一张 image，或一个实质性的 composed-shape visual，禁止 image 与占位 icon 并存；image node 是叶节点，不能作为父级。每个生成文本节点都必须显式使用 `fontFamily: "Inter, system-ui, sans-serif"`，普通字号和行高分别为 `fontSize: 16`、`lineHeight: 1.5`。桌面 App 继续使用内置 Inter；Web 宿主不会内置 Inter，因此自动走通用字体回退且不会弹出缺失字体提示。禁止只写裸 `Inter`。CJK 的 `lineHeight < 1.3` 会提升到 `1.5`，数值型 text height 也会自动改为 `fit_content`，除非 `textGrowth` 明确为 `fixed-width-height`。仅标题或特殊排版显式覆盖字号和行高。其余当前节点、样式、脚本与修复规则仍以运行时契约为唯一来源。第三段 generation script 会被拒；只有下文所述的完整修复门禁，才能授权第三段也是最后一段有界 QuickJS 修复脚本，并且只对指定目标使用 `U(...)`。
+
+分类横栏必须为每个 label 使用不同且语义匹配的 icon。每个 `<label> icon tile` card 内先创建嵌套的 56×56 `Category glyph surface` frame，把 `icon_font` 放进 surface，并把文字 label 直接放在 card 下；禁止使用包含 `art`、`media` 或 `image` 的 wrapper 名，避免 native finalization 把图标 surface 误判成图库图片槽。数码分类使用 `smartphone`/`camera`，食品分类使用 `utensils`/`sandwich`/`croissant`，不能用 `lamp` 或 `coffee` 错配。同一商品横栏必须先完成每张商品卡的 media（或明确省略）、名称和价格，再开始下一张卡；发布门会折叠空 media 壳，半截执行的脚本不会再发布空白商品区。第二批结构门禁会在预览与 finish 前回滚不完整分类/商品结构、过高分类或商品横栏、混合卡片宽度或紧凑画布溢出，并且最多只允许一次完整替换脚本。每张商品图的英文 query 不超过四个词，格式为 `<具体商品> isolated photo`，只描述一个商品，禁止 lifestyle、collection 或宽泛 category。子节点后处理会保留作者指定的横栏高度，不再套用文档根节点的高度扩展。规范的 post-final 图片富化不再被更早的 context 富化占用；零结果重试会保留末尾的具体商品主体，照片查询会拒绝 illustration、drawing、engraving、painting、catalog 等明显非照片元数据，而 isolated 查询在重试后仍必须保留独立主体证据；只要任一请求的商品图最终仍未解析，发布就会停止，避免交付空图或不对称商品卡。移动端 finalization 会在 clipped rail 中保留全部分类节点，桌面分类横栏也不会再被移动端规则改写。
+
+用户未指定品牌时，自造店名必须使用简短 ASCII；用户要求的 Unicode 文本应直接写字符，禁止手工拼 JSON/JS escape 序列。`text_input` 是叶节点，只能使用自身 placeholder；需要“图标 + 提示文案”时，必须创建命名 Search frame，并把 icon 与 text 挂到该 wrapper。
+
+live canvas 侧边栏会在 begin 时立即打开，并持续绑定私有草稿；标题栏现在提供明确的“关闭”按钮，dirty 草稿仍保留原有保存/确认保护。两次成功 batch 都会尝试附带给用户的精确 PNG 预览卡片。每次桌面电商 batch 提交成功后，只要已提交文档仍有未解析 query，宿主都会先做一次最长 8 秒的 best-effort 图片富化，再生成 live preview：第一批即可出现真实 Hero 商品图，第二批再填充商品栏，而不是全部图片只能等到 finish。如果 `next` 返回 `previewUnavailable`，脚本已经提交到 live canvas：继续执行 `next`，禁止重跑 batch，也不要调用 `openpencil_pipeline_inspect` 或 `read_image`。inspect 只用于用户明确要求的诊断。
+
+完成阶段仅在权威文档存在非空 `imageSearchQuery` 时自动执行一次图片丰富化，无需额外 context 步骤，icon/shape art 绝不会触发；最多三路图库搜索在同一个不变的 20 秒总期限内并发执行，写回仍按文档顺序确定，因此三商品卡不会再被第一张图片的 provider ladder 饿死。随后执行 OpenPencil 原生最终化、lint、布局检查与 DSH 质量门禁，并在同一次健康 finish 中自动渲染最终 root PNG、原子发布。在同一个 `run_code` 内保留 finish 返回对象。只有结果同时满足 `stage: "needs_correction"`、`canContinue: true`、含完整非空 `repairTargets`、`checks.dsh.repairTargetSummary.omitted: 0`，并且每个 target 都有 `operation: "U"`、精确非空 `nodeId` 与非空 `patch` 时，才授权修复：一次性在唯一一段纯 `U(...)` batch 中应用所有目标，然后不加叙述地只再调用一次 finish。经过这次修复后，任何不是 `published: true` 的结果都必须终止；抛错、`canContinue: false` 或其他未发布 finish 结果同样必须只报告一次并终止，禁止重试、inspect、读取 image/context、abort 或另起草稿。`lint_document` 的 Info 与以下五类 Warning 不阻断：`invisible-container`、`mixed-sibling-padding`、`sibling-inconsistency`、`text-effect`、`text-explicit-height`。其他 Warning（包括 `widget-a11y`、`excessive-frame-effects`、`empty-path`）仍会阻断，所有 Error 也会阻断。script mode 无法使用 `G(...)` 时，`imageSlots` 仍只是观察性提示。原生 hard quality、contrast、layout 诊断与 DSH hard gates 也继续阻断。若保留对象为 `published: true`，其中已经包含精确最终 PNG 与 live editor，应立即向用户收尾，禁止再调用 `openpencil_render`、`read_image` 或 `openpencil_pipeline_inspect`。失败门禁或 `openpencil_pipeline_abort` 不会创建目标文件。文档级可编辑授权只在侧边栏空闲时自动打开，并始终保留 **编辑画布** 供显式切换；嵌套结果也能水合精确 PNG，不再显示“没有可用预览通道”。
 
 在同一持续运行的 DSH 服务内，切换浏览器或重载后，经过严格解析的 `openpencil_new` 或 `openpencil_pipeline_finish` 持久化 publication 可以恢复为精确 PNG 与明确的 **编辑画布** 操作。历史卡片绝不会自动打开侧边栏，必须由用户点击该操作。普通历史 `openpencil_render` 始终保持只读，非 loopback 连接也绝不会获得编辑器授权。
 
-随包提供的 `openpencil-design` skill 仍负责脚本与质量指导，托管运行时也不依赖桌面版二进制。`openpencil_new` 继续作为兼容的单批次快速路径，但生产级设计生成应优先使用完整管线。
+随包提供的 `openpencil-design` skill 仍是可选的轻量参考；普通创建无需先加载它，完整的紧凑契约由 begin 直接返回。托管运行时也不依赖桌面版二进制。`openpencil_new` 继续作为兼容的单批次快速路径，但生产级设计生成应优先使用完整管线。
 
 仅在已有的活动画布上使用 `openpencil_create` 与 `openpencil_edit`。在编辑器执行保存（Save）操作之前，它们的编辑都保持未保存状态。
 

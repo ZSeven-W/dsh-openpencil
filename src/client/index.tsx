@@ -34,12 +34,14 @@ import { FrameGallery, normalizeFrameIndex as normalizedFrameIndex } from './fra
 import type { GalleryFrame, GalleryLocale } from './frame-gallery.js'
 import { OpenPencilSelectionDock } from './selection-dock.js'
 import {
+  canonicalResultObjectFromText,
   presentationHydrationRequestOf,
   requestPresentationGrantWithRetry,
 } from './presentation-hydration.js'
 import {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
   OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
@@ -49,6 +51,7 @@ import {
 export {
   LEGACY_DESIGN_RENDER_TOOL_NAME,
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
   OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
@@ -97,11 +100,13 @@ export {
   editorWorkbenchShouldHandleEscape,
   editorWorkbenchUsesFullscreen,
   editorWorkbenchWidthBounds,
+  EDITOR_WORKBENCH_CLOSE_BUTTON_MIN_WIDTH,
   EDITOR_WORKBENCH_FULLSCREEN_BREAKPOINT,
   EDITOR_WORKBENCH_LEFT_CLEARANCE,
   EDITOR_WORKBENCH_MAX_WIDTH,
   EDITOR_WORKBENCH_MIN_WIDTH,
   EDITOR_WORKBENCH_RESIZE_STEP,
+  OPENPENCIL_EDITOR_CLOSE_BUTTON_ATTRIBUTE,
   resizedEditorWorkbenchWidth,
 } from './editor-modal.js'
 export {
@@ -277,7 +282,8 @@ const DESIGN_RENDER_COPY = {
     downloadSource: 'Download source .op',
     inspectToolCall: 'Inspect tool call',
     recoveringPreview: 'Recovering the OpenPencil preview…',
-    noPreview: 'No preview channel available in this host.',
+    pendingPreview: 'This pipeline stage is waiting for its final preview.',
+    noPreview: 'This result does not include a preview artifact.',
     canvas: 'OpenPencil canvas',
     zoomOut: 'Zoom out',
     zoomIn: 'Zoom in',
@@ -311,7 +317,8 @@ const DESIGN_RENDER_COPY = {
     downloadSource: '下载源文件 .op',
     inspectToolCall: '检查工具调用',
     recoveringPreview: '正在恢复 OpenPencil 预览…',
-    noPreview: '当前宿主没有可用的预览通道。',
+    pendingPreview: '当前流水线阶段正在等待最终预览。',
+    noPreview: '此结果未包含可显示的预览产物。',
     canvas: 'OpenPencil 画布',
     zoomOut: '缩小',
     zoomIn: '放大',
@@ -526,6 +533,39 @@ function resultText(block: ToolCallViewProps['block']): string | null {
     parts.push(`${block.error.name}: ${block.error.code}`)
   }
   return parts.join('\n') || null
+}
+
+/** Distinguish an intentional two-phase pipeline wait from a missing artifact. */
+export function pipelineResultAwaitsPreview(toolName: string, text: string | null): boolean {
+  if (toolName !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME || text === null || text.length > 1024 * 1024) return false
+  const result = canonicalResultObjectFromText(text)
+  return result !== undefined
+    && result.published === false
+    && (
+      result.stage === 'needs_preview'
+      // Preserve presentation recovery for pre-upgrade session history.
+      || result.stage === 'needs_visual_preview'
+      || result.stage === 'needs_visual_inspection'
+    )
+}
+
+/** Hide settled successes that have no preview, editor, or pending hydration. */
+export function shouldHidePresentationCard(state: {
+  settled: boolean
+  error: boolean
+  hasGrant: boolean
+  hydrationPending: boolean
+  awaitingPreview: boolean
+}): boolean {
+  return state.settled
+    && !state.error
+    && !state.hasGrant
+    && !state.hydrationPending
+}
+
+/** A preview-retry state has its own concise status and never dumps JSON as a fake preview. */
+export function fallbackPresentationText(text: string | null, awaitingPreview: boolean): string | null {
+  return awaitingPreview ? null : text
 }
 
 interface Viewport {
@@ -879,6 +919,8 @@ export function DesignRenderView({
     || toolName === OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
     || toolName === OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
   const text = resultText(block)
+  const awaitingPreview = pipelineResultAwaitsPreview(toolName, text)
+  const fallbackText = fallbackPresentationText(text, awaitingPreview)
   const frames = grant?.frames ?? []
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
   const currentFrameIndex = normalizedFrameIndex(selectedFrameIndex, frames.length)
@@ -950,6 +992,14 @@ export function DesignRenderView({
   useEffect(() => () => { releaseRef.current?.() }, [])
   useEffect(() => { setSelectedFrameIndex(0) }, [frames.map(frame => frame.previewUrl).join('\n')])
 
+  if (shouldHidePresentationCard({
+    settled,
+    error,
+    hasGrant: grant !== undefined,
+    hydrationPending,
+    awaitingPreview,
+  })) return null
+
   const badge = error
     ? <span style={{ ...styles.badge, ...styles.badgeError }}>{copy.error}</span>
     : running
@@ -996,7 +1046,10 @@ export function DesignRenderView({
           <p style={styles.muted} role="status">{copy.recoveringPreview}</p>
         ) : null}
         {!running && !error && grant === undefined && !hydrationPending ? (
-          <><p style={styles.muted}>{copy.noPreview}</p>{text !== null ? <pre style={{ ...styles.pre, marginTop: 8 }}>{text}</pre> : null}</>
+          <>
+            <p style={styles.muted}>{awaitingPreview ? copy.pendingPreview : copy.noPreview}</p>
+            {fallbackText !== null ? <pre style={{ ...styles.pre, marginTop: 8 }}>{fallbackText}</pre> : null}
+          </>
         ) : null}
       </div>
       {modalToken !== undefined && grant?.document !== undefined && grant.viewer !== undefined ? <CanvasModal grant={grant} onClose={closeCanvas} locale={locale} /> : null}
@@ -1086,6 +1139,10 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(
     { name: 'tool.call.toolview', key: OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME },
+    HostSyncedDesignRenderView,
+  ))
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(
+    { name: 'tool.call.toolview', key: OPENPENCIL_PIPELINE_BATCH_TOOL_NAME },
     HostSyncedDesignRenderView,
   ))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(

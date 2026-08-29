@@ -111,10 +111,33 @@ type HostContext = Context & {
   sandboxPolicy: SandboxPolicyService
 }
 
+/** Structural subset of DSH's agent and provider call contract. */
+type AgentRequestPayload = {
+  agent: {
+    readonly id: string | number
+    readonly session: {
+      readonly id: string | number
+    }
+  }
+  readonly turn: number
+}
+
+type AgentRequestConfig = {
+  provider: string
+  model: string
+  reasoningEffort?: string
+  [key: string]: unknown
+}
+
 type HostEventContext = Context & {
+  on(name: 'agent/request', listener: (payload: AgentRequestPayload, next: () => Promise<AgentRequestConfig>) => Promise<AgentRequestConfig>): () => void
   on(name: 'tools/result', listener: (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => void): () => void
   on(name: 'session/disposed', listener: (session: Session) => void): () => void
   emit(name: 'fs/observed', target: FsTarget, observation: FsObservation, actor: ToolRunContext): void
+}
+
+function isDeepSeekProvider(provider: string): boolean {
+  return provider.toLowerCase().startsWith('deepseek')
 }
 
 /** Read the optional bind-time trust snapshot without making Web-only runtime glue a hard peer. */
@@ -133,6 +156,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const hostCtx = ctx as HostContext
   const eventCtx = ctx as HostEventContext
   const disposers: Array<() => void | Promise<void>> = []
+  const designReasoningTurns = new Map<string, number>()
   const accessKey = await prepareRenderAccessKey()
   const controller = new RenderAccessController(accessKey)
   const viewerAssets = await prepareViewerAssets()
@@ -204,6 +228,26 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     ))
   }
   disposers.push(ctx.effect(
+    () => eventCtx.on('agent/request', async (payload, next) => {
+      // This is a waterfall: resolve the effective provider config first, then
+      // replace only its reasoning knob. Latch the current turn once begin has
+      // opened a draft so the post-finish response cannot fall back to a long
+      // hidden-reasoning pass. The next user turn starts from normal settings.
+      const config = await next()
+      const owner = String(payload.agent.session.id)
+      if (designDraftTools.hasActiveDraft(owner)) {
+        designReasoningTurns.set(owner, payload.turn)
+      } else if (designReasoningTurns.get(owner) !== payload.turn) {
+        designReasoningTurns.delete(owner)
+      }
+      if (designReasoningTurns.get(owner) !== payload.turn || !isDeepSeekProvider(config.provider)) {
+        return config
+      }
+      return { ...config, reasoningEffort: 'off' }
+    }),
+    'dsh-openpencil: active design draft reasoning override',
+  ))
+  disposers.push(ctx.effect(
     () => eventCtx.on('tools/result', (exec, result) => presentationHydration.observeToolResult(exec, result)),
     'dsh-openpencil: nested presentation result observer',
   ))
@@ -213,6 +257,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   ))
   disposers.push(ctx.effect(
     () => eventCtx.on('session/disposed', session => {
+      designReasoningTurns.delete(String(session.id))
       void designDraftTools.abortOwner(String(session.id)).catch(error => {
         ctx.logger.warn(`dsh-openpencil draft cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
       })

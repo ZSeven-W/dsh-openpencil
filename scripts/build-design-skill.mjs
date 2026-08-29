@@ -51,46 +51,64 @@ function validateSingleHeadings(markdown) {
 function thinDshAdapter() {
   return `---
 name: openpencil-design
-description: Fast DSH adapter for native OpenPencil generation with a live canvas, substantial batches, visual verification, and atomic publication.
+description: Strict OpenPencil two-batch generation transaction with deterministic validation and atomic publication.
 ---
 
 # OpenPencil Design in DSH
 
-This is a thin host adapter, not a second design manual. The compact result of \`openpencil_pipeline_begin\` is the authoritative run contract. It is intentionally small so ordinary design work can begin without injecting a second native manual.
+## Strict Default Transaction
 
-## Fast Default Path
+For an ordinary new design, perform exactly this state machine:
 
-1. Start immediately. Choose a new workspace-relative \`.op\` path and call \`openpencil_pipeline_begin({path, brief})\` once. Do not run a shell preflight, create an eight-item task list, spawn helper agents, or inspect plugin/runtime source for an ordinary design request. The live canvas opens from this result; continue building while the user watches it.
-2. Resolve platform from explicit user language. An unqualified page, homepage, dashboard, form, or screen defaults to **web/desktop**. Use a mobile canvas only when the request explicitly says \`mobile\`, \`phone\`, \`iOS\`, \`Android\`, \`移动\`, or \`手机\`.
-3. Preserve the complete begin result as one compact authoritative run contract. Its \`canvas\` and \`buildContract\` fields contain the executable, runtime-matched node and QuickJS rules needed for the first batch. Do not re-read fields already returned by begin, and do not fetch variables, schema, or the full native prompt as a ritual. Only when a genuinely missing named guideline/kit is required, or the user explicitly asks for one, make one targeted \`openpencil_pipeline_context\` call and consume it once.
-4. Make the first \`openpencil_pipeline_batch({script})\` a strict fast-live-canvas checkpoint: create exactly the fixed-size root specified by \`canvas\` plus **4–8 empty named top-level frame shells** directly under it. Use at most **10 \`I(...)\` calls total**. Do not create text, icons, images, paths, controls, components, nested frames, inline children, or any other content, and do not use \`K(...)\` or \`G(...)\`. Return immediately after the empty shells appear; populate them in later batches. The wrapper supplies and verifies the authoritative canvas width. A normal page should still take about **2–4 substantial batches**: fast skeleton, primary content, optional secondary content, and concrete repair. Do not split every card or label into its own batch.
-5. After primary composition, always call \`openpencil_pipeline_inspect({kind:"screenshot"})\` so the user receives an exact PNG preview. Only when the current model supports image input, open it with \`read_image\` and repair visible defects. If one call explicitly reports that image input is unsupported, do not retry and do not inspect source or schema; continue with native quality/finalize gates and state honestly that model visual review was unavailable. Use numeric inspection only for a concrete diagnostic.
-6. Call \`openpencil_pipeline_finish\` to finalize, then always generate its required distinct post-final screenshot user preview. Apply the same optional \`read_image\` rule. A repair requires another finalize and fresh screenshot; otherwise finish again for atomic \`createIfAbsent\` publication.
-7. On cancellation, call \`openpencil_pipeline_abort\`. Do not create a second \`openpencil_render\` card for a pipeline result.
+\`openpencil_pipeline_begin\` -> first \`openpencil_pipeline_batch\` -> second \`openpencil_pipeline_batch\` -> \`openpencil_pipeline_finish\`
 
-## Native Context Is Authoritative
+1. Call \`openpencil_pipeline_begin({brief})\` exactly once and immediately. It creates the only root and opens the private live canvas. Omit \`path\` unless the user explicitly named a file: the plugin chooses a concrete collision-resistant \`.op\` filename; preserve an explicitly named path exactly. Explicit mobile wording overrides web/desktop. Once begin returns, its path, \`rootNodeId\`, platform, canvas, palette, and \`buildContract\` are locked for this transaction. Never reinterpret the request into another platform, switch paths, or rebuild another draft.
+2. On a successful begin, issue the bounded first direct I/K QuickJS batch immediately. On a successful first batch, issue the second and final direct I/K batch immediately. On a successful second batch, call finish immediately. Advance without narration: do not put reasoning, progress, comparison, critique, inspection, or another tool call between successful pipeline calls.
+3. A thrown error or any result with \`canContinue:false\` ends the transaction. Report the error once. Do not retry, inspect, context-read, abort, rename, start over, or create a replacement draft.
 
-Follow the begin \`buildContract\` and native schema exactly. They provide runtime-matched node and QuickJS rules without the full native manual. Do not invent fonts, themes, platforms, or requirements; the user's brief and current native contract win.
+Inside \`run_code\`, use this exact multiline wrapper:
 
-## Substantial Batch Rules
+\`\`\`js
+const draftId = "<exact begin.draftId>";
+const script = String.raw\`...\`;
+const r = await tools.openpencil_pipeline_batch({ draftId, script });
+return r;
+\`\`\`
 
-- \`script\` runs in the pipeline's sandboxed QuickJS, not in DSH's outer code runtime. Create the root with \`I(null, node)\`, capture every \`I()\` return value, and pass that binding as the parent of descendants created in the same script.
-- Use \`K(kitId, parent, overrides)\` only with a real kit id supplied by native context. In later batches, refer to an existing shell only by the exact quoted node id returned by the pipeline; never invent an id or use a display name as an id.
-- \`padding\` accepts only a number, \`[vertical, horizontal]\`, or \`[top, right, bottom, left]\`; never pass a padding object. Native control \`leadingIcon\` and \`trailingIcon\` fields accept only glyph-name strings such as \`"mail"\` or \`"eye"\`, never objects or icon nodes.
-- Prefer one coherent script per meaningful page region over many tiny calls. OpenPencil post-processing already runs after every batch. The wrapper returns native batch diagnostics and verifies the root canvas contract without automatically running full quality/layout inspections after every step. Repair concrete failures and move on when it is clean.
-- Do not call full layout, quality, style-guide, variables, or editor-state reads between healthy batches. A screenshot is the useful appearance checkpoint; numeric inspection is for targeted debugging.
+Quote the exact begin.draftId into the standalone \`draftId\` string first, then declare \`script\`. The fixed tool argument object contains only \`draftId\` and \`script\`; never append \`canvasWidth\`, another field, or return inside it. After the call, return only \`r\`, never \`console.log\`, print, or stringify the tool result. Each QuickJS batch has a fresh scope, so local bindings do not cross batches. \`I\`/\`K\` return opaque node-id strings, not nodes: use bindings only as \`I\`/\`K\` parents; never assign \`binding.x/y\` or any member. In batch 2, do not recreate Page, App Content, Header, or Hero; attach new bound section rails directly to begin's \`rootNodeId\`. If batch 1 created a shared content wrapper, reuse it only by the exact nodeId returned by batch 1, never by rebuilding the same name.
 
-## Live Canvas and Visual Proof
+\`rootNodeId\` is the page: attach top-level regions directly; never create Page/root. Only returned frame/group bindings parent children; round icon art uses a frame plus \`cornerRadius\`, never ellipse.
 
-The sidebar canvas should open at begin and stay attached to the same private draft, so each batch becomes visible without waiting for publication. Do not stop to narrate internal planning while the canvas is empty. Create the skeleton first, then keep it moving.
+Assign every semantic container—Header, Nav, Search, Hero, Card, Section, Toolbar, Button, or CTA—from \`I\`/\`K\`, then add its visible children through that binding. Never leave it empty or place its intended children as siblings. Use literal hex colors in nodes; no aliases. Finish each product card's media (or omit), name, and price before the next card. Desktop commerce Header: role navbar; Nav role nav-links; each 44px role nav-link is a frame containing text, never a text node; Header actions role toolbar with 44x44 role icon-button frames. On mobile, only full-width chrome/full-bleed sections attach directly to root; put bare text/icons/small controls and every section title inside a bound 24px-gutter rail.
 
-The live canvas is not model vision. Always generate draft and post-final PNG user previews. When image input is supported, check their hierarchy, clipping, spacing, typography, controls, icons, contrast, image treatment, and legibility; otherwise follow the non-retry rule above.
+Every Button/CTA is role button and at least 44px; insert its visible child through its binding, never as a sibling. Minimum icon: \`{type:'icon_font',name:'Search icon',iconFontName:'search',width:20,height:20}\`. \`name\` is the layer label; \`iconFontName\` is the glyph from begin's \`buildContract.node.icon\`; otherwise compose shapes.
+
+Begin selects the concrete style guide without another context call. Default: one image outside commerce. Commerce uses OpenPencil's bundled ecommerce-modern-light direction: white base, warm-tinted sections, 1120px centered content, 56px Hero display, and orange limited to CTA/active/price. Visible copy follows the user's language; a Chinese request means Chinese copy except an optional short ASCII brand. CTA is role button 160x48 using #C2410C/#FFF. Desktop commerce uses exactly three equal-width product cards from one coherent collection, gap 24, no unused tail; a mobile product rail uses at most 2 fill_container cards or equal numeric-width cards in an explicit clipped scroller. Generic home uses the validated gray armchair / Artemide Tolomeo lamp / potted plant queries, each within four words; that trio is only for generic home — any other vertical queries the exact product each card names.
+
+Batch 2 ends with the required Footer as the last root region: role footer, fill_container/fit_content, vertical gap 24, padding [48,160] desktop / [40,24] mobile, fill #1C1917, holding brand text #FFFFFF, a role nav-links row of >=3 minWidth-44 height-44 role nav-link frames (14px #D6D3D1), and a 13px #A8A29E copyright line — never call finish before the Footer exists.
+
+Desktop Hero: optional warm wrapper; the full-width Hero holds copy 512 + gap 64 + image 448 inside horizontal padding 160; headline/subtitle use \`width:"fill_container"\`. Generic commerce uses the direct leaf \`I(hero,{type:"image",name:"Hero product image",width:448,height:360,imageSearchQuery:"gray loveseat isolated photo"})\`; never wrap it, use \`image:{...}\`, mix shapes, or reuse that query in a product card. Use a 4–6 layer \`layout:"none"\` ellipse/path composition only when the user explicitly requests illustration/no photos. \`x/y\` remain forbidden in horizontal/vertical flow. Never use plain stacked rounded rectangles or a lone small icon in large fixed media. Each Hero/Product/Art/Media frame has one primary visual: a \`type:"image"\` leaf with a concrete English \`imageSearchQuery\`, or substantial composed shapes, never both. The host enriches committed commerce images before each live preview and retains one canonical post-final fallback.
+
+## Begin Contract Is Authoritative
+
+Treat begin's \`buildContract\` as the complete source of node, style, script, and layout rules. Ordinary generation never calls context, inspect, render, read-image, or abort tools.
+
+Every generated text node explicitly uses \`fontFamily: "Inter, system-ui, sans-serif"\`, with \`fontSize: 16\` and \`lineHeight: 1.5\` as the ordinary defaults. Desktop keeps its bundled Inter; the web host deliberately does not bundle Inter and therefore uses the generic fallback without a missing-font prompt. Never use bare \`Inter\`. A CJK \`lineHeight < 1.3\` is raised to \`1.5\`. Override size and line height only for headings or special typography.
+
+When no logo asset is supplied, use a text-only brand. Do not invent a letter badge or give a text node a background, fixed height, or effects.
 
 ## Publication Gate
 
-\`openpencil_pipeline_finish\` owns native finalize, lint, layout, freshness, and atomic publication. Its gate is intentionally two-phase: finalize, always generate a new user screenshot, then finish again; visually inspect only when supported. Any mutation invalidates that proof. Intentional \`emptyShells\` hints such as spacers/dividers remain observational and do not alone block publication; every other native diagnostic still blocks.
+Call finish exactly once after the second generation batch. A result with \`published:true\` is terminal success: return it and stop. A finish result with \`canContinue:true\` continues by doing exactly what its \`next\` field says: \`stage:"needs_preview"\` and \`stage:"needs_refinalization"\` each mean calling finish exactly once more with nothing in between. A repair round additionally requires all of the following at once:
 
-\`openpencil_new\` remains a compatibility path only when the user explicitly asks for a simple one-shot draft. Ordinary generated designs use the live pipeline above.
+- \`stage:"needs_correction"\`
+- \`canContinue:true\`
+- a complete, non-empty \`repairTargets\` array with \`checks.dsh.repairTargetSummary.omitted === 0\`
+- every target has \`operation:"U"\`, an exact non-empty \`nodeId\`, and a non-empty \`patch\`
+
+Apply every returned target together in exactly one additional bounded script using only \`U(target.nodeId, target.patch)\`, then call finish exactly once more. Do not narrate between the repair batch and finish. The host bounds repair rounds at two: repair again only when the new finish result itself presents another complete repairTargets array. If any condition is absent, if that batch throws or returns \`canContinue:false\`, or if the final finish is not \`published:true\`, stop and report the returned state once. Never guess a patch or node id; never retry, inspect, context-read, render, read an image, abort, or rebuild.
+
+The successful finish already owns deterministic finalization, native and DSH quality gates, exact PNG generation, atomic \`createIfAbsent\` publication, and live-editor presentation. Do not add a visual self-review loop.
 `
 }
 
@@ -109,23 +127,47 @@ export function createDshDesignSkill(upstreamMarkdown) {
 
   for (const required of [
     'openpencil_pipeline_begin',
-    'openpencil_pipeline_context',
     'openpencil_pipeline_batch',
-    'openpencil_pipeline_inspect',
     'openpencil_pipeline_finish',
-    'openpencil_pipeline_abort',
-    'read_image',
     'createIfAbsent',
-    'openpencil_new',
-    'sandboxed QuickJS',
-    'I(null, node)',
-    'K(kitId, parent, overrides)',
-    'compact authoritative run contract',
+    'Strict Default Transaction',
+    'first `openpencil_pipeline_batch`',
+    'second `openpencil_pipeline_batch`',
+    'canContinue:false',
+    'without narration',
     'buildContract',
     'web/desktop',
-    '2–4 substantial batches',
+    'exact multiline wrapper',
+    'fixed tool argument object',
+    'iconFontName',
+    'fresh scope',
+    'App Content',
+    'exact nodeId returned by batch 1',
+    'every semantic container',
+    'Desktop commerce Header',
+    '24px-gutter rail',
+    'one image outside commerce',
+    'exactly three equal-width product cards',
+    'ecommerce-modern-light',
+    '1120px centered content',
+    'gray loveseat isolated photo',
+    'required Footer as the last root region',
+    'role footer',
+    'never call finish before the Footer exists',
+    'one primary visual',
+    'never both',
+    'imageSearchQuery',
+    'return only `r`',
+    'fontFamily',
+    'Inter, system-ui, sans-serif',
+    'stage:"needs_correction"',
+    'repairTargets',
+    'checks.dsh.repairTargetSummary.omitted === 0',
+    'operation:"U"',
+    'published:true',
+    'text-only brand',
     'live canvas',
-    'post-final',
+    'visual self-review loop',
   ]) requireSentinel(output, required, 'generated DSH skill')
 
   const banned = [
@@ -134,7 +176,7 @@ export function createDshDesignSkill(upstreamMarkdown) {
     /--post-process/i,
     /Quick Reference.*CLI/i,
     /set_variables|set_themes/i,
-    /Noto Sans|PingFang|YaHei|system-ui/i,
+    /Noto Sans|PingFang|YaHei/i,
   ]
   for (const pattern of banned) {
     if (pattern.test(output)) fail(`generated DSH skill retained banned upstream workflow ${pattern}`)

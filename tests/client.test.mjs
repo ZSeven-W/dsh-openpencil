@@ -48,6 +48,14 @@ function canonicalRenderResult(documentSha256 = DOCUMENT_SHA256, extraContent = 
   }
 }
 
+function canonicalTextResult(text) {
+  return {
+    kind: 'tool-result',
+    isError: false,
+    content: [{ type: 'text', text }],
+  }
+}
+
 function hydratedEnvelope() {
   return {
     $dshOpenPencil: {
@@ -371,6 +379,50 @@ test('extracts only a valid document fingerprint from one canonical text result'
   assert.equal(client.documentSha256FromCanonicalResult(screenshotBlock), SCREENSHOT_SHA256)
 })
 
+test('accepts only an identical two-object run_code echo around a canonical fingerprint', () => {
+  const first = JSON.stringify({
+    path: '/private/render.png',
+    document: { path: '/private/snapshot.op', sha256: DOCUMENT_SHA256 },
+  })
+  const sameStructureDifferentKeyOrder = JSON.stringify({
+    document: { sha256: DOCUMENT_SHA256, path: '/private/snapshot.op' },
+    path: '/private/render.png',
+  }, null, 2)
+  const duplicate = canonicalTextResult(` \n${first}\n\t${sameStructureDifferentKeyOrder}\r `)
+  assert.equal(client.documentSha256FromCanonicalResult(duplicate), DOCUMENT_SHA256)
+  assert.deepEqual(client.presentationHydrationRequestOf({
+    block: duplicate,
+    toolName: 'openpencil_render',
+    sessionId: 'session-duplicate-echo',
+    callId: 'call-duplicate-echo',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-duplicate-echo',
+    callId: 'call-duplicate-echo',
+    documentSha256: DOCUMENT_SHA256,
+  })
+
+  const sameFingerprintDifferentObject = JSON.stringify({
+    path: '/private/other.png',
+    document: { path: '/private/snapshot.op', sha256: DOCUMENT_SHA256 },
+  })
+  const differentFingerprint = JSON.stringify({
+    path: '/private/render.png',
+    document: { path: '/private/snapshot.op', sha256: SCREENSHOT_SHA256 },
+  })
+  for (const rejected of [
+    `${first}${first}`,
+    `logged result: ${first}`,
+    `${first}\nreturned result`,
+    `${first}\n${sameFingerprintDifferentObject}`,
+    `${first}\n${differentFingerprint}`,
+    `${first}\n${first}\n${first}`,
+    `${first}\n{`,
+  ]) {
+    assert.equal(client.documentSha256FromCanonicalResult(canonicalTextResult(rejected)), undefined)
+  }
+})
+
 test('hydrates a nested render grant with an exact same-origin fingerprint request', async () => {
   const calls = []
   const fetcher = async (input, init) => {
@@ -686,6 +738,39 @@ test('only canonical OpenPencil presentation tools can request hydration', () =>
     documentSha256: SCREENSHOT_SHA256,
   })
   assert.deepEqual(client.presentationHydrationRequestOf({
+    block: screenshotBlock,
+    toolName: 'openpencil_pipeline_batch',
+    sessionId: 'session-pipeline-batch',
+    callId: 'call-pipeline-batch',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-pipeline-batch',
+    callId: 'call-pipeline-batch',
+    documentSha256: SCREENSHOT_SHA256,
+  })
+  assert.equal(client.presentationHydrationRequestOf({
+    block: {
+      kind: 'tool-result',
+      isError: false,
+      content: [{ type: 'text', text: JSON.stringify({ previewUnavailable: true }) }],
+    },
+    toolName: 'openpencil_pipeline_batch',
+    sessionId: 'session-pipeline-batch',
+    callId: 'call-pipeline-batch-no-artifact',
+    embeddedGrant: undefined,
+  }), undefined)
+  assert.deepEqual(client.presentationHydrationRequestOf({
+    block: screenshotBlock,
+    toolName: 'openpencil_pipeline_finish',
+    sessionId: 'session-pipeline-finish-pending',
+    callId: 'call-pipeline-finish-pending',
+    embeddedGrant: undefined,
+  }), {
+    sessionId: 'session-pipeline-finish-pending',
+    callId: 'call-pipeline-finish-pending',
+    documentSha256: SCREENSHOT_SHA256,
+  })
+  assert.deepEqual(client.presentationHydrationRequestOf({
     block,
     toolName: 'openpencil_new',
     sessionId: 'session-new',
@@ -849,14 +934,55 @@ test('gallery and render-card copy follow the resolved DSH locale', () => {
   assert.equal(zhCard.editInSidebar, '在侧边栏编辑')
   assert.equal(zhCard.downloadPng, '下载 PNG')
   assert.equal(zhCard.recoveringPreview, '正在恢复 OpenPencil 预览…')
-  assert.equal(zhCard.noPreview, '当前宿主没有可用的预览通道。')
+  assert.equal(zhCard.pendingPreview, '当前流水线阶段正在等待最终预览。')
+  assert.equal(zhCard.noPreview, '此结果未包含可显示的预览产物。')
 
   const enCard = client.designRenderCopy('en')
   assert.equal(enCard.designRender, 'OpenPencil render')
   assert.equal(enCard.openInteractiveCanvas, 'Open interactive canvas')
   assert.equal(enCard.editCanvas, 'Edit canvas')
   assert.equal(enCard.recoveringPreview, 'Recovering the OpenPencil preview…')
-  assert.equal(enCard.noPreview, 'No preview channel available in this host.')
+  assert.equal(enCard.pendingPreview, 'This pipeline stage is waiting for its final preview.')
+  assert.equal(enCard.noPreview, 'This result does not include a preview artifact.')
+})
+
+test('pending pipeline finish states are labelled as waiting for preview', () => {
+  const pending = JSON.stringify({
+    published: false,
+    stage: 'needs_preview',
+  })
+  assert.equal(client.pipelineResultAwaitsPreview('openpencil_pipeline_finish', pending), true)
+  assert.equal(client.pipelineResultAwaitsPreview('openpencil_pipeline_finish', `${pending}\n${pending}`), true)
+  assert.equal(client.pipelineResultAwaitsPreview('openpencil_pipeline_finish', JSON.stringify({
+    published: true,
+  })), false)
+  assert.equal(client.pipelineResultAwaitsPreview('openpencil_render', JSON.stringify({
+    published: false,
+    stage: 'needs_preview',
+  })), false)
+  assert.equal(client.pipelineResultAwaitsPreview('openpencil_pipeline_finish', '{invalid'), false)
+  assert.equal(client.fallbackPresentationText(pending, true), null)
+  assert.equal(client.fallbackPresentationText(pending, false), pending)
+})
+
+test('hides only settled successful presentation cards with no displayable state', () => {
+  const emptySuccess = {
+    settled: true,
+    error: false,
+    hasGrant: false,
+    hydrationPending: false,
+    awaitingPreview: false,
+  }
+  assert.equal(client.shouldHidePresentationCard(emptySuccess), true)
+  assert.equal(client.shouldHidePresentationCard({ ...emptySuccess, settled: false }), false)
+  assert.equal(client.shouldHidePresentationCard({ ...emptySuccess, error: true }), false)
+  assert.equal(client.shouldHidePresentationCard({ ...emptySuccess, hasGrant: true }), false)
+  assert.equal(client.shouldHidePresentationCard({ ...emptySuccess, hydrationPending: true }), false)
+  assert.equal(
+    client.shouldHidePresentationCard({ ...emptySuccess, awaitingPreview: true }),
+    true,
+    'a settled preview-retry result without a displayable artifact must not render an empty card',
+  )
 })
 
 test('live OpenPencil selection is parsed, scoped by DSH session, and labelled bilingually', () => {
@@ -1256,6 +1382,7 @@ test('registers canonical OpenPencil publication/render views and client-only le
   assert.equal(client.OPENPENCIL_RENDER_TOOL_NAME, 'openpencil_render')
   assert.equal(client.OPENPENCIL_NEW_TOOL_NAME, 'openpencil_new')
   assert.equal(client.OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME, 'openpencil_pipeline_begin')
+  assert.equal(client.OPENPENCIL_PIPELINE_BATCH_TOOL_NAME, 'openpencil_pipeline_batch')
   assert.equal(client.OPENPENCIL_PIPELINE_FINISH_TOOL_NAME, 'openpencil_pipeline_finish')
   assert.equal(client.OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME, 'openpencil_pipeline_inspect')
   assert.equal(client.LEGACY_DESIGN_RENDER_TOOL_NAME, 'design_render')
@@ -1271,6 +1398,7 @@ test('registers canonical OpenPencil publication/render views and client-only le
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'tool.details.toolview', key: 'design_render' },
     { name: 'tool.call.toolview', key: 'openpencil_pipeline_inspect' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_batch' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
   assert.equal(registrations[2].component, registrations[0].component, 'new uses the existing auto-open call view')
@@ -1280,6 +1408,7 @@ test('registers canonical OpenPencil publication/render views and client-only le
   assert.equal(registrations[6].component, registrations[0].component, 'pipeline finish uses the auto-open call view')
   assert.equal(registrations[7].component, registrations[1].component, 'pipeline finish uses the editor details view')
   assert.equal(registrations[10].component, registrations[0].component, 'pipeline inspect reuses the PNG gallery call view')
+  assert.equal(registrations[11].component, registrations[0].component, 'pipeline batch reuses the PNG gallery call view')
 })
 
 test('stock rc.2 can leave the optional details slot undeclared', () => {
@@ -1312,6 +1441,7 @@ test('stock rc.2 can leave the optional details slot undeclared', () => {
     { name: 'tool.call.toolview', key: 'openpencil_pipeline_finish' },
     { name: 'tool.call.toolview', key: 'design_render' },
     { name: 'tool.call.toolview', key: 'openpencil_pipeline_inspect' },
+    { name: 'tool.call.toolview', key: 'openpencil_pipeline_batch' },
     { name: 'conversation.input.dock', id: 'openpencil-selection', order: 30 },
   ])
 })
@@ -1597,6 +1727,8 @@ test('editor panel chrome follows the resolved editor locale', () => {
 })
 
 test('fallback editor workbench chrome follows the resolved editor locale', () => {
+  assert.equal(client.OPENPENCIL_EDITOR_CLOSE_BUTTON_ATTRIBUTE, 'data-openpencil-editor-close')
+  assert.equal(client.EDITOR_WORKBENCH_CLOSE_BUTTON_MIN_WIDTH, 72)
   assert.deepEqual(client.editorModalCopy('zh-CN'), {
     title: 'OpenPencil 编辑器',
     close: '关闭',

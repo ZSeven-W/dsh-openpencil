@@ -2,6 +2,7 @@
 
 import {
   OPENPENCIL_NEW_TOOL_NAME,
+  OPENPENCIL_PIPELINE_BATCH_TOOL_NAME,
   OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME,
   OPENPENCIL_PIPELINE_FINISH_TOOL_NAME,
   OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME,
@@ -50,6 +51,11 @@ export interface PresentationHydrationRetryOptions extends PresentationHydration
 
 type PresentationMetaParser<Grant> = (meta: unknown) => Grant | undefined
 
+interface ParsedJsonObject {
+  end: number
+  value: Record<string, unknown>
+}
+
 interface PendingEnvelope {
   promise: Promise<unknown>
   subscribers: number
@@ -66,6 +72,96 @@ const defaultRetryTimer: PresentationHydrationRetryTimer = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isJsonWhitespace(value: string): boolean {
+  return value === ' ' || value === '\t' || value === '\n' || value === '\r'
+}
+
+function skipJsonWhitespace(text: string, start: number): number {
+  let index = start
+  while (index < text.length && isJsonWhitespace(text[index] ?? '')) index += 1
+  return index
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  const pending: Array<[unknown, unknown]> = [[left, right]]
+  while (pending.length > 0) {
+    const [currentLeft, currentRight] = pending.pop() ?? []
+    if (Object.is(currentLeft, currentRight)) continue
+    if (typeof currentLeft !== 'object' || currentLeft === null
+      || typeof currentRight !== 'object' || currentRight === null) return false
+    const leftArray = Array.isArray(currentLeft)
+    if (leftArray !== Array.isArray(currentRight)) return false
+    if (leftArray) {
+      const leftItems = currentLeft as unknown[]
+      const rightItems = currentRight as unknown[]
+      if (leftItems.length !== rightItems.length) return false
+      for (let index = 0; index < leftItems.length; index += 1) {
+        pending.push([leftItems[index], rightItems[index]])
+      }
+      continue
+    }
+    const leftRecord = currentLeft as Record<string, unknown>
+    const rightRecord = currentRight as Record<string, unknown>
+    const leftKeys = Object.keys(leftRecord).sort()
+    const rightKeys = Object.keys(rightRecord).sort()
+    if (leftKeys.length !== rightKeys.length) return false
+    for (let index = 0; index < leftKeys.length; index += 1) {
+      const key = leftKeys[index]
+      if (key !== rightKeys[index]) return false
+      pending.push([leftRecord[key], rightRecord[key]])
+    }
+  }
+  return true
+}
+
+function parseJsonObjectAt(text: string, start: number): ParsedJsonObject | undefined {
+  if (text[start] !== '{') return undefined
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+    if (character === '"') {
+      inString = true
+      continue
+    }
+    if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth < 0) return undefined
+      if (depth === 0) {
+        const end = index + 1
+        try {
+          const value = JSON.parse(text.slice(start, end)) as unknown
+          return isRecord(value) ? { end, value } : undefined
+        } catch {
+          return undefined
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+export function canonicalResultObjectFromText(text: string): Record<string, unknown> | undefined {
+  if (text.length > MAX_CANONICAL_RESULT_CHARS) return undefined
+  const firstStart = skipJsonWhitespace(text, 0)
+  const first = parseJsonObjectAt(text, firstStart)
+  if (first === undefined) return undefined
+  const secondStart = skipJsonWhitespace(text, first.end)
+  if (secondStart === text.length) return first.value
+  if (secondStart === first.end) return undefined
+  const second = parseJsonObjectAt(text, secondStart)
+  if (second === undefined || skipJsonWhitespace(text, second.end) !== text.length) return undefined
+  return jsonValuesEqual(first.value, second.value) ? first.value : undefined
 }
 
 function isRequest(value: PresentationHydrationRequest): boolean {
@@ -132,6 +228,8 @@ function pendingEnvelope(
 
 /**
  * Read only one immutable artifact fingerprint from a canonical text result.
+ * Nested run_code may echo the same JSON object once through console.log and
+ * once as its return value; tolerate exactly that duplicate and nothing else.
  * Document tools use document.sha256; a stage preview uses screenshot.sha256.
  * Paths, image data, and every other model-visible result field are ignored.
  */
@@ -141,14 +239,8 @@ export function documentSha256FromCanonicalResult(block: unknown): string | unde
   }
   const content = block.content[0]
   if (!isRecord(content) || content.type !== 'text' || typeof content.text !== 'string') return undefined
-  if (content.text.length > MAX_CANONICAL_RESULT_CHARS) return undefined
-  let result: unknown
-  try {
-    result = JSON.parse(content.text)
-  } catch {
-    return undefined
-  }
-  if (!isRecord(result)) return undefined
+  const result = canonicalResultObjectFromText(content.text)
+  if (result === undefined) return undefined
   const fingerprint = isRecord(result.document)
     ? result.document.sha256
     : isRecord(result.screenshot)
@@ -169,6 +261,7 @@ export function presentationHydrationRequestOf(
       candidate.toolName !== OPENPENCIL_RENDER_TOOL_NAME
       && candidate.toolName !== OPENPENCIL_NEW_TOOL_NAME
       && candidate.toolName !== OPENPENCIL_PIPELINE_BEGIN_TOOL_NAME
+      && candidate.toolName !== OPENPENCIL_PIPELINE_BATCH_TOOL_NAME
       && candidate.toolName !== OPENPENCIL_PIPELINE_INSPECT_TOOL_NAME
       && candidate.toolName !== OPENPENCIL_PIPELINE_FINISH_TOOL_NAME
     )

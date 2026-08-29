@@ -79,7 +79,7 @@ export function createDesignRenderTool(
     description: 'Render an existing OpenPencil .op design document exactly as the design canvas, '
       + 'then show a PNG and an optional interactive read-only canvas in the conversation. '
       + 'Give the absolute path to a .op file (or a path relative to the session workspace). '
-      + 'For a new design when no .op file exists, call openpencil_new instead; it runs the QuickJS script-first build plus OpenPencil post-processing/finalization, creates the file, and opens the editable sidebar in the same call, so do not render it afterward unless the user explicitly requests a PNG preview. '
+      + 'For an ordinary new design when no .op file exists, call openpencil_pipeline_begin and follow its two live-preview JS batches plus deterministic finish contract. Use openpencil_new only when the user explicitly requests its simple one-shot compatibility path. Render is for an existing .op document or an explicit user request for a PNG, not a model completion gate. '
       + 'The image appears directly in the chat; the file path is returned for further use. '
       + 'Set editable=true when the user asks to edit an existing design, and set autoOpen=true only when this render result should open its editor immediately. '
       + 'When rendering a design generated in the current turn, editable=true is mandatory so its production preview always retains the Edit canvas/sidebar action; use autoOpen=true unless the user asked to keep the editor closed. '

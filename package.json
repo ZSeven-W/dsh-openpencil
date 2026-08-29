@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/dsh-openpencil",
-  "version": "0.1.0-rc.7",
+  "version": "0.1.0-rc.8",
   "description": "Preview, inspect, and edit real .op OpenPencil design documents inside DSH conversations — headless rendering, a read-only canvas, and a managed editor.",
   "license": "MIT",
   "keywords": [
@@ -46,8 +46,9 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node scripts/build-design-skill.mjs && node scripts/run-tool.mjs tsc -p tsconfig.json && pnpm run build:client",
+    "build": "node scripts/build-design-skill.mjs && node scripts/build-icon-catalog.mjs && node scripts/run-tool.mjs tsc -p tsconfig.json && pnpm run build:client",
     "build:design-skill": "node scripts/build-design-skill.mjs",
+    "build:icon-catalog": "node scripts/build-icon-catalog.mjs",
     "build:client": "node scripts/run-tool.mjs tsc -p tsconfig.client.json && node scripts/run-tool.mjs tsdown src/client/index.tsx --format cjs --platform browser --target es2022 --tsconfig tsconfig.client.json --deps.never-bundle react --deps.never-bundle react/jsx-runtime --deps.never-bundle react-dom --deps.never-bundle react-dom/client --out-dir .client-build --clean --sourcemap --logLevel warn && node scripts/build-client.mjs",
     "sync:viewer-assets": "node scripts/sync-viewer-assets.mjs",
     "test:viewer-assets": "node scripts/test-viewer-assets.mjs",
@@ -107,12 +108,12 @@
     "react-dom": "^18.2.0"
   },
   "optionalDependencies": {
-    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.7",
-    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.7",
-    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.7",
-    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.7",
-    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.7",
-    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.7"
+    "@zseven-w/dsh-openpencil-darwin-arm64": "0.1.0-rc.8",
+    "@zseven-w/dsh-openpencil-darwin-x64": "0.1.0-rc.8",
+    "@zseven-w/dsh-openpencil-linux-arm64": "0.1.0-rc.8",
+    "@zseven-w/dsh-openpencil-linux-x64": "0.1.0-rc.8",
+    "@zseven-w/dsh-openpencil-win32-arm64": "0.1.0-rc.8",
+    "@zseven-w/dsh-openpencil-win32-x64": "0.1.0-rc.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
