@@ -2311,7 +2311,7 @@ function inspectSemantics(
         'touch-target',
         path,
         type,
-        `${nodeId === undefined ? '' : `node ${nodeId} `}authored interactive role is missing a 44px minimum on ${missingAxes.join(' and ')}.`,
+        `${nodeId === undefined ? '' : `node ${nodeId} `}authored interactive role is missing a 44px minimum on ${missingAxes.join(' and ')}. Set minWidth/minHeight (keep fit_content sizing) rather than a fixed 44px width/height: a fixed 44 cannot hold horizontal padding plus a text child and will fail the container-flow check terminally.`,
         MAX_RULE_ISSUES,
         true,
       )
