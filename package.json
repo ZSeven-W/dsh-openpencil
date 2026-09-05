@@ -55,7 +55,7 @@
     "sync:viewer-assets": "node scripts/sync-viewer-assets.mjs",
     "test:viewer-assets": "node scripts/test-viewer-assets.mjs",
     "test:client": "pnpm run build:client && node --test tests/client.test.mjs",
-    "test:host-api": "pnpm run build && node --test tests/host-service.test.mjs tests/design-draft-tools.test.mjs tests/design-skill.test.mjs tests/design-quality.test.mjs tests/new-tool.test.mjs tests/presentation-hydration.test.mjs tests/editor-draft-lifecycle.test.mjs tests/editor-host-lifecycle.test.mjs tests/editor-runtime.test.mjs tests/collab-bootstrap-config.test.mjs tests/run-tool.test.mjs",
+    "test:host-api": "pnpm run build && node --test tests/host-service.test.mjs tests/design-draft-tools.test.mjs tests/design-skill.test.mjs tests/design-quality.test.mjs tests/new-tool.test.mjs tests/presentation-hydration.test.mjs tests/editor-draft-lifecycle.test.mjs tests/editor-host-lifecycle.test.mjs tests/editor-runtime.test.mjs tests/collab-bootstrap-config.test.mjs tests/run-tool.test.mjs tests/pattern-audit-regressions.test.mjs",
     "test:design-skill": "pnpm run build && node --test tests/design-skill.test.mjs",
     "test:design-quality": "pnpm run build && node --test tests/design-quality.test.mjs tests/new-tool.test.mjs",
     "test:mcp": "pnpm run build && node --test tests/mcp-client.test.mjs",
