@@ -301,20 +301,20 @@ test('accepts complete canonical and legacy overrides, but rejects mixed layouts
   try {
     await stageRuntime(runtimeRoot)
     const env = {
-      DSH_OPENPENCIL_EDITOR_BINARY: join(runtimeRoot, 'bin', PLATFORM.binaryName),
-      DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(runtimeRoot, 'bin', 'web-bundle'),
-      DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'bin', 'web-bundle', 'canvaskit'),
+      DSHPLUGIN_OPENPENCIL_EDITOR_BINARY: join(runtimeRoot, 'bin', PLATFORM.binaryName),
+      DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(runtimeRoot, 'bin', 'web-bundle'),
+      DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'bin', 'web-bundle', 'canvaskit'),
     }
     const runtime = resolveEditorRuntime(resolutionOptions(root, {
       env,
       resolvePackageJson() { throw new Error('override must win') },
     }))
     assert.equal(runtime.source, 'override')
-    assert.equal(runtime.binary, env.DSH_OPENPENCIL_EDITOR_BINARY)
+    assert.equal(runtime.binary, env.DSHPLUGIN_OPENPENCIL_EDITOR_BINARY)
 
     assert.throws(
       () => resolveEditorRuntime(resolutionOptions(root, {
-        env: { DSH_OPENPENCIL_EDITOR_BINARY: env.DSH_OPENPENCIL_EDITOR_BINARY },
+        env: { DSHPLUGIN_OPENPENCIL_EDITOR_BINARY: env.DSHPLUGIN_OPENPENCIL_EDITOR_BINARY },
       })),
       error => error instanceof EditorRuntimeUnavailableError && error.code === 'partial-override',
     )
@@ -322,22 +322,22 @@ test('accepts complete canonical and legacy overrides, but rejects mixed layouts
     const legacyRoot = join(root, 'legacy-runtime')
     await stageRuntime(legacyRoot, { layout: 'legacy' })
     const legacyEnv = {
-      DSH_OPENPENCIL_EDITOR_BINARY: join(legacyRoot, 'bin', PLATFORM.binaryName),
-      DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(legacyRoot, 'web', 'pkg'),
-      DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(legacyRoot, 'web', 'canvaskit'),
+      DSHPLUGIN_OPENPENCIL_EDITOR_BINARY: join(legacyRoot, 'bin', PLATFORM.binaryName),
+      DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR: join(legacyRoot, 'web', 'pkg'),
+      DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(legacyRoot, 'web', 'canvaskit'),
     }
     const legacyRuntime = resolveEditorRuntime(resolutionOptions(root, {
       env: legacyEnv,
       resolvePackageJson() { throw new Error('override must win') },
     }))
-    assert.equal(legacyRuntime.webBundleDir, legacyEnv.DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR)
-    assert.equal(legacyRuntime.canvasKitDir, legacyEnv.DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR)
+    assert.equal(legacyRuntime.webBundleDir, legacyEnv.DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR)
+    assert.equal(legacyRuntime.canvasKitDir, legacyEnv.DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR)
 
     assert.throws(
       () => resolveEditorRuntime(resolutionOptions(root, {
         env: {
           ...env,
-          DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'web', 'canvaskit'),
+          DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR: join(runtimeRoot, 'web', 'canvaskit'),
         },
       })),
       error => error instanceof EditorRuntimeUnavailableError && error.code === 'invalid-override',
@@ -440,7 +440,7 @@ test('optional resolution returns undefined only for an absent or unsupported ru
     assert.throws(
       () => tryResolveEditorRuntime({
         ...options,
-        env: { DSH_OPENPENCIL_EDITOR_BINARY: '/tmp/partial' },
+        env: { DSHPLUGIN_OPENPENCIL_EDITOR_BINARY: '/tmp/partial' },
       }),
       error => error instanceof EditorRuntimeUnavailableError && error.code === 'partial-override',
     )
