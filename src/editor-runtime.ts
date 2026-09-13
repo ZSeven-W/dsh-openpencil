@@ -9,13 +9,22 @@ import { chmodSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pluginEnv, pluginEnvName } from './plugin-env.js'
 
 export const EDITOR_RUNTIME_SCHEMA_VERSION = 1
 
+/** Suffixes of the three editor-runtime overrides — see plugin-env.ts. */
+export const EDITOR_RUNTIME_ENV_SUFFIX = Object.freeze({
+  binary: 'OPENPENCIL_EDITOR_BINARY',
+  webBundleDir: 'OPENPENCIL_EDITOR_WEB_BUNDLE_DIR',
+  canvasKitDir: 'OPENPENCIL_EDITOR_CANVASKIT_DIR',
+})
+
+/** Current names of those overrides; the legacy DSH_ names are still read. */
 export const EDITOR_RUNTIME_ENV = Object.freeze({
-  binary: 'DSH_OPENPENCIL_EDITOR_BINARY',
-  webBundleDir: 'DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR',
-  canvasKitDir: 'DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR',
+  binary: pluginEnvName(EDITOR_RUNTIME_ENV_SUFFIX.binary),
+  webBundleDir: pluginEnvName(EDITOR_RUNTIME_ENV_SUFFIX.webBundleDir),
+  canvasKitDir: pluginEnvName(EDITOR_RUNTIME_ENV_SUFFIX.canvasKitDir),
 })
 
 export type EditorRuntimeSource = 'override' | 'optional-package' | 'development-package'
@@ -512,9 +521,9 @@ function overridePaths(
   env: Readonly<Record<string, string | undefined>>,
 ): { binary: string; webBundleDir: string; canvasKitDir: string } | undefined {
   const values = {
-    binary: env[EDITOR_RUNTIME_ENV.binary]?.trim(),
-    webBundleDir: env[EDITOR_RUNTIME_ENV.webBundleDir]?.trim(),
-    canvasKitDir: env[EDITOR_RUNTIME_ENV.canvasKitDir]?.trim(),
+    binary: pluginEnv(EDITOR_RUNTIME_ENV_SUFFIX.binary, { env })?.trim(),
+    webBundleDir: pluginEnv(EDITOR_RUNTIME_ENV_SUFFIX.webBundleDir, { env })?.trim(),
+    canvasKitDir: pluginEnv(EDITOR_RUNTIME_ENV_SUFFIX.canvasKitDir, { env })?.trim(),
   }
   const present = Object.entries(values).filter(([, value]) => value !== undefined && value.length > 0)
   if (present.length === 0) return undefined

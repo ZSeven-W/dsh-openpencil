@@ -175,7 +175,7 @@ DSH bir istemci eklentisi için yalnızca `client.js` sunar; bu nedenle OpenPenc
 pnpm run sync:viewer-assets
 ```
 
-Senkronizasyon komutu kardeş bir `../openpencil` çalışma kopyasını tercih eder (yerel geliştirme), gerekirse depoya gömülü `vendor/openpencil` alt modülüne geri döner (CI ve yeni klonlar). `OPENPENCIL_ROOT` veya `--openpencil-root` ile geçersiz kılabilirsiniz. Eksiksiz, önceden derlenmiş bir varlık dizini `DSH_OPENPENCIL_VIEWER_SOURCE` ile seçilebilir. Çalışma zamanı araması `DSH_OPENPENCIL_VIEWER_ASSET_DIR` ile geçersiz kılınabilir.
+Senkronizasyon komutu kardeş bir `../openpencil` çalışma kopyasını tercih eder (yerel geliştirme), gerekirse depoya gömülü `vendor/openpencil` alt modülüne geri döner (CI ve yeni klonlar). `OPENPENCIL_ROOT` veya `--openpencil-root` ile geçersiz kılabilirsiniz. Eksiksiz, önceden derlenmiş bir varlık dizini `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` ile seçilebilir. Çalışma zamanı araması `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR` ile geçersiz kılınabilir.
 
 Görüntüleyici varlıkları yalnızca kullanıcı tuvale açtıktan sonra tembel olarak yüklenir. Yoksa veya geçersizse PNG önizlemesi kullanılabilir kalır ve hiçbir tuval düğmesi tanıtılmaz.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Açık çalışma zamanı geçersiz kılmaları yalnızca eksiksiz ve birbiriyle eşleşen bir küme olarak kabul edilir:
 
-- `op-host-web-server` için `DSH_OPENPENCIL_EDITOR_BINARY`;
-- derlenmiş düzenleyici web paketi için `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`;
-- CanvasKit varlıkları için `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR`.
+- `op-host-web-server` için `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY`;
+- derlenmiş düzenleyici web paketi için `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`;
+- CanvasKit varlıkları için `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR`.
 
 Kümenin yalnızca bir bölümünü sağlamak geçersiz bir yapılandırmadır; eklenti özel yolları paketlenmiş çalışma zamanı varlıklarıyla birleştirmez.
 

@@ -175,7 +175,7 @@ DSH обслуживает только `client.js` для клиентског�
 pnpm run sync:viewer-assets
 ```
 
-Команда синхронизации предпочитает соседний чекаут `../openpencil` (локальная разработка) и переключается на вендорный субмодуль `vendor/openpencil` (CI и свежие клоны). Переопределите его с помощью `OPENPENCIL_ROOT` или `--openpencil-root`. Полный каталог предсобранных ассетов можно выбрать с помощью `DSH_OPENPENCIL_VIEWER_SOURCE`. Поиск во время выполнения можно переопределить с помощью `DSH_OPENPENCIL_VIEWER_ASSET_DIR`.
+Команда синхронизации предпочитает соседний чекаут `../openpencil` (локальная разработка) и переключается на вендорный субмодуль `vendor/openpencil` (CI и свежие клоны). Переопределите его с помощью `OPENPENCIL_ROOT` или `--openpencil-root`. Полный каталог предсобранных ассетов можно выбрать с помощью `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`. Поиск во время выполнения можно переопределить с помощью `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`.
 
 Ассеты просмотрщика загружаются лениво только после того, как пользователь откроет холст. Если они отсутствуют или невалидны, превью PNG остаётся доступным, а кнопка холста не предлагается.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Явные переопределения runtime принимаются только как полный согласованный набор:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` для `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` для собранного веб-бандла редактора;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` для ассетов CanvasKit.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` для `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` для собранного веб-бандла редактора;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` для ассетов CanvasKit.
 
 Указание только части набора является недопустимой конфигурацией; плагин не смешивает пользовательские пути с упакованными ассетами runtime.
 

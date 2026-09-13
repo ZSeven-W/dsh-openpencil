@@ -175,7 +175,7 @@ DSH はクライアントプラグインに `client.js` のみを配信するた
 pnpm run sync:viewer-assets
 ```
 
-同期コマンドは、隣接する `../openpencil` チェックアウト（ローカル開発）を優先し、ベンダリングされた `vendor/openpencil` サブモジュール（CI と新規クローン）にフォールバックします。`OPENPENCIL_ROOT` または `--openpencil-root` で上書きできます。ビルド済みの完全なアセットディレクトリは `DSH_OPENPENCIL_VIEWER_SOURCE` で選択できます。ランタイムの参照先は `DSH_OPENPENCIL_VIEWER_ASSET_DIR` で上書きできます。
+同期コマンドは、隣接する `../openpencil` チェックアウト（ローカル開発）を優先し、ベンダリングされた `vendor/openpencil` サブモジュール（CI と新規クローン）にフォールバックします。`OPENPENCIL_ROOT` または `--openpencil-root` で上書きできます。ビルド済みの完全なアセットディレクトリは `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` で選択できます。ランタイムの参照先は `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR` で上書きできます。
 
 ビューアーアセットは、ユーザーがキャンバスを開いた後にのみ遅延ロードされます。それらが存在しないか無効な場合、PNG プレビューは引き続き利用可能で、キャンバスボタンは表示されません。
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 ランタイムを明示的に上書きする場合は、対応する次の3項目を完全な1セットとして指定する必要があります:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` — `op-host-web-server` 用;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` — ビルド済みのエディター Web バンドル用;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` — CanvasKit アセット用。
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` — `op-host-web-server` 用;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` — ビルド済みのエディター Web バンドル用;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` — CanvasKit アセット用。
 
 一部だけを指定した構成は無効です。プラグインがカスタムパスと同梱ランタイムのアセットを組み合わせることはありません。
 

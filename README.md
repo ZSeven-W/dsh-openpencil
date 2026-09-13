@@ -210,7 +210,7 @@ DSH serves only `client.js` for a client plugin, so the OpenPencil ESM SDK, its 
 pnpm run sync:viewer-assets
 ```
 
-The sync command prefers a sibling `../openpencil` checkout (local development), falling back to the vendored `vendor/openpencil` submodule (CI and fresh clones). Override it with `OPENPENCIL_ROOT` or `--openpencil-root`. A complete prebuilt asset directory can be selected with `DSH_OPENPENCIL_VIEWER_SOURCE`. Runtime lookup can be overridden with `DSH_OPENPENCIL_VIEWER_ASSET_DIR`.
+The sync command prefers a sibling `../openpencil` checkout (local development), falling back to the vendored `vendor/openpencil` submodule (CI and fresh clones). Override it with `OPENPENCIL_ROOT` or `--openpencil-root`. A complete prebuilt asset directory can be selected with `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`. Runtime lookup can be overridden with `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`.
 
 Viewer assets are lazy-loaded only after the user opens the canvas. If they are absent or invalid, PNG preview remains available and no canvas button is advertised.
 
@@ -247,9 +247,9 @@ pnpm run stage:editor-runtime
 
 Explicit runtime overrides are accepted only as one complete, matching set:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` for `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` for the built editor web bundle;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` for the CanvasKit assets.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` for `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` for the built editor web bundle;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` for the CanvasKit assets.
 
 Providing only part of the set is invalid; the plugin does not combine custom paths with packaged runtime assets.
 

@@ -175,7 +175,7 @@ DSH ne sert que `client.js` pour un plugin client ; le SDK ESM d'OpenPencil, son
 pnpm run sync:viewer-assets
 ```
 
-La commande de synchronisation privilégie un dépôt voisin `../openpencil` (développement local), en recourant en dernier ressort au sous-module vendored `vendor/openpencil` (CI et nouveaux clones). Remplacez-la avec `OPENPENCIL_ROOT` ou `--openpencil-root`. Un répertoire de ressources précompilées complet peut être sélectionné avec `DSH_OPENPENCIL_VIEWER_SOURCE`. La recherche au runtime peut être remplacée avec `DSH_OPENPENCIL_VIEWER_ASSET_DIR`.
+La commande de synchronisation privilégie un dépôt voisin `../openpencil` (développement local), en recourant en dernier ressort au sous-module vendored `vendor/openpencil` (CI et nouveaux clones). Remplacez-la avec `OPENPENCIL_ROOT` ou `--openpencil-root`. Un répertoire de ressources précompilées complet peut être sélectionné avec `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`. La recherche au runtime peut être remplacée avec `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`.
 
 Les ressources de la visionneuse sont chargées paresseusement uniquement après que l'utilisateur a ouvert le canevas. Si elles sont absentes ou invalides, l'aperçu PNG reste disponible et aucun bouton de canevas n'est proposé.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Les remplacements explicites du runtime ne sont acceptés que sous la forme d'un ensemble complet et cohérent :
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` pour `op-host-web-server` ;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` pour le bundle web compilé de l'éditeur ;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` pour les ressources CanvasKit.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` pour `op-host-web-server` ;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` pour le bundle web compilé de l'éditeur ;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` pour les ressources CanvasKit.
 
 Ne fournir qu'une partie de cet ensemble constitue une configuration invalide ; le plugin ne mélange pas les chemins personnalisés avec les ressources du runtime fourni dans le paquet.
 

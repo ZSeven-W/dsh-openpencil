@@ -175,7 +175,7 @@ DSH solo sirve `client.js` para un plugin de cliente, por lo que el SDK ESM de O
 pnpm run sync:viewer-assets
 ```
 
-El comando de sincronización prefiere un checkout hermano `../openpencil` (desarrollo local), recurriendo al submódulo vendored `vendor/openpencil` (CI y clones nuevos). Puedes anularlo con `OPENPENCIL_ROOT` o `--openpencil-root`. Se puede seleccionar un directorio de recursos precompilado completo con `DSH_OPENPENCIL_VIEWER_SOURCE`. La búsqueda en tiempo de ejecución se puede anular con `DSH_OPENPENCIL_VIEWER_ASSET_DIR`.
+El comando de sincronización prefiere un checkout hermano `../openpencil` (desarrollo local), recurriendo al submódulo vendored `vendor/openpencil` (CI y clones nuevos). Puedes anularlo con `OPENPENCIL_ROOT` o `--openpencil-root`. Se puede seleccionar un directorio de recursos precompilado completo con `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`. La búsqueda en tiempo de ejecución se puede anular con `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`.
 
 Los recursos del visor se cargan de forma diferida solo después de que el usuario abre el lienzo. Si faltan o no son válidos, la vista previa PNG sigue disponible y no se anuncia ningún botón de lienzo.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Las anulaciones explícitas del runtime solo se aceptan como un conjunto completo y compatible:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` para `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` para el bundle web del editor ya compilado;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` para los recursos de CanvasKit.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` para `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` para el bundle web del editor ya compilado;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` para los recursos de CanvasKit.
 
 Proporcionar solo una parte del conjunto es una configuración no válida; el plugin no combina rutas personalizadas con los recursos del runtime empaquetado.
 

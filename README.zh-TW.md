@@ -175,7 +175,7 @@ DSH 僅為用戶端外掛程式提供 `client.js`，因此 OpenPencil ESM SDK、
 pnpm run sync:viewer-assets
 ```
 
-同步指令優先使用同層的 `../openpencil` checkout（本機開發），並在無法取得時退回使用 vendored 的 `vendor/openpencil` submodule（CI 與全新 clone）。可用 `OPENPENCIL_ROOT` 或 `--openpencil-root` 覆寫。完整的預先建置資源目錄可透過 `DSH_OPENPENCIL_VIEWER_SOURCE` 選取。執行期的查詢路徑則可用 `DSH_OPENPENCIL_VIEWER_ASSET_DIR` 覆寫。
+同步指令優先使用同層的 `../openpencil` checkout（本機開發），並在無法取得時退回使用 vendored 的 `vendor/openpencil` submodule（CI 與全新 clone）。可用 `OPENPENCIL_ROOT` 或 `--openpencil-root` 覆寫。完整的預先建置資源目錄可透過 `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` 選取。執行期的查詢路徑則可用 `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR` 覆寫。
 
 檢視器資源會在使用者開啟畫布之後才進行惰性載入。如果資源缺失或無效，PNG 預覽仍然可用，且不會宣傳畫布按鈕。
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 若要明確覆寫執行期，下列三項必須作為完整且彼此相符的一組同時提供：
 
-- `DSH_OPENPENCIL_EDITOR_BINARY`：用於 `op-host-web-server`；
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`：用於已建置的編輯器 Web 套件；
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR`：用於 CanvasKit 資源。
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY`：用於 `op-host-web-server`；
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`：用於已建置的編輯器 Web 套件；
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR`：用於 CanvasKit 資源。
 
 只提供其中一部分屬於無效設定；外掛程式不會將自訂路徑與隨套件提供的執行期資源混合使用。
 

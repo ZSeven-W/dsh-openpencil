@@ -175,7 +175,7 @@ DSH는 클라이언트 플러그인에 대해 `client.js`만 제공하므로, Op
 pnpm run sync:viewer-assets
 ```
 
-동기화 명령은 형제 `../openpencil` 체크아웃(로컬 개발)을 우선 사용하며, 벤더링된 `vendor/openpencil` 서브모듈(CI 및 새 클론)로 폴백합니다. `OPENPENCIL_ROOT` 또는 `--openpencil-root`로 재정의할 수 있습니다. `DSH_OPENPENCIL_VIEWER_SOURCE`로 완전한 사전 빌드 에셋 디렉터리를 선택할 수 있으며, `DSH_OPENPENCIL_VIEWER_ASSET_DIR`로 런타임 조회를 재정의할 수 있습니다.
+동기화 명령은 형제 `../openpencil` 체크아웃(로컬 개발)을 우선 사용하며, 벤더링된 `vendor/openpencil` 서브모듈(CI 및 새 클론)로 폴백합니다. `OPENPENCIL_ROOT` 또는 `--openpencil-root`로 재정의할 수 있습니다. `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`로 완전한 사전 빌드 에셋 디렉터리를 선택할 수 있으며, `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`로 런타임 조회를 재정의할 수 있습니다.
 
 뷰어 에셋은 사용자가 캔버스를 연 후에만 지연 로드됩니다. 에셋이 없거나 유효하지 않으면 PNG 미리보기를 계속 사용할 수 있으며 캔버스 버튼은 표시되지 않습니다.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 런타임을 명시적으로 재정의할 때는 서로 일치하는 다음 세 항목을 완전한 한 세트로 제공해야 합니다:
 
-- `op-host-web-server`용 `DSH_OPENPENCIL_EDITOR_BINARY`;
-- 빌드된 편집기 웹 번들용 `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`;
-- CanvasKit 에셋용 `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR`.
+- `op-host-web-server`용 `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY`;
+- 빌드된 편집기 웹 번들용 `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR`;
+- CanvasKit 에셋용 `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR`.
 
 세트의 일부만 제공하면 잘못된 구성입니다. 플러그인은 사용자 지정 경로와 패키지에 포함된 런타임 에셋을 혼합하지 않습니다.
 

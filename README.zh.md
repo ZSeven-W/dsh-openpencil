@@ -208,7 +208,7 @@ DSH 仅为客户端插件提供 `client.js`，因此 OpenPencil ESM SDK、其 WA
 pnpm run sync:viewer-assets
 ```
 
-同步命令优先使用同级目录下的 `../openpencil` 检出（本地开发），回退到随附的 `vendor/openpencil` 子模块（CI 与全新克隆）。可通过 `OPENPENCIL_ROOT` 或 `--openpencil-root` 覆盖。可通过 `DSH_OPENPENCIL_VIEWER_SOURCE` 选择完整的预构建资源目录。可通过 `DSH_OPENPENCIL_VIEWER_ASSET_DIR` 覆盖运行时查找。
+同步命令优先使用同级目录下的 `../openpencil` 检出（本地开发），回退到随附的 `vendor/openpencil` 子模块（CI 与全新克隆）。可通过 `OPENPENCIL_ROOT` 或 `--openpencil-root` 覆盖。可通过 `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` 选择完整的预构建资源目录。可通过 `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR` 覆盖运行时查找。
 
 查看器资源仅在用户打开画布后才按需加载。如果这些资源缺失或无效，PNG 预览仍然可用，并且不会展示画布按钮。
 
@@ -245,9 +245,9 @@ pnpm run stage:editor-runtime
 
 若要显式覆盖运行时，以下三项必须作为完整且相互匹配的一套同时提供：
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` 用于 `op-host-web-server`；
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` 用于已构建的编辑器 Web 打包产物；
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` 用于 CanvasKit 资源。
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` 用于 `op-host-web-server`；
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` 用于已构建的编辑器 Web 打包产物；
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` 用于 CanvasKit 资源。
 
 只提供其中一部分属于无效配置；插件不会将自定义路径与随包运行时资源拼接使用。
 

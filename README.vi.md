@@ -175,7 +175,7 @@ DSH chỉ phục vụ `client.js` cho một client plugin, vì vậy SDK ESM c�
 pnpm run sync:viewer-assets
 ```
 
-Lệnh sync ưu tiên dùng thư mục checkout `../openpencil` liền kề (phát triển cục bộ), rồi dự phòng sang submodule `vendor/openpencil` được đưa vào kho (CI và các bản clone mới). Ghi đè nó bằng `OPENPENCIL_ROOT` hoặc `--openpencil-root`. Một thư mục tài nguyên đã được dựng sẵn hoàn chỉnh có thể được chọn bằng `DSH_OPENPENCIL_VIEWER_SOURCE`. Việc tra cứu lúc chạy có thể được ghi đè bằng `DSH_OPENPENCIL_VIEWER_ASSET_DIR`.
+Lệnh sync ưu tiên dùng thư mục checkout `../openpencil` liền kề (phát triển cục bộ), rồi dự phòng sang submodule `vendor/openpencil` được đưa vào kho (CI và các bản clone mới). Ghi đè nó bằng `OPENPENCIL_ROOT` hoặc `--openpencil-root`. Một thư mục tài nguyên đã được dựng sẵn hoàn chỉnh có thể được chọn bằng `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`. Việc tra cứu lúc chạy có thể được ghi đè bằng `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`.
 
 Tài nguyên viewer chỉ được tải trễ sau khi người dùng mở canvas. Nếu chúng vắng mặt hoặc không hợp lệ, bản xem trước PNG vẫn khả dụng và không có nút canvas nào được quảng bá.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Các ghi đè runtime tường minh chỉ được chấp nhận dưới dạng một bộ đầy đủ và tương thích:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` cho `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` cho web bundle trình biên tập đã được build;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` cho các tài nguyên CanvasKit.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` cho `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` cho web bundle trình biên tập đã được build;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` cho các tài nguyên CanvasKit.
 
 Chỉ cung cấp một phần của bộ này là cấu hình không hợp lệ; plugin không kết hợp các đường dẫn tùy chỉnh với tài nguyên runtime được đóng gói.
 

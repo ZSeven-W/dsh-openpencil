@@ -175,7 +175,7 @@ DSH क्लाइंट प्लगइन के लिए केवल `clie
 pnpm run sync:viewer-assets
 ```
 
-सिंक कमांड एक सहोदर `../openpencil` चेकआउट को प्राथमिकता देता है (स्थानीय विकास), वेंडर किए गए `vendor/openpencil` सबमॉड्यूल (CI और नई क्लोन) पर फ़ॉलबैक करता है। इसे `OPENPENCIL_ROOT` या `--openpencil-root` से ओवरराइड करें। `DSH_OPENPENCIL_VIEWER_SOURCE` से एक संपूर्ण पूर्व-निर्मित एसेट निर्देशिका चुनी जा सकती है। `DSH_OPENPENCIL_VIEWER_ASSET_DIR` से रनटाइम लुकअप को ओवरराइड किया जा सकता है।
+सिंक कमांड एक सहोदर `../openpencil` चेकआउट को प्राथमिकता देता है (स्थानीय विकास), वेंडर किए गए `vendor/openpencil` सबमॉड्यूल (CI और नई क्लोन) पर फ़ॉलबैक करता है। इसे `OPENPENCIL_ROOT` या `--openpencil-root` से ओवरराइड करें। `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` से एक संपूर्ण पूर्व-निर्मित एसेट निर्देशिका चुनी जा सकती है। `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR` से रनटाइम लुकअप को ओवरराइड किया जा सकता है।
 
 व्यूअर एसेट उपयोगकर्ता के कैनवास खोलने के बाद ही आलसी-लोड होती हैं। यदि वे अनुपस्थित या अमान्य हैं, तो PNG पूर्वावलोकन उपलब्ध रहता है और कोई कैनवास बटन विज्ञापित नहीं किया जाता।
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 स्पष्ट रनटाइम ओवरराइड केवल एक पूर्ण और परस्पर संगत सेट के रूप में स्वीकार किए जाते हैं:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` `op-host-web-server` के लिए;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` निर्मित संपादक वेब बंडल के लिए;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` CanvasKit एसेट के लिए।
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` `op-host-web-server` के लिए;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` निर्मित संपादक वेब बंडल के लिए;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` CanvasKit एसेट के लिए।
 
 सेट का केवल एक भाग देना अमान्य है; प्लगइन कस्टम पथों को पैकेज किए गए रनटाइम एसेट के साथ नहीं मिलाता।
 

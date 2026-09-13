@@ -28,6 +28,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-tools'
 import type { ViewerGrant } from './viewer-assets.js'
 import type { EditorGrant } from './editor-host.js'
 import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
+import { pluginEnv } from './plugin-env.js'
 
 /** HTTP prefix owned by the render capability route. */
 export const RENDER_ROUTE_PREFIX = '/_dsh/dsh-openpencil/render'
@@ -551,8 +552,8 @@ export async function createDocumentSnapshotFromText(documentJson: string): Prom
 
 /** Locate the exact OpenPencil renderer, preferring an explicit override. */
 export function findOpenPencilBinary(): string | undefined {
-  const override = process.env.DSH_OPENPENCIL_BINARY?.trim()
-    || process.env.DSH_OPENPENCIL_DESKTOP?.trim()
+  const override = pluginEnv('OPENPENCIL_BINARY')?.trim()
+    || pluginEnv('OPENPENCIL_DESKTOP')?.trim()
   const candidates = [
     ...(override === undefined || override.length === 0 ? [] : [expandUserHome(override)]),
     '/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop',
@@ -574,7 +575,7 @@ export function findOpenPencilBinary(): string | undefined {
 
 /** Locate the `jian` binary: env override, known build location, then PATH. */
 export function findJianBinary(): string {
-  const override = process.env.DSH_OPENPENCIL_JIAN?.trim()
+  const override = pluginEnv('OPENPENCIL_JIAN')?.trim()
   if (override !== undefined && override.length > 0) return override
   const candidates = [join(homedir(), 'workspace', 'jian', 'target', 'release', 'jian')]
   for (const candidate of candidates) {

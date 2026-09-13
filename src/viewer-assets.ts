@@ -22,12 +22,16 @@ import { lstat, open, readFile, realpath } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pluginEnv, pluginEnvName } from './plugin-env.js'
 
 /** HTTP namespace owned by the read-only OpenPencil viewer assets. */
 export const VIEWER_ASSET_ROUTE_PREFIX = '/_dsh/dsh-openpencil/viewer-assets'
 
-/** Environment override for an externally staged viewer-asset directory. */
-export const VIEWER_ASSET_DIR_ENV = 'DSH_OPENPENCIL_VIEWER_ASSET_DIR'
+/** Suffix of the environment override for an externally staged viewer-asset directory. */
+export const VIEWER_ASSET_DIR_ENV_SUFFIX = 'OPENPENCIL_VIEWER_ASSET_DIR'
+
+/** Current name of that override (the legacy DSH_ name is still read). */
+export const VIEWER_ASSET_DIR_ENV = pluginEnvName(VIEWER_ASSET_DIR_ENV_SUFFIX)
 
 const MANIFEST_FILENAME = 'manifest.json'
 const REVISION_PATTERN = /^[a-f0-9]{16,64}$/
@@ -156,7 +160,7 @@ async function verifyAssetDirectory(assetDir: string): Promise<{
 }
 
 function candidateDirectories(explicit?: string): { explicit: boolean; paths: string[] } {
-  const configured = explicit?.trim() || process.env[VIEWER_ASSET_DIR_ENV]?.trim()
+  const configured = explicit?.trim() || pluginEnv(VIEWER_ASSET_DIR_ENV_SUFFIX)?.trim()
   if (configured) return { explicit: true, paths: [resolve(configured)] }
   const moduleDir = dirname(fileURLToPath(import.meta.url))
   return {

@@ -3,7 +3,7 @@
  * Stage the OpenPencil read-only Web SDK for DSH.
  *
  * Sources, in priority order:
- *   1. --source / DSH_OPENPENCIL_VIEWER_SOURCE: a complete prebuilt directory
+ *   1. --source / DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE: a complete prebuilt directory
  *   2. --openpencil-root / OPENPENCIL_ROOT: an OpenPencil checkout
  *   3. a sibling `../openpencil` checkout
  *
@@ -275,7 +275,10 @@ async function main() {
   const tempDir = `${outDir}.tmp-${randomUUID()}`
   await mkdir(tempDir, { recursive: true })
   try {
-    const source = options.source ?? process.env.DSH_OPENPENCIL_VIEWER_SOURCE
+    // Dual-read during the DSH_ -> DSHPLUGIN_ migration (see src/plugin-env.ts).
+    const source = options.source
+      ?? process.env.DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE
+      ?? process.env.DSH_OPENPENCIL_VIEWER_SOURCE
     if (source) {
       await stageFromPrebuilt(resolve(source), tempDir)
     } else {

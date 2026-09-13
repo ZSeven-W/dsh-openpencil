@@ -175,7 +175,7 @@ DSH liefert für ein Client-Plugin nur `client.js` aus; daher werden die OpenPen
 pnpm run sync:viewer-assets
 ```
 
-Der Sync-Befehl bevorzugt ein benachbartes `../openpencil`-Checkout (lokale Entwicklung) und greift andernfalls auf das eingebundene `vendor/openpencil`-Submodul zurück (CI und frische Klone). Überschreiben Sie es mit `OPENPENCIL_ROOT` oder `--openpencil-root`. Ein vollständiges vorgefertigtes Asset-Verzeichnis kann mit `DSH_OPENPENCIL_VIEWER_SOURCE` ausgewählt werden. Die Suche zur Laufzeit kann mit `DSH_OPENPENCIL_VIEWER_ASSET_DIR` überschrieben werden.
+Der Sync-Befehl bevorzugt ein benachbartes `../openpencil`-Checkout (lokale Entwicklung) und greift andernfalls auf das eingebundene `vendor/openpencil`-Submodul zurück (CI und frische Klone). Überschreiben Sie es mit `OPENPENCIL_ROOT` oder `--openpencil-root`. Ein vollständiges vorgefertigtes Asset-Verzeichnis kann mit `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` ausgewählt werden. Die Suche zur Laufzeit kann mit `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR` überschrieben werden.
 
 Viewer-Assets werden erst nachgeladen, nachdem der Benutzer die Leinwand geöffnet hat. Sind sie nicht vorhanden oder ungültig, bleibt die PNG-Vorschau verfügbar und es wird kein Leinwand-Button angezeigt.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Explizite Laufzeit-Überschreibungen werden nur als vollständiger, zusammengehöriger Satz akzeptiert:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` für `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` für das gebaute Editor-Web-Bundle;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` für die CanvasKit-Assets.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` für `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` für das gebaute Editor-Web-Bundle;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` für die CanvasKit-Assets.
 
 Nur einen Teil dieses Satzes anzugeben ist ungültig; das Plugin kombiniert keine benutzerdefinierten Pfade mit den Laufzeit-Assets des Pakets.
 

@@ -175,7 +175,7 @@ DSH ให้บริการเฉพาะ `client.js` สำหรับป
 pnpm run sync:viewer-assets
 ```
 
-คำสั่ง sync จะเลือกใช้ checkout `../openpencil` ที่อยู่ข้างเคียง (การพัฒนาท้องถิ่น) เป็นอันดับแรก และใช้ submodule `vendor/openpencil` ที่ vendor ไว้เป็นตัวสำรอง (CI และการ clone ใหม่) ใช้ `OPENPENCIL_ROOT` หรือ `--openpencil-root` เพื่อแทนที่ ไลบรารีสินทรัพย์ที่ build ไว้ล่วงหน้าทั้งหมดสามารถเลือกได้ด้วย `DSH_OPENPENCIL_VIEWER_SOURCE` และการค้นหาตอนรันสามารถแทนที่ได้ด้วย `DSH_OPENPENCIL_VIEWER_ASSET_DIR`
+คำสั่ง sync จะเลือกใช้ checkout `../openpencil` ที่อยู่ข้างเคียง (การพัฒนาท้องถิ่น) เป็นอันดับแรก และใช้ submodule `vendor/openpencil` ที่ vendor ไว้เป็นตัวสำรอง (CI และการ clone ใหม่) ใช้ `OPENPENCIL_ROOT` หรือ `--openpencil-root` เพื่อแทนที่ ไลบรารีสินทรัพย์ที่ build ไว้ล่วงหน้าทั้งหมดสามารถเลือกได้ด้วย `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE` และการค้นหาตอนรันสามารถแทนที่ได้ด้วย `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`
 
 สินทรัพย์ viewer จะถูกโหลดแบบ lazy หลังจากผู้ใช้เปิดแคนวาสเท่านั้น หากสินทรัพย์ไม่มีหรือไม่ถูกต้อง พรีวิว PNG ยังคงใช้งานได้ และจะไม่มีการแสดงปุ่มแคนวาส
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 การ override runtime โดยระบุเองจะยอมรับเฉพาะเมื่อให้ครบทั้งชุดที่ตรงกัน:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` สำหรับ `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` สำหรับเว็บบันเดิลของโปรแกรมแก้ไขที่ build แล้ว;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` สำหรับสินทรัพย์ CanvasKit
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` สำหรับ `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` สำหรับเว็บบันเดิลของโปรแกรมแก้ไขที่ build แล้ว;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` สำหรับสินทรัพย์ CanvasKit
 
 การให้เพียงบางรายการถือเป็นการกำหนดค่าที่ไม่ถูกต้อง ปลั๊กอินจะไม่ผสม path ที่กำหนดเองกับสินทรัพย์ runtime ที่มากับแพ็กเกจ
 

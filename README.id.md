@@ -175,7 +175,7 @@ DSH hanya menyajikan `client.js` untuk plugin klien, sehingga OpenPencil ESM SDK
 pnpm run sync:viewer-assets
 ```
 
-Perintah sinkronisasi lebih mengutamakan checkout `../openpencil` yang bersebelahan (pengembangan lokal), dengan fallback ke submodul `vendor/openpencil` yang di-vendor (CI dan clone baru). Ganti dengan `OPENPENCIL_ROOT` atau `--openpencil-root`. Direktori aset pra-build yang lengkap dapat dipilih dengan `DSH_OPENPENCIL_VIEWER_SOURCE`. Pencarian saat runtime dapat diganti dengan `DSH_OPENPENCIL_VIEWER_ASSET_DIR`.
+Perintah sinkronisasi lebih mengutamakan checkout `../openpencil` yang bersebelahan (pengembangan lokal), dengan fallback ke submodul `vendor/openpencil` yang di-vendor (CI dan clone baru). Ganti dengan `OPENPENCIL_ROOT` atau `--openpencil-root`. Direktori aset pra-build yang lengkap dapat dipilih dengan `DSHPLUGIN_OPENPENCIL_VIEWER_SOURCE`. Pencarian saat runtime dapat diganti dengan `DSHPLUGIN_OPENPENCIL_VIEWER_ASSET_DIR`.
 
 Aset penampil dimuat secara lazy hanya setelah pengguna membuka kanvas. Jika tidak ada atau tidak valid, pratinjau PNG tetap tersedia dan tidak ada tombol kanvas yang ditampilkan.
 
@@ -205,9 +205,9 @@ pnpm run stage:editor-runtime
 
 Override runtime eksplisit hanya diterima sebagai satu set lengkap yang saling cocok:
 
-- `DSH_OPENPENCIL_EDITOR_BINARY` untuk `op-host-web-server`;
-- `DSH_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` untuk bundel web editor yang telah dibangun;
-- `DSH_OPENPENCIL_EDITOR_CANVASKIT_DIR` untuk aset CanvasKit.
+- `DSHPLUGIN_OPENPENCIL_EDITOR_BINARY` untuk `op-host-web-server`;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_WEB_BUNDLE_DIR` untuk bundel web editor yang telah dibangun;
+- `DSHPLUGIN_OPENPENCIL_EDITOR_CANVASKIT_DIR` untuk aset CanvasKit.
 
 Memberikan hanya sebagian dari set tersebut merupakan konfigurasi yang tidak valid; plugin tidak menggabungkan path khusus dengan aset runtime yang disertakan dalam paket.
 
