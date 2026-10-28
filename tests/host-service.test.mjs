@@ -17,12 +17,20 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
   const eventListeners = []
   const disposedEventListeners = []
   let disposeInjectedRoutes
+  let disposeInjectedAuthentication
+  let registeredAuthentication
+  const authenticatedRequest = {}
   let releaseEditorHostDispose
   const editorHostDisposeBarrier = new Promise(resolve => { releaseEditorHostDispose = resolve })
   const { EditorHostController } = await import('../lib/editor-host.js')
   const { DesignDraftController } = await import('../lib/design-draft-controller.js')
   const { DesignDraftToolController } = await import('../lib/design-draft-tools.js')
   const originalEditorHostDispose = EditorHostController.prototype.dispose
+  const originalAttachAuthentication = EditorHostController.prototype.attachRequestAuthentication
+  EditorHostController.prototype.attachRequestAuthentication = function (authenticate) {
+    registeredAuthentication = authenticate
+    return originalAttachAuthentication.call(this, authenticate)
+  }
   const originalAbortOwner = DesignDraftController.prototype.abortOwner
   const originalHasActiveDraft = DesignDraftToolController.prototype.hasActiveDraft
   let editorHostDisposeCalls = 0
@@ -81,6 +89,13 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
     },
     inject(services, install) {
       injectedServices.push([...services])
+      if (services.includes('connection')) {
+        install({
+          connection: { requestRejection(req) { return req === authenticatedRequest ? undefined : 401 } },
+          effect(mount) { disposeInjectedAuthentication = mount(); return disposeInjectedAuthentication },
+        })
+        return
+      }
       install({
         webServer,
         effect(mount) {
@@ -97,7 +112,7 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
     const disposePlugin = await apply(ctx)
 
     assert.deepEqual(inject, ['tools', 'sessions', 'fs', 'sandboxPolicy'])
-    assert.deepEqual(injectedServices, [['skills'], ['systemPrompt'], ['webServer']])
+    assert.deepEqual(injectedServices, [['skills'], ['systemPrompt'], ['connection'], ['webServer']])
     // 14 = 5 legacy/compat tools + 7 pipeline tools (begin/context/batch/agent_run/inspect/finish/abort)
     //   + 2 opt-in style planner tools (style_plan/style_confirm).
     assert.equal(registeredTools.length, 14)
@@ -214,6 +229,10 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
         { kind: 'prefix', path: '/_dsh/dsh-openpencil/editor' },
       ],
     )
+    assert.equal(typeof disposeInjectedAuthentication, 'function')
+    assert.equal(registeredAuthentication(authenticatedRequest), true)
+    assert.equal(registeredAuthentication({}), false)
+    disposeInjectedAuthentication()
     assert.equal(typeof disposeInjectedRoutes, 'function')
 
     for (const event of eventListeners.filter(event => event.name === 'session/disposed')) {
@@ -245,6 +264,7 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
   } finally {
     releaseEditorHostDispose?.()
     EditorHostController.prototype.dispose = originalEditorHostDispose
+    EditorHostController.prototype.attachRequestAuthentication = originalAttachAuthentication
     DesignDraftController.prototype.abortOwner = originalAbortOwner
     DesignDraftToolController.prototype.hasActiveDraft = originalHasActiveDraft
     if (previousDshHome === undefined) delete process.env.DSH_HOME

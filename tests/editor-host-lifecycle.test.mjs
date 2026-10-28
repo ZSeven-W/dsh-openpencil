@@ -1219,3 +1219,110 @@ test('client disconnect before launch response terminates the precise pending ch
     await harness.cleanup()
   }
 })
+
+test('authenticated Desktop requests without Origin can launch, save and close the editor', async () => {
+  const harness = await createHarness(0)
+  const request = (path, init = {}) => fetch(`${harness.origin}${path}`, {
+    ...init,
+    headers: { cookie: 'host-session=authenticated', 'content-type': 'application/json', ...(init.headers ?? {}) },
+  })
+  try {
+    const blocked = await request(harness.grant.launchUrl, { method: 'POST' })
+    assert.equal(blocked.status, 403, 'a cookie alone cannot authorize the editor')
+    const detachAuthentication = harness.controller.attachRequestAuthentication(req => req.headers.cookie === 'host-session=authenticated')
+    const unauthenticated = await request(harness.grant.launchUrl, { method: 'POST', headers: { cookie: 'host-session=forged' } })
+    assert.equal(unauthenticated.status, 403)
+    const response = await request(harness.grant.launchUrl, { method: 'POST' })
+    assert.equal(response.status, 200, await response.clone().text())
+    const launch = await response.json()
+    const saved = await request(launch.saveUrl, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: launch.sessionId, docJson: harness.sourceDocument, generation: 0, revision: 1 }),
+    })
+    assert.equal(saved.status, 200, await saved.clone().text())
+    assert.equal((await request(launch.closeUrl, { method: 'DELETE' })).status, 200)
+    detachAuthentication()
+    assert.equal((await request(harness.grant.refreshUrl, { method: 'POST' })).status, 403)
+    assert.equal((await harness.request(harness.grant.refreshUrl, { method: 'POST' })).status, 200, 'ordinary Web Origin validation remains available')
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('missing-Origin authentication fails closed and an old disposer cannot remove its successor', async () => {
+  const harness = await createHarness(0)
+  const refresh = () => fetch(`${harness.origin}/_dsh/dsh-openpencil/editor/refresh`, { method: 'POST' })
+  try {
+    harness.controller.attachRequestAuthentication(() => { throw new Error('Host service unavailable') })
+    assert.equal((await refresh()).status, 403)
+    harness.controller.attachRequestAuthentication(() => undefined)
+    assert.equal((await refresh()).status, 403, 'only explicit authentication success is accepted')
+    const authenticate = () => true
+    const oldDetach = harness.controller.attachRequestAuthentication(authenticate)
+    const currentDetach = harness.controller.attachRequestAuthentication(authenticate)
+    oldDetach()
+    assert.equal((await refresh()).status, 410, 'the authenticated legacy route is reached')
+    currentDetach()
+    assert.equal((await refresh()).status, 403)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('every editor mutation authenticates requests without Origin', async () => {
+  const harness = await createHarness(0)
+  const prefix = '/_dsh/dsh-openpencil/editor'
+  try {
+    let authenticatedRequests = 0
+    harness.controller.attachRequestAuthentication(() => { authenticatedRequests += 1; return false })
+    const routes = [
+      [harness.grant.launchUrl, 'POST'], [harness.grant.refreshUrl, 'POST'], [`${prefix}/refresh`, 'POST'],
+      [`${prefix}/session/missing/save`, 'POST'], [`${prefix}/session/missing/ready`, 'POST'],
+      [`${prefix}/session/missing/recovery`, 'POST'], [`${prefix}/session/missing/recovery/item`, 'POST'],
+      [`${prefix}/session/missing/recovery/item`, 'DELETE'], [`${prefix}/session/missing`, 'DELETE'],
+    ]
+    for (const [path, method] of routes) {
+      assert.equal((await fetch(`${harness.origin}${path}`, { method })).status, 403, `${method} ${path}`)
+    }
+    assert.equal(authenticatedRequests, routes.length)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('authenticated missing-Origin requests still require a canonical local Host and the listening port', async () => {
+  const harness = await createHarness(0)
+  try {
+    let authenticationCalls = 0
+    harness.controller.attachRequestAuthentication(() => { authenticationCalls += 1; return true })
+    const dispatch = async (host, { remoteAddress = '127.0.0.1', localPort = 3080, origin, site } = {}) => {
+      const req = pendingRequest('/_dsh/dsh-openpencil/editor/refresh', 'POST', harness.origin, remoteAddress)
+      req.headers = { host, ...(origin === undefined ? {} : { origin }), ...(site === undefined ? {} : { 'sec-fetch-site': site }) }
+      req.socket.localPort = localPort
+      const res = new MockResponse()
+      const handled = harness.controller.handle(req, res)
+      req.end()
+      await handled
+      return res.statusCode
+    }
+    for (const host of ['127.0.0.1:3080', 'localhost:3080', '[::1]:3080']) {
+      assert.equal(await dispatch(host), 410, host)
+    }
+    assert.equal(await dispatch('127.0.0.1:80', { localPort: 80 }), 410)
+    for (const host of ['evil.test:3080', 'evil@localhost:3080', 'localhost:3080/path', 'localhost:3080?q=x', 'localhost:3080#x', 'localhost:03080', '0x7f000001:3080', 'localhost:3081', 'localhost:3080 ', undefined]) {
+      assert.equal(await dispatch(host), 403, String(host))
+    }
+    const beforeRemote = authenticationCalls
+    assert.equal(await dispatch('localhost:3080', { remoteAddress: '192.0.2.12' }), 403)
+    assert.equal(authenticationCalls, beforeRemote, 'remote transport is rejected before authentication')
+    assert.equal(await dispatch('localhost:3080', { site: 'cross-site' }), 403)
+    const beforeExplicitOrigins = authenticationCalls
+    for (const origin of ['null', 'dsh-app://app', 'https://evil.test', 'http://localhost:3081', 'not-a-url', '']) {
+      assert.equal(await dispatch('localhost:3080', { origin }), 403, origin)
+    }
+    assert.equal(authenticationCalls, beforeExplicitOrigins, 'explicit Origin never falls back to authentication')
+    assert.equal(await dispatch('[::1]:3080', { origin: 'http://[::1]:3080' }), 410)
+  } finally {
+    await harness.cleanup()
+  }
+})

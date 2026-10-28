@@ -23,6 +23,7 @@ import type ToolRegistry from '@deepseek-ai/dsh-tools'
 import type { ToolExecution, ToolExecutionResult, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionStore } from '@deepseek-ai/dsh-session'
 import type WebServer from '@deepseek-ai/dsh-host-webserver'
+import type { IncomingMessage } from 'node:http'
 import {
   RENDER_ROUTE_PREFIX,
   RenderAccessController,
@@ -109,6 +110,11 @@ type HostContext = Context & {
   sessions: SessionStore
   fs: FileSystem
   sandboxPolicy: SandboxPolicyService
+}
+
+/** Public Host authentication subset; optional on older or headless profiles. */
+type ConnectionContext = Context & {
+  connection: { requestRejection(req: IncomingMessage): number | undefined }
 }
 
 /** Structural subset of DSH's agent and provider call contract. */
@@ -264,6 +270,11 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     }),
     'dsh-openpencil: design draft session cleanup',
   ))
+
+  ctx.inject(['connection'], connectionCtx => connectionCtx.effect(() => {
+    const connection = (connectionCtx as ConnectionContext).connection
+    return editorHost.attachRequestAuthentication(req => connection.requestRejection(req) === undefined)
+  }, 'dsh-openpencil: authenticated Desktop editor requests'))
 
   // Optional Web routes: only mounted when a webServer service exists
   // (headless profiles never attach, and `routeAvailable` stays false).

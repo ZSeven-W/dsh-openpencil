@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.7</code> · Tested through DSH <code>0.1.1-rc.2</code></sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · Current plugin release: <code>0.1.0-rc.14</code> · Editor panel verified on DSH Desktop <code>0.2.1-rc.3</code></sub>
 </p>
 
 <p align="center">
@@ -114,11 +114,11 @@ npm install -g @deepseek-ai/dsh@latest
 Then add the plugin to a profile and start the web app:
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@next
+dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
-The plugin is still on a prerelease line, so install it from the npm `next` tag. The npm `latest` tag currently points to the older `0.1.0-rc.1` package.
+The plugin is still on a prerelease line. Releases use the npm `latest` tag; install from `latest` to receive the current version. The older `next` tag is not the active release channel.
 
 For local development, build the checkout, link its absolute path into the Web profile, and then restart DSH:
 
@@ -133,7 +133,7 @@ The `link:` dependency exposes subsequent rebuilds from this checkout, but DSH m
 Prefer not to install DSH globally? Run the same two steps through `pnpm dlx`:
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
@@ -219,6 +219,10 @@ Viewer assets are lazy-loaded only after the user opens the canvas. If they are 
 ## Managed Editor
 
 Editable sessions use OpenPencil's managed web host — the same architecture used by `op-vscode`. The plugin starts the single-tenant host only after an authorized user action and does not send `X-OpenPencil-Token` or `Authorization` to it; those request credentials remain reserved for online multi-tenant deployments. The managed daemon is loopback-only, inherits the supervisor's stdin lifetime, validates browser origins, and is closed when the editor session ends. DSH's ephemeral read-only browser proxy uses a separate per-attach capability and strips it before forwarding native requests. The editor surface is selected progressively: native Tool details when the host declares that seam, otherwise the plugin's right-hand workbench with resize and full-screen controls.
+
+Desktop requests whose HTTP proxy omits `Origin` are accepted only after DSH authenticates the request and the plugin verifies its loopback peer and exact listening authority. Explicit browser origins retain the same-origin checks; without the Host authentication service, requests missing `Origin` remain rejected.
+
+The editor panel was verified on the official DSH Desktop `0.2.1-rc.3` build: opening the canvas, editing a layer name, saving and reading the file back, reopening the editor, and opening a fresh card after restarting DSH. This verification covers the editor panel flow.
 
 Startup uses a slow-mount-safe listening handshake: readiness probes begin only after the bundled host announces its bound address. No desktop OpenPencil installation is required.
 

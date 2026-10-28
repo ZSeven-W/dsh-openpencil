@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 当前插件版本：<code>0.1.0-rc.7</code> · 已通过 DSH <code>0.1.1-rc.2</code> 测试</sub>
+  <sub>npm: <a href="https://www.npmjs.com/package/@zseven-w/dsh-openpencil"><code>@zseven-w/dsh-openpencil</code></a> · 当前插件版本：<code>0.1.0-rc.14</code> · 编辑器面板已在 DSH 桌面版 <code>0.2.1-rc.3</code> 验证</sub>
 </p>
 
 <p align="center">
@@ -114,11 +114,11 @@ npm install -g @deepseek-ai/dsh@latest
 然后把插件装进某个 profile 并启动 Web 应用：
 
 ```sh
-dsh plugin --profile web add @zseven-w/dsh-openpencil@next
+dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 dsh web
 ```
 
-插件目前仍处于预发布阶段，因此须从 npm 的 `next` 标签安装；npm 的 `latest` 标签目前仍指向较早的 `0.1.0-rc.1`。
+插件目前仍处于预发布阶段，发布版本使用 npm 的 `latest` 标签；从 `latest` 安装即可获取当前版本。较旧的 `next` 标签已不是当前发布通道。
 
 本地开发时，先构建当前检出目录，再把其绝对路径链接进 Web profile，随后完整重启 DSH：
 
@@ -133,7 +133,7 @@ dsh web
 不想全局安装 DSH？用 `pnpm dlx` 跑同样的两步：
 
 ```sh
-pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@next
+pnpm dlx --package=@deepseek-ai/dsh@latest dsh plugin --profile web add @zseven-w/dsh-openpencil@latest
 pnpm dlx --package=@deepseek-ai/dsh@latest dsh web
 ```
 
@@ -217,6 +217,10 @@ pnpm run sync:viewer-assets
 ## 托管编辑器
 
 可编辑会话使用 OpenPencil 的托管 Web 宿主 —— 与 `op-vscode` 相同的架构。插件仅在经过授权的用户操作之后启动该宿主，将守护进程令牌保存在内存中，校验 iframe 来源与源站，并在编辑器会话结束时关闭进程。编辑器界面采用渐进式选择：若宿主声明该原生接缝，则使用原生 Tool 详情；否则使用插件带调整大小与全屏控件的右侧工作台。
+
+若 DSH 桌面代理省略 `Origin`，插件仅在 DSH 验证请求身份、且本地连接与监听地址检查通过后接受请求。显式浏览器来源仍须通过同源检查；缺少宿主认证服务时，没有 `Origin` 的请求仍会被拒绝。
+
+编辑器面板已在官方 DSH 桌面版 `0.2.1-rc.3` 上完成验证：打开画布、修改图层名、保存并回读文件、重新打开编辑器，以及重启 DSH 后打开新卡片。本次实机验证范围为编辑器面板流程。
 
 启动过程使用可安全应对慢速挂载的 listening handshake：只有在随包宿主报告已绑定地址后才开始就绪探测。无需安装桌面版 OpenPencil。
 

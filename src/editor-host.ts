@@ -11,6 +11,7 @@ import {
 import { constants as fsConstants } from 'node:fs'
 import { lstat, mkdtemp, open, rename, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { TLSSocket } from 'node:tls'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { managedEditorProcessOptions } from './managed-editor-process.js'
 import { tmpdir } from 'node:os'
@@ -257,8 +258,44 @@ export function findEditorHostBinary(): string | undefined {
   }
 }
 
-function requestOrigin(req: IncomingMessage): string {
+/** Host-owned authentication for Desktop requests whose proxy omits Origin. */
+export type EditorRequestAuthentication = (req: IncomingMessage) => boolean
+
+function requestOrigin(req: IncomingMessage, authenticate?: EditorRequestAuthentication): string {
   const raw = req.headers.origin
+  if (raw === undefined) {
+    const site = req.headers['sec-fetch-site']
+    if (site !== undefined && site !== 'same-origin' && site !== 'none') {
+      throw new HttpError(403, 'editor request must be same-origin with DSH')
+    }
+    let authenticated = false
+    try {
+      authenticated = authenticate !== undefined && authenticate(req) === true
+    } catch {
+      // An unavailable or failing Host authentication service grants no access.
+    }
+    if (!authenticated) throw new HttpError(403, 'editor launch requires a browser Origin header or authenticated DSH request')
+    const host = req.headers.host
+    const protocol = req.socket instanceof TLSSocket && req.socket.encrypted ? 'https:' : 'http:'
+    const defaultPort = protocol === 'https:' ? 443 : 80
+    let url: URL
+    try {
+      url = new URL(`${protocol}//${host ?? ''}`)
+    } catch {
+      throw new HttpError(403, 'editor request Host is invalid')
+    }
+    const canonicalHost = url.host === host || (url.port === '' && `${url.hostname}:${defaultPort}` === host)
+    if (!canonicalHost || url.username !== '' || url.password !== '' || url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      throw new HttpError(403, 'editor request Host is invalid')
+    }
+    if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost' && url.hostname !== '[::1]') {
+      throw new HttpError(403, 'editable OpenPencil sessions are restricted to loopback DSH')
+    }
+    if (req.socket.localPort === undefined || Number(url.port || defaultPort) !== req.socket.localPort) {
+      throw new HttpError(403, 'editor request Host must match the DSH listening port')
+    }
+    return url.origin
+  }
   if (typeof raw !== 'string') throw new HttpError(403, 'editor launch requires a browser Origin header')
   let url: URL
   try {
@@ -270,7 +307,7 @@ function requestOrigin(req: IncomingMessage): string {
   if (host === undefined || url.host !== host || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     throw new HttpError(403, 'editor launch must be same-origin with DSH')
   }
-  const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '::1'
+  const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]'
   if (!loopback) throw new HttpError(403, 'editable OpenPencil sessions are restricted to loopback DSH')
   return url.origin
 }
@@ -509,6 +546,7 @@ export class EditorHostController {
   #pendingChildren = new Set<ChildProcessWithoutNullStreams>()
   #launchQueue: Promise<void> = Promise.resolve()
   #disposePromise: Promise<void> | undefined
+  #requestAuthentication: EditorRequestAuthentication | undefined
 
   constructor(masterKey: Buffer, runtime?: EditorRuntime) {
     this.#editorKey = deriveEditorKey(masterKey)
@@ -538,6 +576,15 @@ export class EditorHostController {
 
   get available(): boolean { return this.runtime !== undefined }
   get routeAvailable(): boolean { return this.#routeRefs > 0 }
+
+  /** Bind optional Host authentication until its providing service is disposed. */
+  attachRequestAuthentication(authenticate: EditorRequestAuthentication): () => void {
+    const attached: EditorRequestAuthentication = req => authenticate(req)
+    this.#requestAuthentication = attached
+    return () => {
+      if (this.#requestAuthentication === attached) this.#requestAuthentication = undefined
+    }
+  }
 
   attachRoute(): () => void {
     this.#routeRefs += 1
@@ -626,28 +673,28 @@ export class EditorHostController {
         }
         const routeGeneration = this.#routeGeneration
         await this.#serializeLaunch(() => this.#launch(
-          launch[1]!, requestOrigin(req), res, routeGeneration, ownerSessionId,
+          launch[1]!, requestOrigin(req, this.#requestAuthentication), res, routeGeneration, ownerSessionId,
         ))
         return
       }
       if (refresh !== null && req.method === 'POST') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
         await this.#refresh(refresh[1]!, res)
         return
       }
       if (legacyRefresh && req.method === 'POST') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
         throw new HttpError(410, 'This editor card predates restart-safe editing; open the .op file in a new editable OpenPencil card')
       }
       if (save !== null && req.method === 'POST') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await this.#save(save[1]!, req, res)
         return
       }
       if (ready !== null && req.method === 'POST') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         const body = await readRequestBody(req)
         let sessionId: unknown
         try {
@@ -669,28 +716,28 @@ export class EditorHostController {
         return
       }
       if (recovery !== null && req.method === 'POST') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
         const snapshot = await this.#captureRecoveryForSession(recovery[1]!, 'client-dispose')
         json(res, 200, { ok: true, recovery: snapshot ?? null })
         return
       }
       if (recoveryItem !== null && req.method === 'POST') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
         const restored = await this.#restoreRecoveryForSession(recoveryItem[1]!, recoveryItem[2]!)
         json(res, 200, { ok: true, ...restored })
         return
       }
       if (recoveryItem !== null && req.method === 'DELETE') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
         const discarded = await this.#discardRecoveryForSession(recoveryItem[1]!, recoveryItem[2]!)
         json(res, 200, { ok: true, discarded })
         return
       }
       if (close !== null && req.method === 'DELETE') {
-        requestOrigin(req)
+        requestOrigin(req, this.#requestAuthentication)
         await readRequestBody(req).catch(() => Buffer.alloc(0))
         await this.#close(close[1]!)
         json(res, 200, { ok: true })
