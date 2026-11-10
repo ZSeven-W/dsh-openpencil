@@ -148,7 +148,7 @@ export function confirmEditorModalClose(
 
 const styles: Record<string, React.CSSProperties> = {
   surface: {
-    position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 1100,
+    position: 'fixed', top: 'var(--dsh-windows-titlebar-height, 0px)', right: 0, bottom: 0, zIndex: 1100,
     boxSizing: 'border-box', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
     borderLeft: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.5))',
     color: 'var(--dsw-alias-label-primary, #202124)',

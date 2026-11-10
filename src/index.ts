@@ -118,12 +118,25 @@ type ConnectionContext = Context & {
 }
 
 /** Structural subset of DSH's agent and provider call contract. */
+type AgentModelSelection = {
+  provider: string
+  model: string
+  reasoningEffort?: string
+  [key: string]: unknown
+}
+
+type AgentModelControl = {
+  current(): AgentModelSelection | undefined
+  select(selection: AgentModelSelection): void
+}
+
 type AgentRequestPayload = {
   agent: {
     readonly id: string | number
     readonly session: {
       readonly id: string | number
     }
+    readonly model?: AgentModelControl
   }
   readonly turn: number
 }
@@ -138,6 +151,7 @@ type AgentRequestConfig = {
 type HostEventContext = Context & {
   on(name: 'agent/request', listener: (payload: AgentRequestPayload, next: () => Promise<AgentRequestConfig>) => Promise<AgentRequestConfig>): () => void
   on(name: 'tools/result', listener: (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => void): () => void
+  on(name: 'session/event', listener: (session: Session, event: { readonly type: string }) => void): () => void
   on(name: 'session/disposed', listener: (session: Session) => void): () => void
   emit(name: 'fs/observed', target: FsTarget, observation: FsObservation, actor: ToolRunContext): void
 }
@@ -163,6 +177,40 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const eventCtx = ctx as HostEventContext
   const disposers: Array<() => void | Promise<void>> = []
   const designReasoningTurns = new Map<string, number>()
+  const lastSeenTurns = new Map<string, number>()
+  const agentModelsByOwner = new Map<string, AgentModelControl>()
+  const savedModelSelections = new Map<string, { model: AgentModelControl; selection: AgentModelSelection }>()
+
+  const applyDesignModelSelection = (owner: string, model: AgentModelControl | undefined): void => {
+    if (model === undefined || typeof model.current !== 'function' || typeof model.select !== 'function') return
+    agentModelsByOwner.set(owner, model)
+    if (savedModelSelections.has(owner)) return
+    const current = model.current()
+    if (current === undefined || !isDeepSeekProvider(current.provider)) return
+    savedModelSelections.set(owner, { model, selection: { ...current } })
+    if (current.reasoningEffort !== 'off') {
+      model.select({ ...current, reasoningEffort: 'off' })
+    }
+  }
+
+  const restoreDesignModelSelection = (owner: string): void => {
+    const saved = savedModelSelections.get(owner)
+    if (saved === undefined) return
+    savedModelSelections.delete(owner)
+    try {
+      const current = saved.model.current()
+      if (
+        current !== undefined
+        && current.provider === saved.selection.provider
+        && current.model === saved.selection.model
+        && current.reasoningEffort === 'off'
+      ) {
+        saved.model.select({ ...saved.selection })
+      }
+    } catch {
+      // Agent may already be disposed during teardown.
+    }
+  }
   const accessKey = await prepareRenderAccessKey()
   const controller = new RenderAccessController(accessKey)
   const viewerAssets = await prepareViewerAssets()
@@ -236,17 +284,26 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   disposers.push(ctx.effect(
     () => eventCtx.on('agent/request', async (payload, next) => {
       // This is a waterfall: resolve the effective provider config first, then
-      // replace only its reasoning knob. Latch the current turn once begin has
-      // opened a draft so the post-finish response cannot fall back to a long
-      // hidden-reasoning pass. The next user turn starts from normal settings.
+      // replace only its reasoning knob on legacy hosts. On DSH >= 0.2.2 step
+      // preparation locks reasoningEffort from `agent.model.current()`, so the
+      // selection is switched before step preparation via `agent.model.select()`
+      // and restored when the design turn finishes.
       const config = await next()
       const owner = String(payload.agent.session.id)
+      const model = payload.agent.model
+      lastSeenTurns.set(owner, payload.turn)
+      if (model !== undefined) agentModelsByOwner.set(owner, model)
       if (designDraftTools.hasActiveDraft(owner)) {
         designReasoningTurns.set(owner, payload.turn)
+        applyDesignModelSelection(owner, model)
       } else if (designReasoningTurns.get(owner) !== payload.turn) {
         designReasoningTurns.delete(owner)
+        restoreDesignModelSelection(owner)
       }
       if (designReasoningTurns.get(owner) !== payload.turn || !isDeepSeekProvider(config.provider)) {
+        return config
+      }
+      if (typeof model?.select === 'function') {
         return config
       }
       return { ...config, reasoningEffort: 'off' }
@@ -254,8 +311,27 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     'dsh-openpencil: active design draft reasoning override',
   ))
   disposers.push(ctx.effect(
-    () => eventCtx.on('tools/result', (exec, result) => presentationHydration.observeToolResult(exec, result)),
+    () => eventCtx.on('tools/result', (exec, result) => {
+      presentationHydration.observeToolResult(exec, result)
+      if (exec.agent === undefined) return
+      const owner = String(exec.agent.session.id)
+      const model = (exec.agent as { readonly model?: AgentModelControl }).model ?? agentModelsByOwner.get(owner)
+      if (model !== undefined && designDraftTools.hasActiveDraft(owner)) {
+        const turn = lastSeenTurns.get(owner)
+        if (turn !== undefined) designReasoningTurns.set(owner, turn)
+        applyDesignModelSelection(owner, model)
+      }
+    }),
     'dsh-openpencil: nested presentation result observer',
+  ))
+  disposers.push(ctx.effect(
+    () => eventCtx.on('session/event', (session, event) => {
+      if (event?.type !== 'turn/end') return
+      const owner = String(session.id)
+      designReasoningTurns.delete(owner)
+      restoreDesignModelSelection(owner)
+    }),
+    'dsh-openpencil: design turn reasoning restore',
   ))
   disposers.push(ctx.effect(
     () => eventCtx.on('session/disposed', session => presentationHydration.forgetSession(String(session.id))),
@@ -263,8 +339,12 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   ))
   disposers.push(ctx.effect(
     () => eventCtx.on('session/disposed', session => {
-      designReasoningTurns.delete(String(session.id))
-      void designDraftTools.abortOwner(String(session.id)).catch(error => {
+      const owner = String(session.id)
+      designReasoningTurns.delete(owner)
+      lastSeenTurns.delete(owner)
+      restoreDesignModelSelection(owner)
+      agentModelsByOwner.delete(owner)
+      void designDraftTools.abortOwner(owner).catch(error => {
         ctx.logger.warn(`dsh-openpencil draft cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
       })
     }),

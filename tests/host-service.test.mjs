@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -220,6 +220,36 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
       baseDeepSeekConfig,
       'a later user turn without an active draft restores the configured reasoning effort',
     )
+
+    // DSH >= 0.2.2 locks reasoningEffort during step preparation from agent.model.current().
+    let modelSelection = { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' }
+    const modelControl = {
+      current() { return modelSelection },
+      select(next) { modelSelection = { ...next } },
+    }
+    const modelAgent = { id: 'model-owner', session: { id: 'model-owner' }, model: modelControl }
+    requestWaterfallNextResolved = false
+    await requestListener({ agent: modelAgent, turn: 3, step: 1, signal: AbortSignal.abort() }, async () => {
+      requestWaterfallNextResolved = true
+      return { ...baseDeepSeekConfig, ...modelSelection }
+    })
+    activeDraftOwners.add('model-owner')
+    for (const event of eventListeners.filter(event => event.name === 'tools/result')) {
+      event.listener({ name: 'openpencil_pipeline_begin', callId: 'call-1', agent: modelAgent }, { isError: false, value: {} })
+    }
+    assert.equal(modelSelection.reasoningEffort, 'off', 'tools/result switches agent.model before the next step preparation')
+    const stepPreparedConfig = Object.freeze({ ...baseDeepSeekConfig, ...modelSelection })
+    requestWaterfallNextResolved = false
+    const proposedForLockedStep = await requestListener({ agent: modelAgent, turn: 3, step: 2, signal: AbortSignal.abort() }, async () => {
+      requestWaterfallNextResolved = true
+      return stepPreparedConfig
+    })
+    assert.equal(proposedForLockedStep, stepPreparedConfig, 'agent/request must not mutate a step-prepared model selection')
+    activeDraftOwners.delete('model-owner')
+    for (const event of eventListeners.filter(event => event.name === 'session/event')) {
+      event.listener({ id: 'model-owner' }, { type: 'turn/end' })
+    }
+    assert.equal(modelSelection.reasoningEffort, 'high', 'turn/end restores the pre-draft reasoning effort')
     assert.deepEqual(
       routeRegistrations.map(route => ({ kind: route.kind, path: route.path })),
       [
@@ -267,6 +297,47 @@ test('plugin mounts its HTTP routes through the rc.2 webServer service', async (
     EditorHostController.prototype.attachRequestAuthentication = originalAttachAuthentication
     DesignDraftController.prototype.abortOwner = originalAbortOwner
     DesignDraftToolController.prototype.hasActiveDraft = originalHasActiveDraft
+    if (previousDshHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousDshHome
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('runOpenPencilRender renders frames through the bundled op-host-web-server --mcp binary', async () => {
+  const { tryResolveEditorRuntime } = await import('../lib/editor-runtime.js')
+  const runtime = tryResolveEditorRuntime()
+  if (runtime === undefined) return
+  const root = await mkdtemp(join(tmpdir(), 'dsh-openpencil-mcp-render-'))
+  const previousDshHome = process.env.DSH_HOME
+  process.env.DSH_HOME = join(root, 'dsh-home')
+  try {
+    const docPath = join(root, 'design.op')
+    await writeFile(docPath, JSON.stringify({
+      version: '1.0.0',
+      children: [
+        { id: 'hero-frame', type: 'frame', name: 'Hero', x: 0, y: 0, width: 120, height: 80, fill: [{ type: 'solid', color: '#3366ff' }], children: [] },
+        { id: 'card-frame', type: 'frame', name: 'Card', x: 160, y: 0, width: 60, height: 40, fill: [{ type: 'solid', color: '#22aa55' }], children: [] },
+      ],
+    }))
+    const { runOpenPencilRender, verifyRenderOutput } = await import('../lib/renderer.js')
+    const rendered = await runOpenPencilRender({
+      binary: runtime.binary,
+      input: docPath,
+      scale: 1,
+      signal: new AbortController().signal,
+    })
+    assert.equal(rendered.frames.length, 2)
+    assert.deepEqual(rendered.frames.map(frame => ({ id: frame.id, name: frame.name, index: frame.index })), [
+      { id: 'hero-frame', name: 'Hero', index: 0 },
+      { id: 'card-frame', name: 'Card', index: 1 },
+    ])
+    const first = await verifyRenderOutput(rendered.frames[0].png)
+    const second = await verifyRenderOutput(rendered.frames[1].png)
+    assert.equal(first.width, 120)
+    assert.equal(first.height, 80)
+    assert.equal(second.width, 60)
+    assert.equal(second.height, 40)
+  } finally {
     if (previousDshHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousDshHome
     await rm(root, { recursive: true, force: true })

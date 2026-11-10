@@ -27,6 +27,8 @@ import { randomUUID } from 'node:crypto'
 import type { JsonValue } from './json-value.js'
 import type { ViewerGrant } from './viewer-assets.js'
 import type { EditorGrant } from './editor-host.js'
+import { tryResolveEditorRuntime } from './editor-runtime.js'
+import { parseOpenPencilMcpResponse } from './mcp-client.js'
 import { OPENPENCIL_RENDER_TOOL_NAME } from './tool-names.js'
 import { pluginEnv } from './plugin-env.js'
 
@@ -550,19 +552,16 @@ export async function createDocumentSnapshotFromText(documentJson: string): Prom
   return persistDocumentSnapshot(Buffer.from(documentJson, 'utf8'))
 }
 
-/** Locate the exact OpenPencil renderer, preferring an explicit override. */
-export function findOpenPencilBinary(): string | undefined {
-  const override = pluginEnv('OPENPENCIL_BINARY')?.trim()
-    || pluginEnv('OPENPENCIL_DESKTOP')?.trim()
-  const candidates = [
-    ...(override === undefined || override.length === 0 ? [] : [expandUserHome(override)]),
-    '/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop',
-    join(homedir(), 'Applications', 'OpenPencil.app', 'Contents', 'MacOS', 'openpencil-desktop'),
-  ]
-  const pathEnv = process.env.PATH ?? ''
-  for (const dir of pathEnv.split(delimiter)) {
-    if (dir.length > 0) candidates.push(join(dir, 'openpencil-desktop'))
-  }
+const WINDOWS_EXECUTABLE_SUFFIXES = ['.exe', '.com']
+
+function platformExecutableCandidates(basePath: string): string[] {
+  if (process.platform !== 'win32') return [basePath]
+  const lower = basePath.toLowerCase()
+  if (WINDOWS_EXECUTABLE_SUFFIXES.some(suffix => lower.endsWith(suffix))) return [basePath]
+  return [basePath, ...WINDOWS_EXECUTABLE_SUFFIXES.map(suffix => `${basePath}${suffix}`)]
+}
+
+function firstExistingFile(candidates: readonly string[]): string | undefined {
   for (const candidate of candidates) {
     try {
       if (statSync(candidate).isFile()) return candidate
@@ -573,29 +572,47 @@ export function findOpenPencilBinary(): string | undefined {
   return undefined
 }
 
+/** Locate the exact OpenPencil renderer, preferring an explicit override. */
+export function findOpenPencilBinary(): string | undefined {
+  const override = pluginEnv('OPENPENCIL_BINARY')?.trim()
+    || pluginEnv('OPENPENCIL_DESKTOP')?.trim()
+  const candidates = [
+    ...(override === undefined || override.length === 0 ? [] : platformExecutableCandidates(expandUserHome(override))),
+    '/Applications/OpenPencil.app/Contents/MacOS/openpencil-desktop',
+    join(homedir(), 'Applications', 'OpenPencil.app', 'Contents', 'MacOS', 'openpencil-desktop'),
+  ]
+  const pathEnv = process.env.PATH ?? ''
+  for (const dir of pathEnv.split(delimiter)) {
+    if (dir.length > 0) candidates.push(...platformExecutableCandidates(join(dir, 'openpencil-desktop')))
+  }
+  const desktop = firstExistingFile(candidates)
+  if (desktop !== undefined) return desktop
+  try {
+    const runtimeBinary = tryResolveEditorRuntime()?.binary
+    if (runtimeBinary !== undefined) return runtimeBinary
+  } catch {
+    // Fall back to PATH lookup if runtime configuration is invalid.
+  }
+  const hostCandidates: string[] = []
+  for (const dir of pathEnv.split(delimiter)) {
+    if (dir.length > 0) hostCandidates.push(...platformExecutableCandidates(join(dir, 'op-host-web-server')))
+  }
+  return firstExistingFile(hostCandidates)
+}
+
 /** Locate the `jian` binary: env override, known build location, then PATH. */
 export function findJianBinary(): string {
   const override = pluginEnv('OPENPENCIL_JIAN')?.trim()
-  if (override !== undefined && override.length > 0) return override
-  const candidates = [join(homedir(), 'workspace', 'jian', 'target', 'release', 'jian')]
-  for (const candidate of candidates) {
-    try {
-      if (statSync(candidate).isFile()) return candidate
-    } catch {
-      // keep looking
-    }
+  if (override !== undefined && override.length > 0) {
+    const expanded = expandUserHome(override)
+    return firstExistingFile(platformExecutableCandidates(expanded)) ?? expanded
   }
+  const candidates = [...platformExecutableCandidates(join(homedir(), 'workspace', 'jian', 'target', 'release', 'jian'))]
   const pathEnv = process.env.PATH ?? ''
-  for (const dir of pathEnv.split(':')) {
-    if (dir.length === 0) continue
-    const candidate = join(dir, 'jian')
-    try {
-      if (statSync(candidate).isFile()) return candidate
-    } catch {
-      // keep looking
-    }
+  for (const dir of pathEnv.split(delimiter)) {
+    if (dir.length > 0) candidates.push(...platformExecutableCandidates(join(dir, 'jian')))
   }
-  return 'jian'
+  return firstExistingFile(candidates) ?? 'jian'
 }
 
 /** Parse the physical size from `jian render`'s success line. */
@@ -708,6 +725,148 @@ async function sourceFrameDescriptors(path: string): Promise<SourceFrameDescript
   }
 }
 
+function unwrapMcpTextResult(tool: string, rawLine: string): unknown {
+  const envelope: unknown = JSON.parse(rawLine)
+  if (!isRecord(envelope)) throw new Error(`OpenPencil MCP ${tool} returned an invalid JSON-RPC response`)
+  if (isRecord(envelope.error)) {
+    const message = typeof envelope.error.message === 'string'
+      ? envelope.error.message
+      : JSON.stringify(envelope.error)
+    throw new Error(`OpenPencil MCP ${tool} failed: ${message}`)
+  }
+  if (!isRecord(envelope.result) || !Array.isArray(envelope.result.content)) {
+    throw new Error(`OpenPencil MCP ${tool} omitted its result`)
+  }
+  const textItem = envelope.result.content.find(
+    (item): item is Record<string, unknown> => isRecord(item) && item.type === 'text' && typeof item.text === 'string',
+  )
+  const rawText = typeof textItem?.text === 'string' ? textItem.text : ''
+  if (envelope.result.isError === true) {
+    throw new Error(`OpenPencil MCP ${tool} failed${rawText === '' ? '' : `: ${rawText}`}`)
+  }
+  return rawText === '' ? undefined : JSON.parse(rawText)
+}
+
+async function runOpenPencilMcpRender(options: {
+  binary: string
+  input: string
+  scale: number
+  signal: AbortSignal
+}): Promise<{
+  png: string
+  frames: Array<{ png: string; id?: string; name?: string; index: number }>
+  warnings: string[]
+  stdout: string
+  stderr: string
+}> {
+  const sourceFrames = await sourceFrameDescriptors(options.input)
+  const child = spawn(options.binary, ['--mcp', options.input], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: process.env,
+  })
+  const stdoutChunks: Buffer[] = []
+  const stderrChunks: Buffer[] = []
+  child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk))
+  child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    child.kill('SIGKILL')
+  }, RENDER_TIMEOUT_MS)
+  const onAbort = (): void => { child.kill('SIGKILL') }
+  options.signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'get_screenshot', arguments: { nodeId: 'root' } },
+    })}\n`)
+    if (sourceFrames.length > 0) {
+      child.stdin.write(`${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'export_nodes',
+          arguments: {
+            nodeIds: JSON.stringify(sourceFrames.map(frame => frame.id)),
+            format: 'png',
+            scale: String(options.scale),
+          },
+        },
+      })}\n`)
+    }
+    child.stdin.end()
+
+    const code = await new Promise<number | null>((resolveCode, reject) => {
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') reject(new RendererBinaryMissingError(`OpenPencil binary not found: ${options.binary}`, { cause: error }))
+        else reject(error)
+      })
+      child.on('close', resolveCode)
+    })
+    const stdout = Buffer.concat(stdoutChunks).toString('utf8')
+    const stderr = Buffer.concat(stderrChunks).toString('utf8')
+    if (options.signal.aborted) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil render was cancelled`)
+    if (timedOut) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil render timed out after ${RENDER_TIMEOUT_MS} ms`)
+    if (code !== 0) throw new Error(`OpenPencil render exited with ${String(code)}${stderr.trim() === '' ? '' : `: ${stderr.trim()}`}`)
+
+    const lines = stdout
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+    const rootParsed = lines[0] === undefined
+      ? undefined
+      : parseOpenPencilMcpResponse('get_screenshot', JSON.parse(lines[0]))
+    const frames: Array<{ png: string; id?: string; name?: string; index: number }> = []
+    try {
+      if (sourceFrames.length > 0 && lines[1] !== undefined) {
+        const exported = unwrapMcpTextResult('export_nodes', lines[1])
+        const files = isRecord(exported) && Array.isArray(exported.files)
+          ? exported.files.filter(isRecord)
+          : []
+        const sourceById = new Map(sourceFrames.map(frame => [frame.id, frame]))
+        for (const [index, entry] of files.entries()) {
+          if (typeof entry.bytes_base64 !== 'string' || entry.bytes_base64.length === 0) {
+            const detail = typeof entry.error === 'string' ? entry.error : 'missing PNG bytes'
+            throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil failed to render node ${String(entry.nodeId ?? index)}: ${detail}`)
+          }
+          const out = await createRenderOutput()
+          await writeFile(out, Buffer.from(entry.bytes_base64, 'base64'), { mode: 0o600 })
+          const nodeId = typeof entry.nodeId === 'string' && entry.nodeId.length > 0 ? entry.nodeId : undefined
+          const sourceFrame = nodeId === undefined ? undefined : sourceById.get(nodeId)
+          frames.push({
+            png: out,
+            ...(sourceFrame?.id !== undefined ? { id: sourceFrame.id } : nodeId !== undefined ? { id: nodeId } : {}),
+            ...(sourceFrame?.name === undefined ? {} : { name: sourceFrame.name }),
+            index,
+          })
+        }
+      } else if (rootParsed !== undefined && rootParsed.images.length > 0) {
+        const out = await createRenderOutput()
+        await writeFile(out, rootParsed.images[0]!.bytes, { mode: 0o600 })
+        const rootId = isRecord(rootParsed.value) && typeof rootParsed.value.nodeId === 'string'
+          ? rootParsed.value.nodeId
+          : undefined
+        frames.push({
+          png: out,
+          ...(rootId === undefined ? {} : { id: rootId }),
+          index: 0,
+        })
+      }
+      if (frames.length === 0) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil produced no PNG`)
+    } catch (error) {
+      await Promise.all(frames.map(frame => rm(frame.png, { force: true }).catch(() => {})))
+      throw error
+    }
+    return { png: frames[0]!.png, frames, warnings: [], stdout, stderr }
+  } finally {
+    clearTimeout(timeout)
+    options.signal.removeEventListener('abort', onAbort)
+  }
+}
+
 /** Render all top-level active-page nodes through OpenPencil's exact scene exporter. */
 export async function runOpenPencilRender(options: {
   binary: string
@@ -724,6 +883,9 @@ export async function runOpenPencilRender(options: {
   const scale = options.scale ?? 1
   if (!Number.isFinite(scale) || scale <= 0 || scale > 8) {
     throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: scale must be a finite number greater than 0 and at most 8`)
+  }
+  if (/^op-host-web-server(?:\.exe|\.com)?$/i.test(basename(options.binary))) {
+    return runOpenPencilMcpRender({ binary: options.binary, input: options.input, scale, signal: options.signal })
   }
   await mkdir(stateRoot(), { recursive: true, mode: 0o700 })
   const tempRoot = await mkdtemp(join(stateRoot(), 'exact-'))
@@ -758,6 +920,9 @@ export async function runOpenPencilRender(options: {
     const stderr = Buffer.concat(stderrChunks).toString('utf8')
     if (options.signal.aborted) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil render was cancelled`)
     if (timedOut) throw new Error(`${OPENPENCIL_RENDER_TOOL_NAME}: OpenPencil render timed out after ${RENDER_TIMEOUT_MS} ms`)
+    if (code !== 0 && /unknown mode ["']?--render-shots/i.test(stderr)) {
+      return await runOpenPencilMcpRender({ binary: options.binary, input: options.input, scale, signal: options.signal })
+    }
     if (code !== 0) throw new Error(`OpenPencil render exited with ${String(code)}${stderr.trim() === '' ? '' : `: ${stderr.trim()}`}`)
     const discoveredPngs = (await readdir(outDir)).filter(name => name.toLowerCase().endsWith('.png'))
     const sourceFrames = await sourceFrameDescriptors(options.input)
