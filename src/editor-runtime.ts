@@ -626,11 +626,11 @@ export function resolveEditorRuntime(options: ResolveEditorRuntimeOptions = {}):
   } catch (error) {
     packageResolutionDiagnostic = error instanceof Error ? error.message : String(error)
   }
-  if (packageJson !== undefined) {
+  const developmentRoot = join(projectRoot, 'npm', platform.id)
+  if (packageJson !== undefined && resolve(dirname(packageJson)) !== resolve(developmentRoot)) {
     return validateRuntimeRoot(dirname(packageJson), 'optional-package', expected, io)
   }
 
-  const developmentRoot = join(projectRoot, 'npm', platform.id)
   const developmentManifest = join(developmentRoot, 'openpencil-runtime.json')
   if (isFile(developmentManifest, io)) {
     return validateRuntimeRoot(developmentRoot, 'development-package', expected, io)

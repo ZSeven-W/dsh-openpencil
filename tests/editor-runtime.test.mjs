@@ -421,6 +421,9 @@ test('optional resolution returns undefined only for an absent or unsupported ru
       resolvePackageJson() { throw new Error('MODULE_NOT_FOUND') },
     })
     assert.equal(tryResolveEditorRuntime(options), undefined)
+    assert.equal(tryResolveEditorRuntime(resolutionOptions(root, {
+      resolvePackageJson: () => join(root, 'npm', PLATFORM.id, 'package.json'),
+    })), undefined)
     assert.throws(
       () => resolveEditorRuntime(options),
       error => (
