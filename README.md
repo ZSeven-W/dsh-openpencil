@@ -222,6 +222,12 @@ Editable sessions use OpenPencil's managed web host — the same architecture us
 
 Desktop requests whose HTTP proxy omits `Origin` are accepted only after DSH authenticates the request and the plugin verifies its loopback peer and exact listening authority. Explicit browser origins retain the same-origin checks; without the Host authentication service, requests missing `Origin` remain rejected.
 
+Opening an existing `.op` from the sidebar file tree no longer requires a render tool call first: a `.op` click opens a small launcher tab that asks the host's `open-by-path` route for a full presentation grant — minted through the exact render pipeline (`createDocumentSnapshot` → `projectDocumentCapability` → `grantFor`) behind the same loopback fence and request authentication as the editor routes — and hands it to the editor workbench; on success the launcher closes itself and the workbench stays open (~0.4 s end to end). Re-clicking the same file is idempotent, and closing the editor and clicking again reopens it. Every path is scoped to the current session's workspace: it resolves against the session's `cwd`, is realpath-checked for containment, and anything outside the workspace, a non-`.op` path, or an unauthenticated request is rejected with a readable reason plus a retry action in the tab. When the editor runtime is unavailable, the tab degrades to an explicit “editor unavailable” state.
+
+![Editor workbench opened directly from a sidebar .op click](./docs/images/dsh-openpencil-sidebar-op-editor.png)
+
+The launcher registers a `sidebar-right` tab type through the public extension surface and pulls in two additional dev dependencies (`@deepseek-ai/dsh-client-ui-sidebar-right` and `@deepseek-ai/dsh-util-workspace-path`) via `dsh.client.inject`.
+
 The editor panel was verified on the official DSH Desktop `0.2.1-rc.3` build: opening the canvas, editing a layer name, saving and reading the file back, reopening the editor, and opening a fresh card after restarting DSH. This verification covers the editor panel flow.
 
 Startup uses a slow-mount-safe listening handshake: readiness probes begin only after the bundled host announces its bound address. No desktop OpenPencil installation is required.
