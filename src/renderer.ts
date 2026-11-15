@@ -973,7 +973,7 @@ export async function runOpenPencilRender(options: {
 }
 
 /** Mint one immutable document capability while retaining its workspace path. */
-function projectDocumentCapability(
+export function projectDocumentCapability(
   document: DocumentSnapshot,
   sourcePath: string,
   controller: RenderAccessController,
