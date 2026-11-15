@@ -35,6 +35,7 @@ import {
 } from './details-compat.js'
 import type { EditorWorkbenchRequest } from './editor-workbench-host.js'
 import { mountEditorWorkbenchHost } from './editor-workbench-host.js'
+import { registerOpTab } from './op-tab.js'
 import { editorWorkbenchEditorKey } from './editor-modal.js'
 import { FrameGallery, normalizeFrameIndex as normalizedFrameIndex } from './frame-gallery.js'
 import type { GalleryFrame, GalleryLocale } from './frame-gallery.js'
@@ -1082,7 +1083,7 @@ export function OpenPencilEditorPanel({ block, colorScheme, locale, sessionId }:
 }
 
 /** Required client services. */
-export const inject = ['slots', 'theme', 'locale']
+export const inject = ['slots', 'theme', 'locale', 'sidebarRightTabs']
 
 /** Register canonical views plus a presentation-only alias for replaying historical cards. */
 export function apply(ctx: ClientContext): void {
@@ -1109,6 +1110,8 @@ export function apply(ctx: ClientContext): void {
       }
     }, 'dsh-openpencil: fallback editor workbench host')
   }
+  registerOpTab(ctx, () =>
+    (request: EditorWorkbenchRequest) => editorWorkbenchHost?.open(request) ?? false)
   const HostSyncedDesignRenderView = (props: ToolCallViewProps): React.JSX.Element => {
     const locale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     return (
