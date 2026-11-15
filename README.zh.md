@@ -220,6 +220,12 @@ pnpm run sync:viewer-assets
 
 若 DSH 桌面代理省略 `Origin`，插件仅在 DSH 验证请求身份、且本地连接与监听地址检查通过后接受请求。显式浏览器来源仍须通过同源检查；缺少宿主认证服务时，没有 `Origin` 的请求仍会被拒绝。
 
+从侧边栏文件树打开已有 `.op` 不再需要先跑一次渲染工具调用：点击 `.op` 会打开一个小的启动 tab，向宿主的 `open-by-path` 路由换取完整 presentation grant——grant 走与渲染管线完全相同的签发链（`createDocumentSnapshot` → `projectDocumentCapability` → `grantFor`），并复用编辑器路由同款的回环栅栏与请求认证——随后交给编辑器工作台；成功后启动 tab 自行关闭，工作台保持打开（端到端约 0.4 秒）。重复点击同一文件是幂等的；关闭编辑器后再次点击即可重开。所有路径都限定在当前会话的工作区内：路径按会话 `cwd` 解析并经 realpath 包含性校验，工作区之外的路径、非 `.op` 文件或未认证请求都会被拒绝，tab 内给出可读原因与重试入口。编辑器运行时不可用时，tab 显式降级为“编辑器不可用”状态。
+
+![从侧边栏 .op 点击直接打开编辑器工作台](./docs/images/dsh-openpencil-sidebar-op-editor.png)
+
+启动 tab 通过公开扩展面注册 `sidebar-right` tab 类型，并经由 `dsh.client.inject` 引入两个额外的开发依赖（`@deepseek-ai/dsh-client-ui-sidebar-right` 与 `@deepseek-ai/dsh-util-workspace-path`）。
+
 编辑器面板已在官方 DSH 桌面版 `0.2.1-rc.3` 上完成验证：打开画布、修改图层名、保存并回读文件、重新打开编辑器，以及重启 DSH 后打开新卡片。本次实机验证范围为编辑器面板流程。
 
 启动过程使用可安全应对慢速挂载的 listening handshake：只有在随包宿主报告已绑定地址后才开始就绪探测。无需安装桌面版 OpenPencil。

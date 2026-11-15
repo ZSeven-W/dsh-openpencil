@@ -1216,7 +1216,7 @@ test('editor bridge emits the strict resolved DSH theme message', () => {
     client.encodeEditorOutbound({ type: 'op-bridge/theme', colorScheme: 'dark' }),
     '{"type":"op-bridge/theme","colorScheme":"dark"}',
   )
-  assert.deepEqual(client.inject, ['slots', 'theme', 'locale'])
+  assert.deepEqual(client.inject, ['slots', 'theme', 'locale', 'sidebarRightTabs'])
 })
 
 function initRetryClock() {

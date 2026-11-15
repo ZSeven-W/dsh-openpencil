@@ -261,7 +261,8 @@ export function findEditorHostBinary(): string | undefined {
 /** Host-owned authentication for Desktop requests whose proxy omits Origin. */
 export type EditorRequestAuthentication = (req: IncomingMessage) => boolean
 
-function requestOrigin(req: IncomingMessage, authenticate?: EditorRequestAuthentication): string {
+/** Same-origin/Host fence shared with the open-by-path route (plan/9 E1 Step 1). */
+export function requestOrigin(req: IncomingMessage, authenticate?: EditorRequestAuthentication): string {
   const raw = req.headers.origin
   if (raw === undefined) {
     const site = req.headers['sec-fetch-site']
@@ -336,13 +337,14 @@ export function isLoopbackRemoteAddress(address: string | undefined): boolean {
   return (Number.parseInt(hexadecimal[1]!, 16) >>> 8) === 127
 }
 
-function requireLoopbackPeer(req: IncomingMessage): void {
+/** Transport fence shared with the open-by-path route: trust the socket peer only. */
+export function requireLoopbackPeer(req: IncomingMessage): void {
   if (!isLoopbackRemoteAddress(req.socket?.remoteAddress)) {
     throw new HttpError(403, 'editable OpenPencil sessions require a loopback network peer')
   }
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(readonly status: number, message: string) {
     super(message)
   }
