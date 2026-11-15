@@ -44,6 +44,7 @@ import {
   EDITOR_ROUTE_PREFIX,
   EditorHostController,
 } from './editor-host.js'
+import { OPEN_BY_PATH_ROUTE, OpenByPathController } from './open-by-path.js'
 import {
   OPENPENCIL_CREATE_TOOL_NAME,
   OPENPENCIL_EDIT_TOOL_NAME,
@@ -231,6 +232,11 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     // configured LAN authorities receive the same Host fence as DSH /api.
     trustedHosts: () => webRuntimeTrustedHosts(ctx),
   })
+  const openByPath = new OpenByPathController({
+    sessions: hostCtx.sessions,
+    render: controller,
+    editor: editorHost,
+  })
   let editorHostDisposePromise: Promise<void> | undefined
   let designDraftToolsDisposePromise: Promise<void> | undefined
   const disposeEditorHost = (): Promise<void> => {
@@ -356,6 +362,11 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     return editorHost.attachRequestAuthentication(req => connection.requestRejection(req) === undefined)
   }, 'dsh-openpencil: authenticated Desktop editor requests'))
 
+  ctx.inject(['connection'], connectionCtx => connectionCtx.effect(() => {
+    const connection = (connectionCtx as ConnectionContext).connection
+    return openByPath.attachRequestAuthentication(req => connection.requestRejection(req) === undefined)
+  }, 'dsh-openpencil: authenticated open-by-path requests'))
+
   // Optional Web routes: only mounted when a webServer service exists
   // (headless profiles never attach, and `routeAvailable` stays false).
   // The inject fiber is parent-scoped and tears itself down with this ctx;
@@ -372,6 +383,11 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       kind: 'exact',
       path: PRESENTATION_HYDRATION_ROUTE,
       handler: (req, res) => presentationHydration.handle(req, res),
+    })
+    const disposeOpenByPathRoute = webServer.register({
+      kind: 'exact',
+      path: OPEN_BY_PATH_ROUTE,
+      handler: (req, res) => openByPath.handle(req, res),
     })
     const disposeViewerRoute = viewerAssets.available
       ? (() => {
@@ -398,6 +414,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       detachEditor()
       disposeViewerRoute?.()
       disposePresentationRoute()
+      disposeOpenByPathRoute()
       disposeRoute()
       detach()
       await disposeEditorHost()
